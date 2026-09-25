@@ -1,4 +1,5 @@
 export * from './patterns'
+export * from './difficulty'
 export {
   assertPartialMineBoard,
   boardFromAssignments,

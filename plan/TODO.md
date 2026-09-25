@@ -16,11 +16,15 @@
 - [x] Complete the parent Oracle validation gate (PASS on signed commit `acd3812`).
 
 ## Phase 2 — Generator and Difficulty
-- [ ] Implement transactional growth with unique-completion witnesses.
-- [ ] Enforce row/column coverage and rollback invariants.
-- [ ] Implement deterministic minimum-guess difficulty analysis and bands.
-- [ ] Implement exact attempt budgets, cancellation, and diagnostic failure reports.
-- [ ] Pass trace, replay, property, and benchmark checks; complete Oracle gate.
+- [x] Implement deterministic random/structured layout search and transactional growth with immutable unique-witness replay.
+- [x] Enforce exact mine count, row/column coverage, witness identity, and rollback invariants.
+- [x] Implement exact minimum-worst-case-guess difficulty analysis and starter/steady/challenging/expert band semantics.
+- [x] Implement root attempt budgets, global cancellation/deadline/node budgets, and serializable diagnostic failure reports.
+- [x] Bound exact difficulty analysis with a 3,000 ms default generator deadline and separate 2,000-node difficulty cap, preserving typed fail-closed limits.
+- [x] Pass focused trace, replay, property, differential, and 15×15/60% benchmark checks in this worktree.
+- [x] Make minimum-count rectangular layout construction coverage-feasible, rethrow unexpected repair errors, and prioritize resource exhaustion over difficulty mismatch.
+- [x] Complete the parent Phase 2 Oracle validation gate (PASS; nonstarter reachability remains a bounded, documented limitation).
+- [ ] Investigate a future generator/search improvement if nonstarter difficulty bands must be reachable in normal play.
 
 ## Phase 3 — Game Core and Worker
 - [ ] Implement pure game reducer and scoring/correction transitions.

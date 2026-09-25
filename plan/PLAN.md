@@ -30,12 +30,13 @@ The implementation therefore uses the strongest playable interpretation:
 
 1. Start with an empty accepted-mine set.
 2. Add a candidate mine transactionally.
-3. Search for complete target-density mine layouts containing every accepted mine and satisfying row/column coverage.
-4. Accept the candidate only if at least one such completion has a uniquely solvable clue system.
-5. If no unique completion is found within the candidate budget, roll back and try another mine.
-6. At the target count, derive clues from the actual board and run a fresh, independent uniqueness proof.
+3. Find a complete target-density mine layout containing every accepted mine and satisfying row/column coverage, then prove its clue system has exactly one solution.
+4. Accept the candidate only with that complete unique witness.
+5. If no unique witness is found within the candidate budget, roll back and try another mine.
+6. Reuse the already-proven complete witness to replay each accepted prefix; the witness is immutable and every trace event records its exact count, coverage, derived clues, unique proof, and solution identity.
+7. At the target count, run a fresh independent uniqueness proof before delivery.
 
-Thus every added mine is validated, failed additions are rolled back, and no multi-solution board can be delivered.
+Thus every added mine is validated, failed additions are rolled back, and no multi-solution board can be delivered. The witness replay is intentionally an already-proven-witness reuse, not a fresh solver search for every prefix; only delivery receives a fresh proof.
 
 ### 2.3 Difficulty
 
@@ -46,7 +47,7 @@ Difficulty is based on the minimum number of binary cell guesses needed by the d
 - `challenging`: 3–5 guesses.
 - `expert`: 6 or more guesses.
 
-The metric is the easiest complete proof path under the game’s documented inference rules, not a claim of arbitrary human optimality. If the analysis budget is exhausted, generation fails closed. Requested difficulty acts as a lower-bound band; after the configured number of full generation attempts, the UI reports that no board in that band was found.
+The metric is the exact minimum worst-case number of binary cell guesses under the game’s documented inference rules, not a claim of arbitrary human optimality. A guess is counted only when both cell values remain possible after forced propagation; a branch that immediately contradicts is inferred and costs zero. `starter`, `steady`, and `challenging` are exact bands, while `expert` is a lower bound (`minimumGuesses >= 6`). Difficulty analysis uses an exact bounded decision-threshold search and returns a value only after proving a threshold. Generation has a 3,000 ms default wall-clock deadline; candidate/final-proof solves use `maxSolverNodes` (default 100,000), while difficulty uses a separate generation-wide `maxDifficultyNodes` cap (default 2,000). If any analysis or generation budget is exhausted, generation fails closed. After the configured number of full root attempts, the generator reports a typed failure; bounded 30×30/pathological cases may fail with `resource-limit` rather than weakening uniqueness.
 
 ### 2.4 Wrong marks
 
@@ -73,7 +74,7 @@ The metric is the easiest complete proof path under the game’s documented infe
 | `src/domain/` | Shared types, coordinates, board validation, ordered clue encode/encode helpers |
 | `src/engine/rng.ts` | Seeded deterministic RNG and restart seed derivation |
 | `src/engine/solver/` | Legal line patterns, propagation, count-to-two uniqueness proof, guess analysis |
-| `src/engine/generator/` | Transactional growth, unique-completion lookahead, coverage, difficulty filtering, rollback |
+| `src/engine/generator/` | Deterministic random/structured layouts, immutable witness replay, fresh final proof, coverage, difficulty filtering, rollback, and typed budgets |
 | `src/application/gameReducer.ts` | Pure game state transitions and score rules |
 | `src/application/lineProgress.ts` | Derived completed runs, full-line state, and clue highlighting |
 | `src/application/generationController.ts` | Request IDs, worker lifecycle, cancellation, stale-message filtering |
@@ -103,12 +104,12 @@ A small-board exhaustive reference counter provides an independent test oracle.
 
 ### 4.3 Transactional growth
 
-- Use seeded candidate ordering and coverage anchors.
-- Reject additions that make final row/column coverage impossible.
-- For every candidate addition, sample/find bounded complete layouts containing the accepted mine set and run the uniqueness solver.
-- Roll back any addition without a unique completion witness.
-- Cache the final witness and independently re-prove the completed board.
-- Count root-level restarts against `maxAttempts`; count canceled/budget-exhausted searches separately in diagnostics.
+- Use seeded Fisher–Yates candidate ordering plus a low-run contiguous-row structured fallback; at the minimum clamped count, construct a deterministic matching that covers every row and column before bounded repair; repair missing coverage without changing the exact mine count.
+- Validate every complete layout for exact count, row/column coverage, and board/mine-index identity before solving.
+- Prove a complete unique target witness, then replay its prefixes transactionally from the empty accepted set. The already-proven witness is intentionally reused for every prefix; each event records the accepted subset, exact witness, derived clues, unique proof, and solution identity.
+- Roll back any rejected candidate without changing the parent accepted set or trace prefix.
+- Independently re-solve the completed board for delivery; do not reuse candidate domains, assignments, or proof state (only bounded pure line-pattern caching may be shared).
+- Count root-level restarts against `maxAttempts`; pass the remaining cancellation and 3,000 ms default deadline through candidate, difficulty, and final-proof work. Candidate/final-proof solves share `maxSolverNodes` (default 100,000); difficulty uses a separate generation-wide `maxDifficultyNodes` cap (default 2,000). Candidate-local multiple/resource failures roll back, while global cancellation, time, resource, attempt, or difficulty exhaustion fails closed with serializable diagnostics.
 
 ### 4.4 Line progress
 
@@ -145,8 +146,8 @@ A small-board exhaustive reference counter provides an independent test oracle.
 
 ### Phase 2 — Generator and difficulty
 
-- Implement transactional growth, unique-completion witness per added mine, coverage, rollback, replay, difficulty filtering, and bounded attempts.
-- Gate rationale: prove the no-multi-solution delivery invariant before wiring gameplay.
+- Implement deterministic random/structured layout search, immutable witness-guided transactional replay, coverage, rollback, exact minimum-guess difficulty filtering, and bounded root attempts.
+- Gate rationale: prove the no-multi-solution delivery invariant before wiring gameplay. Parent validation and the Oracle gate passed on the live Phase 2 overlay; nonstarter reachability remains a tracked bounded-search limitation.
 
 ### Phase 3 — Game core and Worker integration
 
@@ -175,7 +176,7 @@ Each phase requires parent validation, an Oracle review gate, reconciliation of 
 | Every mine addition is transactional | Seeded trace test: failed candidate absent from parent; accepted candidate has unique-completion witness | Parent + generator lane |
 | Delivered puzzles are unique | Fresh final proof in generator plus fixture/property tests | Parent |
 | Every row/column has a mine | Generator invariant and output validation | Parent |
-| Difficulty is monotonic and bounded | Tiny-board decision-tree comparisons and budget tests | Parent |
+| Difficulty is exact and bounded | Tiny-board decision-tree comparisons for bands 0/1/2/3 plus deterministic band-boundary checks, default-deadline reproduction, and budget-unknown tests | Parent |
 | Game score/state transitions are correct | Reducer transition-table tests including correction, zero, win precedence | Parent |
 | Drag marks each cell once | Component interaction test plus browser pointer smoke test | Parent + UI lane |
 | UI is responsive and accessible | Desktop/mobile screenshots, keyboard-only flow, reduced-motion and ARIA checks | Parent + designer lane |

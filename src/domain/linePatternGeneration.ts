@@ -23,10 +23,10 @@ export interface PatternGenerationLimits {
 
 export interface PatternGenerationContext extends PatternGenerationLimits {
   /** Checked cooperatively throughout recursive pattern enumeration. */
-  readonly signal?: AbortSignal
+  readonly signal?: { readonly aborted: boolean }
   /** A solver can return its own precise cancellation/time reason from this callback. */
   readonly shouldStop?: () => boolean | PatternGenerationInterruptionReason | undefined
-  /** Used with `timeBudgetMs`; defaults to `Date.now`. */
+  /** Used with a positive `timeBudgetMs`; no global clock is consulted. */
   readonly now?: () => number
   /** A direct per-call enumeration budget. Zero stops before the first pattern is built. */
   readonly timeBudgetMs?: number
@@ -79,7 +79,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isAbortSignalLike(value: unknown): value is Pick<AbortSignal, 'aborted'> {
+function isAbortSignalLike(value: unknown): value is { readonly aborted: boolean } {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -154,6 +154,9 @@ export function assertPatternGenerationContext(
       `${context}.timeBudgetMs must be a finite nonnegative number; received ${String(candidate.timeBudgetMs)}`,
     )
   }
+  if (candidate.timeBudgetMs !== undefined && candidate.timeBudgetMs > 0 && candidate.now === undefined) {
+    throw new TypeError(`${context}.now is required when timeBudgetMs is positive`)
+  }
 }
 
 function readPatternClock(clock: () => number): number {
@@ -191,7 +194,7 @@ export function createPatternGenerationStopChecker(
   assertPatternGenerationContext(context)
   const signal = context?.signal
   const callback = context?.shouldStop
-  const clock = context?.now ?? Date.now
+  const clock = context?.now
   const timeBudgetMs = context?.timeBudgetMs
   let startTime: number | undefined
   let clockStarted = false
@@ -213,10 +216,10 @@ export function createPatternGenerationStopChecker(
       return 'time-limit'
     }
     if (!clockStarted) {
-      startTime = readPatternClock(clock)
+      startTime = readPatternClock(clock!)
       clockStarted = true
     }
-    return readPatternClock(clock) - startTime! >= timeBudgetMs ? 'time-limit' : undefined
+    return readPatternClock(clock!) - startTime! >= timeBudgetMs ? 'time-limit' : undefined
   }
 }
 

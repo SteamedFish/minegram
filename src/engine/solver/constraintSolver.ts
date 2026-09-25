@@ -32,7 +32,7 @@ export const DEFAULT_MAX_SOLVER_NODES = 100_000
 export interface SolverOptions extends PatternGenerationLimits {
   readonly maxNodes?: number
   readonly timeBudgetMs?: number
-  readonly signal?: AbortSignal
+  readonly signal?: { readonly aborted: boolean }
   readonly now?: () => number
 }
 
@@ -121,6 +121,9 @@ function assertSolverOptions(value: unknown): asserts value is SolverOptions {
   }
   if (options.now !== undefined && typeof options.now !== 'function') {
     throw new TypeError('solver now must be a function returning a finite millisecond value')
+  }
+  if (options.timeBudgetMs !== undefined && options.timeBudgetMs > 0 && options.now === undefined) {
+    throw new TypeError('solver now is required when timeBudgetMs is positive')
   }
   if (options.signal !== undefined && !isAbortSignalLike(options.signal)) {
     throw new TypeError('solver signal must be an AbortSignal-like object with a boolean aborted field')
@@ -251,7 +254,7 @@ function getNonNodeStop(
     return 'cancelled'
   }
   if (startTime !== undefined) {
-    const clock = options.now ?? Date.now
+    const clock = options.now!
     if (readSolverClock(clock) - startTime >= options.timeBudgetMs!) {
       return 'time-limit'
     }
@@ -285,7 +288,7 @@ export function solvePuzzle(
   const startTime =
     options.timeBudgetMs === undefined
       ? undefined
-      : readSolverClock(options.now ?? Date.now)
+      : readSolverClock(options.now!)
   const getStop = (): SolverUnknownReason | undefined => {
     if (options.signal?.aborted) {
       return 'cancelled'

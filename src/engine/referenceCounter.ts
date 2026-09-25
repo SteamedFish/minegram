@@ -14,7 +14,7 @@ export interface ExhaustiveCountOptions {
   readonly maxCount?: number
   readonly maxBoardsExamined?: number
   readonly timeBudgetMs?: number
-  readonly signal?: AbortSignal
+  readonly signal?: { readonly aborted: boolean }
   readonly now?: () => number
 }
 
@@ -76,6 +76,9 @@ function assertCountOptions(options: ExhaustiveCountOptions): void {
   }
   if (options.now !== undefined && typeof options.now !== 'function') {
     throw new TypeError('now must be a function returning a finite millisecond value')
+  }
+  if (options.timeBudgetMs !== undefined && options.timeBudgetMs > 0 && options.now === undefined) {
+    throw new TypeError('now is required when timeBudgetMs is positive')
   }
   if (options.signal !== undefined && !isAbortSignalLike(options.signal)) {
     throw new TypeError('signal must be an AbortSignal-like object with a boolean aborted field')
@@ -165,8 +168,8 @@ export function countMatchingBoardsReference(
     return { status: 'time-limit', count, boardsExamined }
   }
 
-  const clock = options.now ?? Date.now
-  const startTime = options.timeBudgetMs === undefined ? undefined : readClock(clock)
+  const clock = options.now
+  const startTime = options.timeBudgetMs === undefined ? undefined : readClock(clock!)
 
   for (let mask = 0; mask < totalBoards; mask += 1) {
     if (options.signal?.aborted) {
@@ -175,7 +178,7 @@ export function countMatchingBoardsReference(
     if (boardsExamined >= maxBoardsExamined) {
       return { status: 'node-limit', count, boardsExamined }
     }
-    if (startTime !== undefined && readClock(clock) - startTime >= options.timeBudgetMs!) {
+    if (startTime !== undefined && readClock(clock!) - startTime >= options.timeBudgetMs!) {
       return { status: 'time-limit', count, boardsExamined }
     }
 

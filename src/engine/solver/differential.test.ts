@@ -48,8 +48,12 @@ function validateReturnedWitnesses(
     return 1
   }
   if (result.status === 'multiple') {
-    validateSolutionBoard(result.solutions[0], puzzle)
-    validateSolutionBoard(result.solutions[1], puzzle)
+    for (const solution of result.solutions) {
+      validateSolutionBoard(solution, puzzle)
+    }
+    if (result.solutions.length !== 2) {
+      throw new Error(`multiple solver result returned ${result.solutions.length} witnesses`)
+    }
     return 2
   }
   return 0
