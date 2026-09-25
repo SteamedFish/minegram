@@ -77,8 +77,8 @@ The metric is the exact minimum worst-case number of binary cell guesses under t
 | `src/engine/generator/` | Deterministic random/structured layouts, immutable witness replay, fresh final proof, coverage, difficulty filtering, rollback, and typed budgets |
 | `src/application/gameReducer.ts` | Pure game state transitions and score rules |
 | `src/application/lineProgress.ts` | Derived completed runs, full-line state, and clue highlighting |
-| `src/application/generationController.ts` | Request IDs, worker lifecycle, cancellation, stale-message filtering |
-| `src/workers/` | Typed generation protocol and Worker adapter |
+| `src/application/generationClient.ts` | Request IDs, worker lifecycle, cancellation, stale-message filtering |
+| `src/application/generationWorker.ts` | Typed generation protocol and Worker adapter |
 | `src/ui/` | Settings, status, clue rails, board, legend, help, result/failure dialogs |
 | `src/styles/` | Responsive visual system and interaction states |
 

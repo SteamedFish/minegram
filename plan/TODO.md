@@ -27,10 +27,11 @@
 - [ ] Investigate a future generator/search improvement if nonstarter difficulty bands must be reachable in normal play.
 
 ## Phase 3 — Game Core and Worker
-- [ ] Implement pure game reducer and scoring/correction transitions.
-- [ ] Implement completed-run/full-line/contradiction selectors.
-- [ ] Implement typed Worker protocol, lifecycle, cancellation, and stale-result filtering.
-- [ ] Pass state-transition and Worker integration tests; complete Oracle gate.
+- [x] Implement pure game reducer and scoring/correction transitions.
+- [x] Implement completed-run/full-line/contradiction selectors.
+- [x] Implement typed Worker protocol, lifecycle, cancellation, and stale-result filtering.
+- [x] Pass state-transition and Worker integration tests; complete parent validation.
+- [ ] Complete the parent Phase 3 Oracle validation gate.
 
 ## Phase 4 — UI/UX
 - [ ] Implement responsive shell, settings, status, clue rails, and board.
