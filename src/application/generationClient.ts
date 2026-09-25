@@ -168,7 +168,12 @@ export class GenerationClient {
     return true
   }
 
-  /** Invalidates and releases the Worker without mutating reducer state. */
+  /**
+   * Invalidates the active request identity, releases the Worker, and clears an
+   * in-flight pending generation from the store. Without that final
+   * cancellation the reducer would reject every later `generation/start` with
+   * `not-generating` and the store could never leave `generating`.
+   */
   dispose(): void {
     if (this.disposed) {
       return
@@ -189,11 +194,20 @@ export class GenerationClient {
       // The Worker may already be gone.
     }
     this.terminate(active.worker)
+    this.dispatch({ type: 'generation/cancelled', generationId: active.generationId })
   }
 
   private startWithAction(action: GameAction): boolean {
     if (this.disposed || this.active !== null) {
       return false
+    }
+
+    // A pending generation this client does not own (for example one left
+    // behind by a disposed client) is an orphan: the reducer refuses to start
+    // again while it is set, so cancel it before requesting the new round.
+    const current = this.store.getState()
+    if (current.status === 'generating' && current.pendingGeneration !== null) {
+      this.dispatch({ type: 'generation/cancelled', generationId: current.pendingGeneration.id })
     }
 
     const previousGenerationId = this.store.getState().generationId

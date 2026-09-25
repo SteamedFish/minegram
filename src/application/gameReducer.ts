@@ -53,6 +53,12 @@ export interface PendingGeneration {
   readonly id: number
   readonly settings: GenerationSettings
   readonly roundNumber: number
+  /**
+   * `true` when this request continues the round after a win. The winning board
+   * is still the last playable round, so its settings must not be restored when
+   * this request fails: the derived next-round seed has to survive.
+   */
+  readonly continuesWonRound: boolean
 }
 
 export interface GameState {
@@ -158,6 +164,7 @@ export type GameResultReason =
   | 'invalid-cell-index'
   | 'invalid-cell-assertion'
   | 'locked-cell'
+  | 'cell-already-marked'
   | 'cell-already-unknown'
 
 export type GameReducerResult =
@@ -419,6 +426,7 @@ function startGeneration(
     id,
     settings: requestedSettings,
     roundNumber,
+    continuesWonRound: state.status === 'won',
   })
   const hasPlayableRound = state.board !== null && state.puzzle !== null
   return transition(
@@ -502,12 +510,16 @@ function failGeneration(
   transitionName: 'generation-failed' | 'generation-cancelled',
 ): GameReducerResult {
   const hasPlayableRound = state.board !== null && state.puzzle !== null
+  // A post-win failure must not roll the settings back to the solved round's
+  // seed, otherwise a later plain start would deterministically replay the
+  // already-solved board under a new round number.
+  const keepsOwnSettings = hasPlayableRound && !pending.continuesWonRound
   return transition(
     Object.freeze({
       ...state,
       status: 'failed',
       pendingGeneration: null,
-      settings: hasPlayableRound ? state.settings : pending.settings,
+      settings: keepsOwnSettings ? state.settings : pending.settings,
       failure: snapshotFailure(failure),
     }),
     transitionName,
@@ -593,9 +605,16 @@ function applyMarkBatch(state: GameState, value: unknown): GameReducerResult {
   const locked = [...state.locked]
   let score = state.score
   let changed = false
+  let sawLockedCell = false
 
   for (const { index, assertion } of prepared.cells) {
+    // Strict contract: re-asserting the mark a cell already carries is always
+    // free, in any batch. Only a different assertion can charge again.
+    if (marks[index] === assertion) {
+      continue
+    }
     if (locked[index]) {
+      sawLockedCell = true
       continue
     }
     marks[index] = assertion
@@ -622,7 +641,13 @@ function applyMarkBatch(state: GameState, value: unknown): GameReducerResult {
   }
 
   if (!changed) {
-    return ignored(state, 'locked-cell')
+    // Nothing was written. A locked cell in the batch is the reported reason
+    // (including mixed identical+locked batches); an all-identical batch is
+    // never mislabeled as 'locked-cell'.
+    if (sawLockedCell) {
+      return ignored(state, 'locked-cell')
+    }
+    return ignored(state, 'cell-already-marked')
   }
   const completed = marks.every(
     (mark, index) => mark !== 'unknown' && assertionMatchesBoard(board, index, mark),
@@ -727,6 +752,10 @@ export function previewMarkBatch(
   let affectedCount = 0
   let scoreCost = 0
   for (const { index, assertion } of prepared.cells) {
+    // Mirrors applyMarkBatch: an identical assertion is free and changes nothing.
+    if (state.marks[index] === assertion) {
+      continue
+    }
     if (state.locked[index]) {
       continue
     }

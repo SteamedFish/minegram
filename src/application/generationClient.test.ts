@@ -151,6 +151,26 @@ function createHarness(): {
   }
 }
 
+function attachClient(
+  bridge: ReturnType<typeof createGenerationStateBridge>,
+  actions: GameAction[],
+): { readonly client: GenerationClient; readonly workers: FakeWorker[] } {
+  const workers: FakeWorker[] = []
+  const client = new GenerationClient({
+    store: bridge,
+    dispatch(action) {
+      actions.push(action)
+      bridge.dispatch(action)
+    },
+    workerFactory() {
+      const worker = new FakeWorker()
+      workers.push(worker)
+      return worker
+    },
+  })
+  return { client, workers }
+}
+
 describe('GenerationClient', () => {
   it('dispatches start before a successful result and uses reducer pending settings', () => {
     const harness = createHarness()
@@ -240,18 +260,80 @@ describe('GenerationClient', () => {
     expect(harness.state().generationId).toBe(2)
   })
 
-  it('prevents duplicate starts and does not launch a pre-existing pending request', () => {
+  it('prevents duplicate starts for a request this client owns', () => {
     const duplicateHarness = createHarness()
     expect(duplicateHarness.client.start(settings)).toBe(true)
     expect(duplicateHarness.client.start(settings)).toBe(false)
     expect(duplicateHarness.workers).toHaveLength(1)
     expect(duplicateHarness.workers[0].sent).toHaveLength(1)
     expect(duplicateHarness.actions).toHaveLength(1)
+  })
 
-    const racedHarness = createHarness()
-    racedHarness.bridge.dispatch({ type: 'generation/start', settings })
-    expect(racedHarness.client.start(settings)).toBe(false)
-    expect(racedHarness.workers).toHaveLength(0)
+  it('takes over an orphaned pending generation before starting a new request', () => {
+    const harness = createHarness()
+    harness.bridge.dispatch({ type: 'generation/start', settings })
+    expect(harness.state()).toMatchObject({ status: 'generating', generationId: 1 })
+
+    expect(harness.client.start(settings)).toBe(true)
+
+    expect(harness.actions).toMatchObject([
+      { type: 'generation/cancelled', generationId: 1 },
+      { type: 'generation/start' },
+    ])
+    const request = requestFrom(harness.workers[0])
+    expect(request.generationId).toBe(2)
+    expect(harness.state()).toMatchObject({ status: 'generating', generationId: 2 })
+  })
+
+  it('clears an in-flight pending generation on dispose so a new client can start', () => {
+    const bridge = createGenerationStateBridge(createInitialGameState())
+    const actions: GameAction[] = []
+    const first = attachClient(bridge, actions)
+
+    expect(first.client.start(settings)).toBe(true)
+    const staleRequest = requestFrom(first.workers[0])
+
+    first.client.dispose()
+
+    expect(first.workers[0].terminateCount).toBe(1)
+    expect(actions.map((action) => action.type)).toEqual([
+      'generation/start',
+      'generation/cancelled',
+    ])
+    expect(bridge.getState()).toMatchObject({ status: 'failed', pendingGeneration: null })
+
+    first.workers[0].emitMessage(successFor(staleRequest))
+    expect(actions).toHaveLength(2)
+    expect(bridge.getState().status).toBe('failed')
+
+    const second = attachClient(bridge, actions)
+    expect(second.client.start(settings)).toBe(true)
+    const request = requestFrom(second.workers[0])
+    expect(request.generationId).toBe(2)
+    second.workers[0].emitMessage(successFor(request))
+    expect(bridge.getState().status).toBe('playing')
+  })
+
+  it('disposes without dispatching a cancellation when nothing is in flight', () => {
+    const idleHarness = createHarness()
+
+    idleHarness.client.dispose()
+
+    expect(idleHarness.actions).toEqual([])
+    expect(idleHarness.state()).toMatchObject({ status: 'idle', pendingGeneration: null })
+
+    const playingHarness = createHarness()
+    playingHarness.client.start(settings)
+    const worker = playingHarness.workers[0]
+    worker.emitMessage(successFor(requestFrom(worker)))
+    const playingState = playingHarness.state()
+    expect(playingState.status).toBe('playing')
+    const dispatched = playingHarness.actions.length
+
+    playingHarness.client.dispose()
+
+    expect(playingHarness.actions).toHaveLength(dispatched)
+    expect(playingHarness.state()).toBe(playingState)
   })
 
   it('handles a Worker response emitted synchronously during postMessage', () => {

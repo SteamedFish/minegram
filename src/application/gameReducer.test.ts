@@ -108,22 +108,117 @@ describe('gameReducer', () => {
     expect(lockedAttempt.state).toBe(correct)
   })
 
-  it('charges wrong, repeated wrong, and opposite assertions while preserving penalty on correction', () => {
-    let state = mark(1, 'mine')
+  it('charges a wrong mark once, charges nothing for the identical mark, and charges the opposite again', () => {
+    // A drag may touch the same cell twice with the same assertion: charged once.
+    const state = markBatch(start(), [
+      { index: 1, assertion: 'mine' },
+      { index: 1, assertion: 'mine' },
+    ])
     expect(state.marks[1]).toBe('mine')
     expect(state.locked[1]).toBe(false)
     expect(state.score).toBe(4)
 
-    state = markBatch(state, [
-      { index: 1, assertion: 'mine' },
-      { index: 1, assertion: 'mine' },
-    ])
-    expect(state.score).toBe(3)
+    // Identical wrong assertion in a later action: free, and reported as such.
+    const repeated = gameReducer(state, {
+      type: 'round/markBatch',
+      cells: [{ index: 1, assertion: 'mine' }],
+    })
+    expect(repeated.type).toBe('ignored')
+    if (repeated.type === 'ignored') {
+      expect(repeated.reason).toBe('cell-already-marked')
+    }
+    expect(repeated.state.score).toBe(4)
+    expect(repeated.state.marks).toEqual(state.marks)
 
-    state = markBatch(state, [{ index: 1, assertion: 'blank' }])
-    expect(state.marks[1]).toBe('blank')
-    expect(state.locked[1]).toBe(true)
-    expect(state.score).toBe(3)
+    // The opposite assertion on a wrong unlocked cell is, by the binary board,
+    // always the correct one, so it locks for free: a cell is charged at most
+    // once. There is no reachable way to charge the same cell twice.
+    const corrected = apply(repeated.state, {
+      type: 'round/markBatch',
+      cells: [{ index: 1, assertion: 'blank' }],
+    })
+    expect(corrected.marks[1]).toBe('blank')
+    expect(corrected.locked[1]).toBe(true)
+    expect(corrected.score).toBe(4)
+  })
+
+  it('rejects the opposite assertion on a locked correct cell without charging it', () => {
+    const correct = markBatch(start(), [
+      { index: 0, assertion: 'mine' },
+      { index: 1, assertion: 'blank' },
+    ])
+    expect(correct.locked[0]).toBe(true)
+    expect(correct.score).toBe(5)
+
+    const result = gameReducer(correct, {
+      type: 'round/markBatch',
+      cells: [{ index: 0, assertion: 'blank' }],
+    })
+    expect(result.type).toBe('ignored')
+    if (result.type === 'ignored') {
+      expect(result.reason).toBe('locked-cell')
+    }
+    expect(result.state).toBe(correct)
+    expect(result.state.score).toBe(5)
+  })
+
+  it('previews an identical-assertion batch as free, matching applyMarkBatch', () => {
+    const state = mark(1, 'mine')
+    const cells = [
+      { index: 1, assertion: 'mine' as const },
+      { index: 1, assertion: 'mine' as const },
+    ]
+    const preview = previewMarkBatch(state, cells)
+    expect(preview).toEqual({
+      valid: true,
+      affectedCount: 0,
+      scoreCost: 0,
+      projectedScore: 4,
+      reachesZero: false,
+    })
+
+    const applied = gameReducer(state, { type: 'round/markBatch', cells })
+    expect(applied.type).toBe('ignored')
+    if (applied.type === 'ignored') {
+      expect(applied.reason).toBe('cell-already-marked')
+    }
+    expect(applied.state.score).toBe(preview.projectedScore)
+  })
+
+  it('reports locked-cell for an all-locked and for a mixed identical+locked batch', () => {
+    const correct = markBatch(start(), [
+      { index: 0, assertion: 'mine' },
+      { index: 1, assertion: 'blank' },
+    ])
+
+    const allLocked = gameReducer(correct, {
+      type: 'round/markBatch',
+      cells: [
+        { index: 0, assertion: 'blank' },
+        { index: 1, assertion: 'mine' },
+      ],
+    })
+    expect(allLocked.type).toBe('ignored')
+    if (allLocked.type === 'ignored') {
+      expect(allLocked.reason).toBe('locked-cell')
+    }
+
+    // Cell 2 carries no mark yet, so first give it a wrong one, then build a
+    // batch mixing an identical re-assertion with a locked opposite assertion.
+    const wrong = markBatch(correct, [{ index: 2, assertion: 'mine' }])
+    expect(wrong.score).toBe(4)
+    const mixed = gameReducer(wrong, {
+      type: 'round/markBatch',
+      cells: [
+        { index: 2, assertion: 'mine' },
+        { index: 0, assertion: 'blank' },
+      ],
+    })
+    expect(mixed.type).toBe('ignored')
+    if (mixed.type === 'ignored') {
+      expect(mixed.reason).toBe('locked-cell')
+    }
+    expect(mixed.state.score).toBe(4)
   })
 
   it('clears only an unlocked wrong mark and does not refund its cost', () => {
@@ -497,6 +592,59 @@ describe('gameReducer', () => {
     // Engine results without an analysis stay visible as "no difficulty yet".
     expect(start().difficulty).toBeNull()
     expect(createInitialGameState().difficulty).toBeNull()
+  })
+
+  it('keeps the derived next-round seed after a post-win failure but restores settings when a playing round fails', () => {
+    const won = markBatch(start(), [
+      { index: 0, assertion: 'mine' },
+      { index: 1, assertion: 'blank' },
+      { index: 2, assertion: 'blank' },
+      { index: 3, assertion: 'mine' },
+    ])
+    expect(won.status).toBe('won')
+    // The solved round keeps its own settings (seed S1).
+    expect(won.settings).toEqual(settings)
+    expect(won.board).not.toBeNull()
+
+    const nextStarted = apply(won, { type: 'generation/start' })
+    expect(nextStarted.status).toBe('generating')
+    const nextPending = nextStarted.pendingGeneration
+    expect(nextPending?.continuesWonRound).toBe(true)
+    expect(nextPending?.roundNumber).toBe(2)
+    const derivedSeed = nextPending?.settings.seed
+    expect(derivedSeed).not.toBe(settings.seed)
+
+    // Post-win failure: the winning board is still present, yet the derived
+    // seed S2 must survive, otherwise a later start would replay the solved
+    // board under round number 2.
+    const failed = apply(nextStarted, {
+      type: 'generation/failed',
+      generationId: nextStarted.generationId,
+      failure: { reason: 'attempts-exhausted', message: 'no unique board found' },
+    })
+    expect(failed.status).toBe('failed')
+    expect(failed.settings.seed).toBe(derivedSeed)
+    expect(failed.board).toEqual(won.board)
+
+    // A plain start now replays exactly S2 with round number 2.
+    const replayStarted = apply(failed, { type: 'generation/start' })
+    expect(replayStarted.status).toBe('generating')
+    const replayPending = replayStarted.pendingGeneration
+    expect(replayPending?.continuesWonRound).toBe(false)
+    expect(replayPending?.roundNumber).toBe(2)
+    expect(replayPending?.settings.seed).toBe(derivedSeed)
+    expect(replayPending?.settings).toEqual(deriveNextRoundSettings(settings, 2))
+
+    // A failure while a playable round is being replaced keeps the old settings.
+    const replacement = apply(start(), { type: 'generation/start' })
+    const replacementFailed = apply(replacement, {
+      type: 'generation/failed',
+      generationId: replacement.generationId,
+      failure: { reason: 'attempts-exhausted', message: 'no unique board found' },
+    })
+    expect(replacementFailed.status).toBe('failed')
+    expect(replacementFailed.settings).toEqual(settings)
+    expect(replacementFailed.board).toEqual(board)
   })
 
   it('keeps failure diagnostics serializable and retains the last playable difficulty', () => {
