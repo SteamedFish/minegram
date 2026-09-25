@@ -54,7 +54,8 @@ The metric is the exact minimum worst-case number of binary cell guesses under t
 - A correct mark locks and does not increase score.
 - A wrong mark costs one point and remains visibly wrong.
 - The player may change a wrong mark to the opposite value; correcting it does not refund the point.
-- Re-asserting the mark a cell already carries is a no-op and never costs again; a cell can be charged at most once per distinct wrong assertion, and a drag can charge each affected cell only once.
+- A locked cell rejects any later assertion; a correct mark is final.
+- Re-asserting the mark a cell already carries is a no-op and never costs again; a cell is charged only when its mark is changed to a different value and that new value is wrong, and a drag can charge each affected cell only once.
 - Reaching zero ends the round immediately.
 
 ## 3. Technical Architecture

@@ -131,8 +131,9 @@ describe('gameReducer', () => {
     expect(repeated.state.marks).toEqual(state.marks)
 
     // The opposite assertion on a wrong unlocked cell is, by the binary board,
-    // always the correct one, so it locks for free: a cell is charged at most
-    // once. There is no reachable way to charge the same cell twice.
+    // always the correct one, so it locks for free. A cell is charged only when
+    // its mark changes to a different value and that new value is wrong; a
+    // cleared cell re-marked wrongly is charged again.
     const corrected = apply(repeated.state, {
       type: 'round/markBatch',
       cells: [{ index: 1, assertion: 'blank' }],
@@ -645,6 +646,118 @@ describe('gameReducer', () => {
     expect(replacementFailed.status).toBe('failed')
     expect(replacementFailed.settings).toEqual(settings)
     expect(replacementFailed.board).toEqual(board)
+  })
+
+  it('resumes a failed round that kept its board without resetting the round', () => {
+    const wrong = markBatch(start(), [{ index: 1, assertion: 'mine' }])
+    expect(wrong.score).toBe(4)
+    const started = apply(wrong, { type: 'generation/start' })
+    const failed = apply(started, {
+      type: 'generation/failed',
+      generationId: started.generationId,
+      failure: { reason: 'attempts-exhausted', message: 'no unique board found' },
+    })
+    expect(failed.status).toBe('failed')
+    expect(failed.failure).not.toBeNull()
+
+    const result = gameReducer(failed, { type: 'round/resume' })
+    expect(result.type).toBe('transition')
+    if (result.type !== 'transition') {
+      throw new Error('expected resume transition')
+    }
+    expect(result.transition).toBe('round-resumed')
+    const resumed = result.state
+    expect(resumed.status).toBe('playing')
+    expect(resumed.pendingGeneration).toBeNull()
+    expect(resumed.failure).toBeNull()
+    expect(resumed.board).toBe(failed.board)
+    expect(resumed.puzzle).toBe(failed.puzzle)
+    expect(resumed.marks).toEqual(failed.marks)
+    expect(resumed.locked).toEqual(failed.locked)
+    expect(resumed.score).toBe(failed.score)
+    expect(resumed.score).toBe(4)
+    expect(resumed.round).toBe(failed.round)
+    expect(resumed.settings).toBe(failed.settings)
+    expect(resumed.generationId).toBe(failed.generationId)
+    expect(resumed.difficulty).toBe(failed.difficulty)
+  })
+
+  it('ignores resume unless a failed round kept a board', () => {
+    const idle = createInitialGameState({ settings, initialScore: 5 })
+    const generating = apply(idle, { type: 'generation/start' })
+    const playing = start()
+    const won = markBatch(start(), [
+      { index: 0, assertion: 'mine' },
+      { index: 1, assertion: 'blank' },
+      { index: 2, assertion: 'blank' },
+      { index: 3, assertion: 'mine' },
+    ])
+    const lost = apply(start(settings, 1), {
+      type: 'round/markBatch',
+      cells: [{ index: 1, assertion: 'mine' }],
+    })
+    // A failure with no board to keep cannot be resumed.
+    const failedWithoutBoard = apply(generating, {
+      type: 'generation/failed',
+      generationId: generating.generationId,
+      failure: { reason: 'attempts-exhausted', message: 'no unique board found' },
+    })
+    expect(failedWithoutBoard.status).toBe('failed')
+    expect(failedWithoutBoard.board).toBeNull()
+    expect(failedWithoutBoard.puzzle).toBeNull()
+
+    for (const state of [idle, generating, playing, won, lost, failedWithoutBoard]) {
+      const result = gameReducer(state, { type: 'round/resume' })
+      expect(result.type).toBe('ignored')
+      if (result.type === 'ignored') {
+        expect(result.reason).toBe('round-not-resumable')
+      }
+      expect(result.state).toBe(state)
+    }
+  })
+
+  it('keeps a wrong mark wrong across a resume and accepts marks afterwards', () => {
+    const wrong = markBatch(start(), [{ index: 1, assertion: 'mine' }])
+    const started = apply(wrong, { type: 'generation/start' })
+    const failed = apply(started, {
+      type: 'generation/cancelled',
+      generationId: started.generationId,
+    })
+    expect(failed.status).toBe('failed')
+    const resumed = apply(failed, { type: 'round/resume' })
+    expect(resumed.status).toBe('playing')
+    expect(resumed.marks[1]).toBe('mine')
+    expect(resumed.locked[1]).toBe(false)
+    expect(resumed.score).toBe(4)
+
+    // The identical assertion is still free after resuming, and the cell keeps
+    // its wrong mark: resume neither re-scores nor forgives.
+    const repeated = gameReducer(resumed, {
+      type: 'round/markBatch',
+      cells: [{ index: 1, assertion: 'mine' }],
+    })
+    expect(repeated.type).toBe('ignored')
+    if (repeated.type === 'ignored') {
+      expect(repeated.reason).toBe('cell-already-marked')
+    }
+    expect(repeated.state.marks[1]).toBe('mine')
+    expect(repeated.state.locked[1]).toBe(false)
+    expect(repeated.state.score).toBe(4)
+
+    // Resume is not a generation restart: marking is accepted again, no seed
+    // or round change, and the correct assertion still locks.
+    const corrected = apply(resumed, {
+      type: 'round/markBatch',
+      cells: [{ index: 1, assertion: 'blank' }],
+    })
+    expect(corrected.status).toBe('playing')
+    expect(corrected.round).toBe(resumed.round)
+    expect(corrected.settings).toBe(resumed.settings)
+    expect(corrected.generationId).toBe(resumed.generationId)
+    expect(corrected.pendingGeneration).toBeNull()
+    expect(corrected.marks[1]).toBe('blank')
+    expect(corrected.locked[1]).toBe(true)
+    expect(corrected.score).toBe(4)
   })
 
   it('keeps failure diagnostics serializable and retains the last playable difficulty', () => {

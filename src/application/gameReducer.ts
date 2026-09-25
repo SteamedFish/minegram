@@ -134,6 +134,10 @@ export interface GameClearMarkAction {
   readonly index: number
 }
 
+export interface GameResumeRoundAction {
+  readonly type: 'round/resume'
+}
+
 export type GameAction =
   | GameGenerationStartAction
   | GameGenerationSucceededAction
@@ -141,6 +145,7 @@ export type GameAction =
   | GameGenerationCancelledAction
   | GameMarkBatchAction
   | GameClearMarkAction
+  | GameResumeRoundAction
 
 export type GameTransition =
   | 'generation-started'
@@ -151,6 +156,7 @@ export type GameTransition =
   | 'round-won'
   | 'round-lost'
   | 'mark-cleared'
+  | 'round-resumed'
 
 export type GameResultReason =
   | 'not-generating'
@@ -163,6 +169,7 @@ export type GameResultReason =
   | 'conflicting-assertions'
   | 'invalid-cell-index'
   | 'invalid-cell-assertion'
+  | 'round-not-resumable'
   | 'locked-cell'
   | 'cell-already-marked'
   | 'cell-already-unknown'
@@ -687,6 +694,29 @@ function clearMark(state: GameState, index: number): GameReducerResult {
   )
 }
 
+/**
+ * Restores play on a board that a failed or cancelled generation attempt kept.
+ * A failure while a playable round is present leaves `board`, `puzzle`, marks
+ * and score in place, but `failGeneration` must report the failure, so the kept
+ * board would otherwise be stuck: `applyMarkBatch` only accepts a `playing`
+ * round. Resuming is not a new round: score, marks, round, seed and generation
+ * id are carried over untouched, and no generation is requested.
+ */
+function resumeRound(state: GameState): GameReducerResult {
+  if (state.puzzle === null || state.board === null || state.status !== 'failed') {
+    return ignored(state, 'round-not-resumable')
+  }
+  return transition(
+    Object.freeze({
+      ...state,
+      status: 'playing',
+      pendingGeneration: null,
+      failure: null,
+    }),
+    'round-resumed',
+  )
+}
+
 export function gameReducer(state: GameState, action: GameAction): GameReducerResult {
   switch (action.type) {
     case 'generation/start':
@@ -718,6 +748,8 @@ export function gameReducer(state: GameState, action: GameAction): GameReducerRe
       return applyMarkBatch(state, action.cells)
     case 'round/clearMark':
       return clearMark(state, action.index)
+    case 'round/resume':
+      return resumeRound(state)
   }
 }
 

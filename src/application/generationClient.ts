@@ -122,13 +122,15 @@ export class GenerationClient {
   }
 
   /**
-   * The caller invokes this explicitly after a win. The reducer receives the
-   * current base settings and derives the deterministic next-round seed.
+   * The caller invokes this explicitly after a win. The action deliberately
+   * carries no explicit settings: the reducer reads `state.settings` when it
+   * processes the start, after any orphan pending generation has been
+   * cancelled, so the derived next-round seed survives the handoff instead of
+   * a stale pre-cancellation seed replaying the solved board.
    */
   startNextRound(initialScore?: number): boolean {
     return this.startWithAction({
       type: 'generation/start',
-      settings: this.store.getState().settings,
       ...(initialScore === undefined ? {} : { initialScore }),
     })
   }

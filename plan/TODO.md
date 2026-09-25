@@ -31,6 +31,8 @@
 - [x] Implement completed-run/full-line/contradiction selectors.
 - [x] Implement typed Worker protocol, lifecycle, cancellation, and stale-result filtering.
 - [x] Pass state-transition and Worker integration tests; complete parent validation.
+- [x] Close the Phase 3 Oracle findings (post-win seed replay, dispose liveness, per-cell charging) and tighten the documented scoring rule.
+- [x] Add `round/resume` so a board kept by a failed or cancelled generation attempt stays playable.
 - [ ] Complete the parent Phase 3 Oracle validation gate.
 
 ## Phase 4 — UI/UX

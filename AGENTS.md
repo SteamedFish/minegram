@@ -38,8 +38,8 @@ Dependencies point inward: `domain <- engine <- application <- ui`; the worker a
 - Default board: 15×15, 60% mines, initial score 5.
 - Final boards contain at least one mine in every row and column.
 - Ordered run clues preserve sequence; internal separators require at least one blank.
-- Correct marks lock. Wrong marks cost one point and may be corrected without refund. Score is clamped to zero and zero ends the game.
-- Re-asserting the mark a cell already carries is free; a cell is charged at most once per distinct wrong assertion.
+- Correct marks lock, and a locked cell rejects any later assertion. Wrong marks cost one point and may be corrected without refund. Score is clamped to zero and zero ends the game.
+- Re-asserting the mark a cell already carries is free. A cell is charged only when its mark is changed to a different value and that new value is wrong.
 - A drag applies each cell at most once and previews its score cost before commit.
 - Correct completion of every cell wins and automatically generates the next puzzle with the same settings and a new seed.
 

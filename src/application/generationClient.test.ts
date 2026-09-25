@@ -171,6 +171,33 @@ function attachClient(
   return { client, workers }
 }
 
+/**
+ * Round 1 is won, then a pending generation is left behind by a disposed
+ * client: the store is `generating` with a pending request carrying the derived
+ * next-round seed while `state.settings` still holds round 1's seed.
+ */
+function createPostWinOrphanStore(): {
+  readonly bridge: ReturnType<typeof createGenerationStateBridge>
+  readonly nextRoundSettings: GenerationSettings
+} {
+  const bridge = createGenerationStateBridge(createInitialGameState())
+  bridge.dispatch({ type: 'generation/start', settings })
+  bridge.dispatch({ type: 'generation/succeeded', generationId: 1, round: roundFor(settings) })
+  bridge.dispatch({
+    type: 'round/markBatch',
+    cells: [
+      { index: 0, assertion: 'mine' },
+      { index: 1, assertion: 'blank' },
+      { index: 2, assertion: 'blank' },
+      { index: 3, assertion: 'mine' },
+    ],
+  })
+  expect(bridge.getState().status).toBe('won')
+  const nextRoundSettings = deriveNextRoundSettingsFromReducer(settings, 2)
+  bridge.dispatch({ type: 'generation/start' })
+  return { bridge, nextRoundSettings }
+}
+
 describe('GenerationClient', () => {
   it('dispatches start before a successful result and uses reducer pending settings', () => {
     const harness = createHarness()
@@ -283,6 +310,46 @@ describe('GenerationClient', () => {
     const request = requestFrom(harness.workers[0])
     expect(request.generationId).toBe(2)
     expect(harness.state()).toMatchObject({ status: 'generating', generationId: 2 })
+  })
+
+  it('starts a post-win orphan with the derived next-round seed through start()', () => {
+    const { bridge, nextRoundSettings } = createPostWinOrphanStore()
+    const orphan = bridge.getState()
+    expect(orphan.settings.seed).toBe(settings.seed)
+    expect(orphan.pendingGeneration?.settings.seed).toBe(nextRoundSettings.seed)
+    const actions: GameAction[] = []
+    const attached = attachClient(bridge, actions)
+
+    expect(attached.client.start()).toBe(true)
+
+    expect(actions.map((action) => action.type)).toEqual([
+      'generation/cancelled',
+      'generation/start',
+    ])
+    const pending = bridge.getState().pendingGeneration
+    expect(pending?.settings.seed).toBe(nextRoundSettings.seed)
+    expect(pending?.settings.seed).not.toBe(settings.seed)
+    expect(requestFrom(attached.workers[0]).settings.seed).toBe(nextRoundSettings.seed)
+  })
+
+  it('starts a post-win orphan with the derived next-round seed through startNextRound()', () => {
+    const { bridge, nextRoundSettings } = createPostWinOrphanStore()
+    const orphan = bridge.getState()
+    expect(orphan.settings.seed).toBe(settings.seed)
+    expect(orphan.pendingGeneration?.settings.seed).toBe(nextRoundSettings.seed)
+    const actions: GameAction[] = []
+    const attached = attachClient(bridge, actions)
+
+    expect(attached.client.startNextRound()).toBe(true)
+
+    expect(actions.map((action) => action.type)).toEqual([
+      'generation/cancelled',
+      'generation/start',
+    ])
+    const pending = bridge.getState().pendingGeneration
+    expect(pending?.settings.seed).toBe(nextRoundSettings.seed)
+    expect(pending?.settings.seed).not.toBe(settings.seed)
+    expect(requestFrom(attached.workers[0]).settings.seed).toBe(nextRoundSettings.seed)
   })
 
   it('clears an in-flight pending generation on dispose so a new client can start', () => {
