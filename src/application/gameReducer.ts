@@ -582,6 +582,15 @@ function assertionMatchesBoard(board: BinaryMineBoard, index: number, assertion:
 }
 
 /**
+ * The single win gate: every cell is explicitly asserted and every assertion is
+ * correct. Both the `applyMarkBatch` win transition and the `resumeRound`
+ * completed-board guard call this, so the two can never drift apart.
+ */
+function roundIsComplete(board: BinaryMineBoard, marks: readonly CellMark[]): boolean {
+  return marks.every((mark, index) => mark !== 'unknown' && assertionMatchesBoard(board, index, mark))
+}
+
+/**
  * A win keeps the finished board, marks, and score so the UI can show the
  * completed round, and deliberately consumes no generation slot. The next round
  * is requested by an explicit `generation/start`, which derives the new
@@ -656,9 +665,7 @@ function applyMarkBatch(state: GameState, value: unknown): GameReducerResult {
     }
     return ignored(state, 'cell-already-marked')
   }
-  const completed = marks.every(
-    (mark, index) => mark !== 'unknown' && assertionMatchesBoard(board, index, mark),
-  )
+  const completed = roundIsComplete(board, marks)
   const nextState = Object.freeze({
     ...state,
     score,
@@ -701,10 +708,20 @@ function clearMark(state: GameState, index: number): GameReducerResult {
  * board would otherwise be stuck: `applyMarkBatch` only accepts a `playing`
  * round. Resuming is not a new round: score, marks, round, seed and generation
  * id are carried over untouched, and no generation is requested.
+ *
+ * A failure can also keep a board that is already finished — a failure after a
+ * win leaves the fully correct, fully locked board behind. Resuming that as
+ * `playing` would soft-lock: every cell is locked, so no batch can fire the win
+ * gate again. Such a board is handed to `beginNextRound` instead, which is the
+ * same post-win handoff the win gate uses. `won` is not resumable, so the round
+ * cannot loop back into this branch.
  */
 function resumeRound(state: GameState): GameReducerResult {
   if (state.puzzle === null || state.board === null || state.status !== 'failed') {
     return ignored(state, 'round-not-resumable')
+  }
+  if (roundIsComplete(state.board, state.marks)) {
+    return transition(beginNextRound(state), 'round-resumed')
   }
   return transition(
     Object.freeze({

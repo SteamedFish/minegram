@@ -682,6 +682,62 @@ describe('gameReducer', () => {
     expect(resumed.difficulty).toBe(failed.difficulty)
   })
 
+  it('resumes a post-win failure as won instead of soft-locking the finished board', () => {
+    const won = markBatch(start(), [
+      { index: 0, assertion: 'mine' },
+      { index: 1, assertion: 'blank' },
+      { index: 2, assertion: 'blank' },
+      { index: 3, assertion: 'mine' },
+    ])
+    expect(won.status).toBe('won')
+    expect(won.marks.every((mark) => mark !== 'unknown')).toBe(true)
+    expect(won.locked.every(Boolean)).toBe(true)
+
+    const started = apply(won, { type: 'generation/start' })
+    const failed = apply(started, {
+      type: 'generation/failed',
+      generationId: started.generationId,
+      failure: { reason: 'attempts-exhausted', message: 'no unique board found' },
+    })
+    expect(failed.status).toBe('failed')
+    // The kept board is already finished: resuming it as 'playing' would lock.
+    expect(failed.marks.every((mark) => mark !== 'unknown')).toBe(true)
+    expect(failed.locked.every(Boolean)).toBe(true)
+
+    const result = gameReducer(failed, { type: 'round/resume' })
+    expect(result.type).toBe('transition')
+    if (result.type !== 'transition') {
+      throw new Error('expected resume transition')
+    }
+    expect(result.transition).toBe('round-resumed')
+    const resumed = result.state
+    expect(resumed.status).toBe('won')
+    expect(resumed.pendingGeneration).toBeNull()
+    expect(resumed.failure).toBeNull()
+    expect(resumed.board).toBe(failed.board)
+    expect(resumed.puzzle).toBe(failed.puzzle)
+    expect(resumed.marks).toEqual(failed.marks)
+    expect(resumed.locked).toEqual(failed.locked)
+    expect(resumed.score).toBe(failed.score)
+    expect(resumed.round).toBe(failed.round)
+    expect(resumed.settings).toBe(failed.settings)
+
+    // 'won' is not resumable, so the branch cannot loop.
+    const again = gameReducer(resumed, { type: 'round/resume' })
+    expect(again.type).toBe('ignored')
+    if (again.type === 'ignored') {
+      expect(again.reason).toBe('round-not-resumable')
+    }
+
+    // The post-win advance still works, with a newly derived seed.
+    const nextStarted = apply(resumed, { type: 'generation/start' })
+    expect(nextStarted.status).toBe('generating')
+    const pending = nextStarted.pendingGeneration
+    expect(pending?.roundNumber).toBe(2)
+    expect(pending?.settings).toEqual(deriveNextRoundSettings(failed.settings, 2))
+    expect(pending?.settings.seed).not.toBe(settings.seed)
+  })
+
   it('ignores resume unless a failed round kept a board', () => {
     const idle = createInitialGameState({ settings, initialScore: 5 })
     const generating = apply(idle, { type: 'generation/start' })
