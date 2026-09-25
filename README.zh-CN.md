@@ -12,3 +12,19 @@ Minegram 是一款围绕“有顺序的连续地雷段”设计的网页解谜�
 - 地雷/空白标记、纠错、计分、拖动批量标记与键盘操作
 - 响应式且无障碍友好的界面
 - GitHub Pages 部署
+
+## Phase 0 基础
+
+仓库现在包含 Node 24+、React、TypeScript 与 Vite 基础工程。当前仅提供 Phase 0 的占位应用外壳，暂未实现游戏算法或视觉设计。
+
+安装依赖并运行可复现检查：
+
+```sh
+npm ci
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+Vite 的生产环境 base path 为 `/minegram/`，GitHub Pages 工作流会上传生成的 `dist/` 目录。

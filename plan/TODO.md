@@ -1,9 +1,9 @@
 # Minegram TODO
 
 ## Phase 0 — Foundation
-- [ ] Scaffold React/TypeScript/Vite project and scripts.
-- [ ] Add lint, typecheck, test, and production build configuration.
-- [ ] Create bilingual README files and GitHub Pages deployment workflow.
+- [x] Scaffold React/TypeScript/Vite project and scripts.
+- [x] Add lint, typecheck, test, and production build configuration.
+- [x] Create bilingual README files and GitHub Pages deployment workflow.
 - [ ] Create and verify the initial GPG-signed foundation commit.
 
 ## Phase 1 — Domain and Solver
