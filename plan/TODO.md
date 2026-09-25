@@ -7,12 +7,13 @@
 - [x] Create and verify the initial GPG-signed foundation commit.
 
 ## Phase 1 — Domain and Solver
-- [ ] Implement board types, coverage validation, and ordered clue codec.
-- [ ] Implement seeded deterministic RNG.
-- [ ] Implement exhaustive small-board reference counter.
-- [ ] Implement finite-domain propagation and count-to-two uniqueness solver.
-- [ ] Add cancellation, node/time budgets, and fail-closed result statuses.
-- [ ] Pass differential, unit, and adversarial solver tests; complete Oracle gate.
+- [x] Implement board types, coverage validation, and ordered clue codec.
+- [x] Implement seeded deterministic RNG.
+- [x] Implement exhaustive small-board reference counter.
+- [x] Implement finite-domain propagation and count-to-two uniqueness solver.
+- [x] Add cancellation, node/time budgets, and fail-closed result statuses.
+- [x] Pass differential, unit, and adversarial solver tests in this worktree.
+- [ ] Complete the parent Oracle validation gate.
 
 ## Phase 2 — Generator and Difficulty
 - [ ] Implement transactional growth with unique-completion witnesses.
