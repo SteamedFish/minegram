@@ -13,7 +13,7 @@
 - [x] Implement finite-domain propagation and count-to-two uniqueness solver.
 - [x] Add cancellation, node/time budgets, and fail-closed result statuses.
 - [x] Pass differential, unit, and adversarial solver tests in this worktree.
-- [ ] Complete the parent Oracle validation gate.
+- [x] Complete the parent Oracle validation gate (PASS on signed commit `acd3812`).
 
 ## Phase 2 — Generator and Difficulty
 - [ ] Implement transactional growth with unique-completion witnesses.
