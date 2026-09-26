@@ -2,7 +2,12 @@ import { bandLabel, interpolate, type Copy } from '../copy'
 import type { DifficultyView, ScoreView, StatusView } from '../viewModel'
 
 /**
- * The sticky masthead: wordmark, status chips, score, settings disclosure.
+ * The sticky masthead: wordmark, status chips, score, and the two side-panel
+ * disclosures. Each disclosure genuinely shows and hides its panel — the grid
+ * column collapses with it — and App.tsx remembers both states, so a collapsed
+ * panel is always one banner button away. The banner is sticky and always
+ * rendered, which is what makes "the panel is gone" never mean "the way back
+ * is gone".
  *
  * It is presentational and reads only from `StatusView` (§2.3). The only
  * exception to "no literal strings" is the wordmark itself, which is the product
@@ -15,6 +20,9 @@ export interface AppBannerProps {
   readonly settingsExpanded: boolean
   readonly onToggleSettings: () => void
   readonly settingsId: string
+  readonly legendExpanded: boolean
+  readonly onToggleLegend: () => void
+  readonly legendId: string
 }
 
 export function AppBanner({
@@ -23,6 +31,9 @@ export function AppBanner({
   settingsExpanded,
   onToggleSettings,
   settingsId,
+  legendExpanded,
+  onToggleLegend,
+  legendId,
 }: AppBannerProps) {
   return (
     <header className="mg-banner">
@@ -30,11 +41,17 @@ export function AppBanner({
       <div className="mg-banner__row">
         <StatusChipRow t={t} status={status} />
         <ScoreDisplay t={t} score={status.score} />
-        <SettingsToggle
-          t={t}
+        <PanelToggle
           expanded={settingsExpanded}
           controls={settingsId}
+          label={settingsExpanded ? t.settings.close : t.settings.open}
           onToggle={onToggleSettings}
+        />
+        <PanelToggle
+          expanded={legendExpanded}
+          controls={legendId}
+          label={legendExpanded ? t.legend.close : t.legend.open}
+          onToggle={onToggleLegend}
         />
       </div>
     </header>
@@ -156,26 +173,31 @@ export function ScoreDisplay({ t, score }: { readonly t: Copy; readonly score: S
   )
 }
 
-export function SettingsToggle({
-  t,
+/**
+ * One side-panel disclosure. It is a real show/hide toggle — `aria-expanded`
+ * tells the truth about whether the panel it names is on screen — not the old
+ * editability gate, which left the panel visible but inert and is gone.
+ */
+export function PanelToggle({
   expanded,
   controls,
+  label,
   onToggle,
 }: {
-  readonly t: Copy
   readonly expanded: boolean
   readonly controls: string
+  readonly label: string
   readonly onToggle: () => void
 }) {
   return (
     <button
-      className="mg-banner__settings"
+      className="mg-banner__panel-toggle"
       type="button"
       aria-expanded={expanded}
       aria-controls={controls}
       onClick={onToggle}
     >
-      {expanded ? t.settings.close : t.settings.open}
+      {label}
     </button>
   )
 }

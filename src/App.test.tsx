@@ -391,6 +391,25 @@ describe('App failure surface', () => {
     expect(labels).not.toContain('Retry the same settings')
     expect(labels.some((label) => label !== null && label.includes('seed'))).toBe(true)
   })
+
+  it('re-opens a hidden settings panel from the failure report and moves focus to it', async () => {
+    install(failedState('worker-error', baseState()))
+    render(<App />)
+
+    // Collapse the panel first, so the button has something to undo.
+    const aside = one('.mg-side--left')
+    click(one('.mg-banner button[aria-controls="mg-settings-panel"]'))
+    expect(aside.hasAttribute('hidden')).toBe(true)
+
+    click(one('.mg-failure button[aria-controls="mg-settings"]'))
+    expect(aside.hasAttribute('hidden')).toBe(false)
+
+    // The handoff runs in a rAF after the commit that un-hides the aside.
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
+    })
+    expect(document.activeElement).toBe(one('#mg-settings'))
+  })
 })
 
 describe('App chrome', () => {
@@ -427,18 +446,47 @@ describe('App chrome', () => {
     expect(container.textContent).not.toContain('Printing round')
   })
 
-  it('opens the settings panel from the banner toggle and closes it again', () => {
+  it('hides the settings panel from the banner toggle, shows it again, and remembers both', () => {
     install(baseState())
     render(<App />)
 
     const aside = one('.mg-side--left')
-    const toggle = one('.mg-banner button[aria-expanded]')
+    const app = one('.mg-app')
+    const toggle = one('.mg-banner button[aria-controls="mg-settings-panel"]')
+    // Shown by default: the disclosure is expanded and the aside is on the page.
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(aside.getAttribute('data-expanded')).toBe('true')
+    expect(aside.hasAttribute('hidden')).toBe(false)
 
     click(toggle)
+    // Hidden for real: the aside leaves the page, the grid claim follows, and the
+    // choice is stored, so a reload restores the same chrome.
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(aside.getAttribute('data-expanded')).toBe('false')
+    expect(aside.hasAttribute('hidden')).toBe(true)
+    expect(app.getAttribute('data-left-panel')).toBe('hidden')
+    expect(window.localStorage.getItem('minegram.panel.settings')).toBe('false')
+
+    click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(aside.hasAttribute('hidden')).toBe(false)
+    expect(app.getAttribute('data-left-panel')).toBe('shown')
+    expect(window.localStorage.getItem('minegram.panel.settings')).toBe('true')
+  })
+
+  it('hides the legend panel from its own banner toggle, independently of settings', () => {
+    install(baseState())
+    render(<App />)
+
+    const legend = one('.mg-side--right')
+    const settings = one('.mg-side--left')
+    const toggle = one('.mg-banner button[aria-controls="mg-legend-panel"]')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+
+    click(toggle)
+    expect(legend.hasAttribute('hidden')).toBe(true)
+    expect(one('.mg-app').getAttribute('data-right-panel')).toBe('hidden')
+    expect(window.localStorage.getItem('minegram.panel.legend')).toBe('false')
+    // The settings panel is untouched: each disclosure owns exactly one panel.
+    expect(settings.hasAttribute('hidden')).toBe(false)
   })
 
   it('seeds the settings panel from the settings actually running', () => {

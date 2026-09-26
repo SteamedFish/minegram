@@ -12,11 +12,14 @@
      nobody later inserts a sixth region and quietly loses a track. The
      assertion lives in the comment because the selector itself may not exist:
      see `.mg-app > :nth-child(5)`.
-   * The left aside's responsive collapse is HYDRATION, not CSS. `App.tsx` owns
-     `settingsExpanded` and sets `inert` on the aside, and this file only
-     decides where the panel *sits* when it is open. That is the only split
-     that keeps one truth: at 32rem and at 1400px the same open panel is a full
-     row and a column respectively, with no `matchMedia` anywhere.
+   * Side-panel visibility is HYDRATION, not CSS. `App.tsx` owns the two stored
+     flags, sets `hidden` on the aside and `data-left-panel`/`data-right-panel`
+     on `.mg-app`, and this file re-spells the grid template for each
+     combination, because an empty named area would still hold its 20rem column
+     and its gap. That is the only split that keeps one truth: at 32rem and at
+     1400px the same open panel is a full row and a column respectively, with
+     no `matchMedia` anywhere. The way back is the sticky banner's disclosure,
+     which is always rendered, so a hidden panel can never be unreachable.
    * The load reveal sets its own `--i` per region rather than taking an inline
      style, so the stagger is readable in this file and React stays free of
      presentation.
@@ -64,6 +67,43 @@
 
 .mg-app > :nth-child(4) {
   grid-area: right;
+}
+
+/* `.mg-side` sets `display: grid`, which beats the user-agent `[hidden]` rule
+   (author origin wins), so the attribute needs an author-level restatement. */
+.mg-side[hidden] {
+  display: none;
+}
+
+/* The wide grid, minus a hidden panel. `App.tsx` flips the data attributes and
+   the `hidden` attribute together; these rules take the hidden panel's TRACK
+   away too, so the board's column grows into the freed width instead of an
+   empty 20rem column sitting beside it. Scoped to the wide layout: the two
+   collapses below re-spell the stacked templates for the same combinations. */
+@media (width >= 74rem) {
+  .mg-app[data-left-panel='hidden']:not([data-right-panel='hidden']) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 20rem);
+    grid-template-areas:
+      'banner banner'
+      'main   right'
+      'footer footer';
+  }
+
+  .mg-app[data-right-panel='hidden']:not([data-left-panel='hidden']) {
+    grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+    grid-template-areas:
+      'banner banner'
+      'left   main'
+      'footer footer';
+  }
+
+  .mg-app[data-left-panel='hidden'][data-right-panel='hidden'] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'banner'
+      'main'
+      'footer';
+  }
 }
 
 .mg-main {
@@ -129,7 +169,7 @@
   justify-content: space-between;
 }
 
-.mg-banner__settings {
+.mg-banner__panel-toggle {
   flex: none;
   padding: var(--sp-1) var(--sp-3);
   font-family: var(--font-body);
@@ -154,13 +194,13 @@
    hover block on purpose: both weigh the same, and a momentary hover must not
    un-press a pill that is still open. */
 @media (hover: hover) {
-  .mg-banner__settings:hover {
+  .mg-banner__panel-toggle:hover {
     color: var(--ink);
     border-color: var(--rule-hc);
   }
 }
 
-.mg-banner__settings[aria-expanded='true'] {
+.mg-banner__panel-toggle[aria-expanded='true'] {
   color: var(--accent-ink);
   background-color: var(--accent);
   border-color: var(--accent);
@@ -325,6 +365,31 @@
       'footer footer';
   }
 
+  /* A hidden panel's row comes out of the stack too, or the empty named area
+     would still spend the gaps around it. */
+  .mg-app[data-left-panel='hidden']:not([data-right-panel='hidden']) {
+    grid-template-areas:
+      'banner banner'
+      'main   main'
+      'right  right'
+      'footer footer';
+  }
+
+  .mg-app[data-right-panel='hidden']:not([data-left-panel='hidden']) {
+    grid-template-areas:
+      'banner banner'
+      'left   left'
+      'main   main'
+      'footer footer';
+  }
+
+  .mg-app[data-left-panel='hidden'][data-right-panel='hidden'] {
+    grid-template-areas:
+      'banner banner'
+      'main   main'
+      'footer footer';
+  }
+
   .mg-side--right {
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
     gap: var(--sp-4);
@@ -345,6 +410,29 @@
       'footer';
     gap: var(--sp-3);
     padding: var(--sp-2) var(--sp-2) var(--sp-4);
+  }
+
+  .mg-app[data-left-panel='hidden']:not([data-right-panel='hidden']) {
+    grid-template-areas:
+      'banner'
+      'main'
+      'right'
+      'footer';
+  }
+
+  .mg-app[data-right-panel='hidden']:not([data-left-panel='hidden']) {
+    grid-template-areas:
+      'banner'
+      'left'
+      'main'
+      'footer';
+  }
+
+  .mg-app[data-left-panel='hidden'][data-right-panel='hidden'] {
+    grid-template-areas:
+      'banner'
+      'main'
+      'footer';
   }
 }
 
@@ -367,7 +455,7 @@
     transform: none;
   }
 
-  .mg-banner__settings {
+  .mg-banner__panel-toggle {
     transition: none;
   }
 }

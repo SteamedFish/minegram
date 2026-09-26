@@ -564,10 +564,6 @@
   border-block-end: var(--clue-run-underline);
 }
 
-.mg-legend__swatch .mg-run-tape[data-run='complete'] {
-  border-block-end: var(--clue-run-underline-complete);
-}
-
 /* -----------------------------------------------------------------------------
    8. The header's readouts — the chip row and the score
    The banner's frame is layout.css; these are the two things inside it that

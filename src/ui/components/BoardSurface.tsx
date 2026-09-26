@@ -52,7 +52,9 @@ import { BoardEmptyState } from './BoardEmptyState'
  * so the rows stay real elements and each one repeats the template.
  *
  * The only measurement in the file is the Fit cell size, which §1.7 explicitly
- * sanctions: a `ResizeObserver` on the scroller, floored at 24px and capped at 44px.
+ * sanctions: a `ResizeObserver` on the scroller, floored at 24px and capped at 56px.
+ * The fixed zoom steps above that — including the two that are meant to overflow
+ * the pane — need no measurement at all: the pane caps its own height and scrolls.
  */
 export interface BoardSurfaceProps {
   readonly t: Copy
@@ -73,9 +75,11 @@ const ZOOM_CELL: Readonly<Record<Exclude<ZoomStep, 'fit'>, string>> = {
   s: '26px',
   m: '32px',
   l: '40px',
+  xl: '56px',
+  xxl: '72px',
 }
 const FIT_FLOOR_PX = 24
-const FIT_CEILING_PX = 44
+const FIT_CEILING_PX = 56
 
 /**
  * The board region's stable focus destination, exported because `RoundBanner`
@@ -611,7 +615,7 @@ function ZoomControl({
   readonly zoom: ZoomStep
   readonly onZoom: (zoom: ZoomStep) => void
 }) {
-  const steps: readonly ZoomStep[] = ['fit', 's', 'm', 'l']
+  const steps: readonly ZoomStep[] = ['fit', 's', 'm', 'l', 'xl', 'xxl']
   return (
     <div className="mg-toolbar__group" role="radiogroup" aria-label={t.toolbar.zoom}>
       {steps.map((candidate) => (
@@ -938,13 +942,12 @@ export function ClueCell({
   const state = lineState(line)
   return (
     <div
-      className={state === 'complete' ? 'mg-rail-cell mg-revealed-line' : 'mg-rail-cell'}
+      className="mg-rail-cell"
       role={orientation === 'row' ? 'rowheader' : 'columnheader'}
       aria-label={describeLine(t, line)}
       data-testid={`${orientation}-clue-${line.index}`}
       data-line={orientation}
       data-line-state={state}
-      data-revealed={state === 'complete' ? 'true' : undefined}
     >
       <span className="mg-rail-cell__glyph" aria-hidden="true">
         {state === 'contradiction' ? '✕' : state === 'unknown' ? '?' : state === 'complete' ? '✓' : ''}
@@ -960,15 +963,16 @@ export function ClueCell({
                   │
                 </span>
               ) : null}
-              {line.clue.length > 1 ? (
-                <span
-                  className="mg-rail-cell__run-chip"
-                  data-run-chip={line.runs[runIndex]?.complete === true ? 'filled' : 'open'}
-                >
-                  {line.runs[runIndex]?.complete === true ? '▪' : '□'}
-                </span>
-              ) : null}
-              <span className="mg-rail-cell__numeral">{length}</span>
+              {/* §5.2 states a closed run ON its numeral: `data-run-state` is
+                  the hook clues.css turns into confirm ink, 600 weight and the
+                  solid underline. There is deliberately no chip box — the
+                  number is the claim, so the number carries the state. */}
+              <span
+                className="mg-rail-cell__numeral"
+                data-run-state={line.runs[runIndex]?.complete === true ? 'complete' : 'open'}
+              >
+                {length}
+              </span>
             </span>
           ))
         )}

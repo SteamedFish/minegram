@@ -22,7 +22,7 @@
    * The line-state badge is a strip, out of flow, on the rail's own axis: a
      `--rail-badge`-tall bar across the top of a column rail, a
      `--rail-badge`-wide bar down the side of a row rail. §5.1's anatomy is
-     "[badge] [chips]", but §3.5 sizes a row rail at 24px at rest, and 14px of
+     "[badge] [runs]", but §3.5 sizes a row rail at 24px at rest, and 14px of
      badge plus a 12px numeral does not fit in 24px — inline, the badge would
      push the numbers off the shared centre line and every rail in a column
      would be ragged.
@@ -31,7 +31,7 @@
      run's 2px underline does not make its line one pixel taller than an open
      run's 1px one. The same vocabulary is the board tape in board.css, which
      is out of flow and so can still spend a border.
-   * Invariant-but-open runs get NO chip outline. §5.2 wants a 1px --rule
+   * Invariant-but-open runs get NO invariant outline. §5.2 wants a 1px --rule
      outline for an invariant run and nothing for an ambiguous one, and the
      difference is `runs[i].invariant` — which the component does not put in the
      DOM. Asserting the outline for every run would claim a deduction that may
@@ -55,15 +55,12 @@
   --clue-edge: var(--clue-line-border);
 }
 
-/* The component marks a settled line twice — `data-line-state="complete"` for
-   the state, `mg-revealed-line` for the fact that its cells are now revealed.
-   Both names are listed here so the fill is one rule, not two that could drift
-   apart, and so the class is not dead weight in the markup. */
-.mg-rail-cell[data-line-state='complete'],
-.mg-rail-cell.mg-revealed-line {
-  --clue-edge: var(--clue-line-border-complete);
-  /* §5.3: the revealed rail cell is filled at 12% confirm. */
-  background-color: var(--clue-chip-bg-complete);
+/* A settled line loses its border frame — the numeral highlight is the
+   signal, not the box. There is deliberately no fill either: a completed
+   rail cell reads through its numerals (confirm ink, 700 weight) and the ✓
+   badge, and a tinted box behind them would restate what they already say. */
+.mg-rail-cell[data-line-state='complete'] {
+  --clue-edge: none;
 }
 
 .mg-rail-cell[data-line-state='contradiction'] {
@@ -168,8 +165,7 @@
   inline-size: var(--rail-badge);
 }
 
-.mg-rail-cell[data-line-state='complete'] .mg-rail-cell__glyph,
-.mg-rail-cell[data-revealed='true'] .mg-rail-cell__glyph {
+.mg-rail-cell[data-line-state='complete'] .mg-rail-cell__glyph {
   color: var(--badge-color-complete);
   font-weight: 600;
 }
@@ -244,7 +240,7 @@
 }
 
 .mg-rail-cell:not(:is([data-line-state='contradiction'], [data-line-state='unknown']))
-  .mg-rail-cell__run:has(> .mg-rail-cell__run-chip[data-run-chip='filled']) {
+  .mg-rail-cell__run:has(> .mg-rail-cell__numeral[data-run-state='complete']) {
   box-shadow: inset 0 calc(var(--rule-w-heavy) * -1) 0 var(--confirm);
 }
 
@@ -252,12 +248,29 @@
   font-variant-numeric: tabular-nums;
 }
 
-.mg-rail-cell:is([data-line-state='complete'], [data-revealed='true'])
-  .mg-rail-cell__numeral {
-  /* §5.2's weight channel for a closed run: the number is the claim, and a
-     closed claim is set heavier. 600 is the weight base.css already uses for
-     emphasis; no weight token exists. */
+/* -----------------------------------------------------------------------------
+   6. The run numeral carries its own completion
+   §5.2: a closed run is stated ON its numeral — confirm ink at 600 weight —
+   with the 2px underline above as the second channel. There is no chip box:
+   the number is the claim, so the number itself carries the state, and the
+   signal survives the narrow tiers below because it needs no extra box.
+   The same negation guard as the underline keeps contradiction and unknown
+   from asserting anything (§5.3, §5.6).
+   -------------------------------------------------------------------------- */
+.mg-rail-cell:not(:is([data-line-state='contradiction'], [data-line-state='unknown']))
+  .mg-rail-cell__numeral[data-run-state='complete'] {
+  color: var(--badge-color-complete);
   font-weight: 600;
+}
+
+/* A closed LINE reads through its numerals: every numeral takes the confirm
+   ink at 700 weight, and the ✓ glyph stamps the cell. The numeral IS the
+   signal — no box, no frame. Run-complete and line-complete share the colour
+   but not the weight: a single closed run is a hint; a complete line is a
+   conclusion. */
+.mg-rail-cell[data-line-state='complete'] .mg-rail-cell__numeral[data-run-state='complete'] {
+  color: var(--badge-color-complete);
+  font-weight: 700;
 }
 
 /* -----------------------------------------------------------------------------
@@ -282,37 +295,6 @@
   color: var(--ink-3);
   font-size: 0.72em;
   user-select: none;
-}
-
-/* -----------------------------------------------------------------------------
-   6. The run chip
-   `open` is the hollow square `□` the component already renders — an outlined
-   glyph, so it needs no border of its own and gets the transparent chip fill.
-   `filled` is the solid `▪`, and it carries THREE independent channels: the
-   shape the component chooses, a confirm wash behind it, and the 2px solid
-   underline on its run. That is §5.2's "shape statement, not a colour
-   statement" — a player who cannot separate the hues still sees the run close.
-   -------------------------------------------------------------------------- */
-/* Chip sizes are RELATIVE to the clue, and CAPPED at the clue's own line box: the
-   cap is what keeps a filled run's line exactly `--rail-step` tall, so the band
-   cannot drift. §5.1's shape statement is carried by the glyph, not by the size,
-   so the cap costs nothing but a pixel of boldness. */
-.mg-rail-cell__run-chip {
-  display: grid;
-  place-items: center;
-  font-size: min(0.84em, 0.95em);
-  line-height: 1;
-  background-color: var(--clue-chip-bg);
-  color: var(--ink-2);
-  user-select: none;
-}
-
-.mg-rail-cell__run-chip[data-run-chip='filled'] {
-  /* Larger than the hollow square so the change is legible as a SHAPE change,
-     not only as a fill change. */
-  font-size: min(1.18em, 0.95em);
-  background-color: var(--clue-chip-bg-complete);
-  color: var(--badge-color-complete);
 }
 
 /* -----------------------------------------------------------------------------
@@ -355,19 +337,15 @@
    8. The tight tiers, read off the rail's own box
    `--cell` is set inline by the host and `--rail-col` is derived from it, so the
    only honest way to ask "how much room did THIS rail get" is a container query
-   on the size container board.css put on every rail cell. Three tiers, and each
-   one drops the first thing to go rather than letting content clip:
-     · a narrow COLUMN rail gives up the chip, then the separator, so a
-       three-digit run (a 30x30 line) still fits instead of being cut mid-numeral;
-     · a short ROW rail gives up a clue line, the glyph's column and the chip, and
+   on the size container board.css put on every rail cell. Two tiers, and each
+   one drops the first thing to go rather than letting content clip — the run
+   numeral itself never goes, because the numeral is where a closed run is
+   stated now:
+     · a narrow COLUMN rail gives up the separator, so a three-digit run (a
+       30x30 line) still fits instead of being cut mid-numeral;
+     · a short ROW rail gives up a clue line and the glyph's column, and
        holds four runs, which is what two lines of two will take at 32px.
    -------------------------------------------------------------------------- */
-@container rail (max-inline-size: 30px) {
-  .mg-rail-cell[data-line='column'] .mg-rail-cell__run-chip {
-    display: none;
-  }
-}
-
 @container rail (max-inline-size: 24px) {
   /* The floor. A run is its numeral and nothing else, so "100" is 18px of a 22px
      box. The underline still says where a run ends, and the ellipsis still says
@@ -378,7 +356,6 @@
 }
 
 @container rail (max-block-size: 33px) {
-  .mg-rail-cell[data-line='row'] .mg-rail-cell__run-chip,
   .mg-rail-cell[data-line='row'] .mg-rail-cell__glyph {
     display: none;
   }

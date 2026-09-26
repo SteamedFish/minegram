@@ -42,6 +42,11 @@ import {
  * be skipped by a screen reader without losing the puzzle.
  */
 const SETTINGS_ID = 'mg-settings'
+/* The disclosures control the asides, not the panel sections inside them: the
+   aside is the element that appears and disappears, so it is the element
+   `aria-controls` must name. The section keeps its own id for its field ids. */
+const SETTINGS_PANEL_ID = 'mg-settings-panel'
+const LEGEND_PANEL_ID = 'mg-legend-panel'
 
 /** The editable form and the verdict on it, kept together so they cannot disagree. */
 interface FormState {
@@ -62,15 +67,21 @@ export function App() {
 
   // Local UI state lives here, not in the store (§4.2): the store owns the game, this
   // component owns the chrome. None of it is part of a snapshot, and none of it
-  // survives a reload except through the three preferences that are persisted.
+  // survives a reload except through the five preferences that are persisted.
   const [mode, setMode] = useState<MarkingMode>('mine')
   const [zoom, setZoom] = useState<ZoomStep>('fit')
-  const [settingsExpanded, setSettingsExpanded] = useState(true)
   const [helpOpen, setHelpOpen] = useState(false)
   const [fingerMarking, setFingerMarking] = useStoredFlag(
     t.storage.fingerMarking,
     defaultFingerMarking(),
   )
+  /* The side panels are genuinely shown and hidden — the grid column collapses
+     with the aside — and both states are remembered, so a hidden panel is never
+     unreachable: the banner is sticky and its disclosure is always there. The
+     settings FORM is always editable while shown; settings take effect on
+     Generate and only on Generate, so there is no editability gate to own. */
+  const [settingsPanelOpen, setSettingsPanelOpen] = useStoredFlag(t.storage.panelSettings, true)
+  const [legendPanelOpen, setLegendPanelOpen] = useStoredFlag(t.storage.panelLegend, true)
 
   // The draft is seeded once, from what the store is actually running, and then left
   // alone: re-seeding it on every snapshot would erase half-typed input. The draft and
@@ -127,23 +138,46 @@ export function App() {
 
   const canResume = resumeAvailable(snapshot)
 
+  /* The banner buttons promise "open the settings", so opening a hidden panel is
+     only half the job: focus has to land on the section, or a keyboard player is
+     left holding a button that no longer says anything about where the panel is.
+     The rAF waits out the commit that un-hides the aside; scrollIntoView is
+     guarded because jsdom does not implement it. */
+  const openSettings = useCallback(() => {
+    setSettingsPanelOpen(true)
+    requestAnimationFrame(() => {
+      const section = document.getElementById(SETTINGS_ID)
+      if (section === null) {
+        return
+      }
+      if (typeof section.scrollIntoView === 'function') {
+        section.scrollIntoView({ block: 'nearest' })
+      }
+      section.focus()
+    })
+  }, [setSettingsPanelOpen])
+
   return (
-    <div className="mg-app">
+    <div
+      className="mg-app"
+      data-left-panel={settingsPanelOpen ? 'shown' : 'hidden'}
+      data-right-panel={legendPanelOpen ? 'shown' : 'hidden'}
+    >
       <AppBanner
         t={t}
         status={status}
-        settingsExpanded={settingsExpanded}
-        settingsId={SETTINGS_ID}
+        settingsExpanded={settingsPanelOpen}
+        settingsId={SETTINGS_PANEL_ID}
         onToggleSettings={() => {
-          setSettingsExpanded((open) => !open)
+          setSettingsPanelOpen(!settingsPanelOpen)
+        }}
+        legendExpanded={legendPanelOpen}
+        legendId={LEGEND_PANEL_ID}
+        onToggleLegend={() => {
+          setLegendPanelOpen(!legendPanelOpen)
         }}
       />
-      <aside
-        className="mg-side mg-side--left"
-        data-expanded={settingsExpanded ? 'true' : 'false'}
-        aria-hidden={settingsExpanded ? undefined : 'true'}
-        inert={!settingsExpanded}
-      >
+      <aside className="mg-side mg-side--left" id={SETTINGS_PANEL_ID} hidden={!settingsPanelOpen}>
         <SettingsPanel
           t={t}
           id={SETTINGS_ID}
@@ -183,9 +217,7 @@ export function App() {
             store.actions.nextRound()
           }}
           onNewSeed={deriveSeed}
-          onOpenSettings={() => {
-            setSettingsExpanded(true)
-          }}
+          onOpenSettings={openSettings}
         />
         {visibleFailure === null ? null : (
           <FailureReport
@@ -201,9 +233,7 @@ export function App() {
               setDismissed(null)
               deriveSeed()
             }}
-            onOpenSettings={() => {
-              setSettingsExpanded(true)
-            }}
+            onOpenSettings={openSettings}
             onDismiss={() => {
               setDismissed(visibleFailure.reason)
             }}
@@ -227,7 +257,7 @@ export function App() {
           }}
         />
       </main>
-      <aside className="mg-side mg-side--right">
+      <aside className="mg-side mg-side--right" id={LEGEND_PANEL_ID} hidden={!legendPanelOpen}>
         <Legend t={t} />
         <HelpDialog
           t={t}

@@ -58,7 +58,7 @@
                       'unmarked' | 'mine' | 'mine-locked' | 'blank' |
                       'blank-locked' | 'wrong-mine' | 'wrong-blank' | 'revealed'
      data-preview     'hit' | 'risk' | 'none' | 'none-while-inert'
-     data-revealed    'true' | 'false'                   — the auto-reveal band
+     data-revealed    'true'                             — the legend's band swatch
      data-inert       'true'                            — board is not playable
      data-finger-marking  'on' | 'off'                  — the §3.3 touch toggle
    `data-state` is what the cell rules bind, so the cascade never has to re-derive
@@ -83,6 +83,14 @@
   --dark-surface-2: #20242b;
   --light-surface-3: #f2ece0; /* one cell at rest */
   --dark-surface-3: #262b33;
+  /* A confirmed-empty cell, one full step off the rest fill: darker than paper
+     in light, lifted off slate in dark, so settled regions read as shading and
+     never as untouched cells. The pair is measured, not picked: 1.58:1 against
+     --surface-3 in light and 1.65:1 in dark (the old shared fill measured
+     1.11:1 against the plate and was the "too close to tell apart" defect), and
+     the confirm dot still clears 4:1 on it in both themes. */
+  --light-cell-settled: #c9bd9f;
+  --dark-cell-settled: #454c5a;
 
   /* Ink. Three levels of text and nothing else uses them: primary prose,
      secondary (rail digits, labels), muted (hints, disabled, the clue tape). */
@@ -158,6 +166,7 @@
   --surface-1: var(--light-surface-1);
   --surface-2: var(--light-surface-2);
   --surface-3: var(--light-surface-3);
+  --cell-settled: var(--light-cell-settled);
   --ink: var(--light-ink);
   --ink-2: var(--light-ink-2);
   --ink-3: var(--light-ink-3);
@@ -238,10 +247,12 @@
      dimensions, and nothing else is ever set inline.
      ======================================================================== */
   --cell-min: 24px; /* the floor: a cell is never smaller than a target */
-  --cell-max: 44px; /* the ceiling, so a 1x1 board reads as one stamp */
+  --cell-max: 56px; /* the ceiling, so a 1x1 board reads as one stamp */
   --cell-s: 26px; /* zoom step S */
   --cell-m: 32px; /* zoom step M, the default */
   --cell-l: 40px; /* zoom step L */
+  --cell-xl: 56px; /* zoom step XL — the board may outgrow the pane; the pane scrolls */
+  --cell-xxl: 72px; /* zoom step XXL */
   --cell: var(--cell-m); /* the live cell size (set inline by the host) */
   --rail-col: 24px; /* the live rail column width; also the minimum */
   --target-min: 24px; /* WCAG 2.5.8, for every interactive element */
@@ -269,14 +280,17 @@
 
   /* The size formula, and why the arithmetic below is allowed to overflow.
        fit  = clamp(--cell-min, floor((scrollerInline - --rail-col) / cols), --cell-max)
-       s/m/l= --cell-s / --cell-m / --cell-l
+       zoom = --cell-s / --cell-m / --cell-l / --cell-xl / --cell-xxl
      The clamp floor is what keeps 30x30 legal: on a 360px-wide phone the fit
      value would be floor((360 - 24) / 30) = 11px, which is refused, so the
      board becomes 30 * 24 + 24 = 744px wide and `.mg-board-scroll` scrolls
      horizontally instead. That is the intended trade (a scrolled board beats an
-     11px grid), and 1x1 hits the ceiling: 1 * 44 + 24 = 68px, centred.
+     11px grid), and 1x1 hits the ceiling: 1 * 56 + 24 = 80px, centred.
      Arithmetic at 30x30: S 780 + 24 = 804px, M 960 + 24 = 984px,
-     L 1200 + 24 = 1224px. A 15x15 default at M is 480 + 24 = 504px. */
+     L 1200 + 24 = 1224px, XL 1680 + 24 = 1704px, XXL 2160 + 24 = 2184px. The
+     two largest steps are meant to overflow: the pane caps its own height and
+     scrolls, so an oversized board never traps the page. A 15x15 default at M
+     is 480 + 24 = 504px. */
 
   /* ===========================================================================
      6. Motion — one budget, no bounce, nothing that moves a cell's box (§7.3)
@@ -358,7 +372,6 @@
   /* Washes, mixed from the palette so there is no eighth colour to maintain. */
   --wash-accent: color-mix(in srgb, var(--accent) 8%, transparent); /* a wrong claim */
   --wash-accent-soft: color-mix(in srgb, var(--accent) 4%, transparent); /* …under a preview */
-  --wash-confirm: color-mix(in srgb, var(--confirm) 30%, transparent); /* the locked-blank ring */
   --wash-reveal: color-mix(in srgb, var(--confirm) 8%, transparent); /* an auto-revealed line */
 }
 
@@ -378,6 +391,7 @@
     --surface-1: var(--dark-surface-1);
     --surface-2: var(--dark-surface-2);
     --surface-3: var(--dark-surface-3);
+    --cell-settled: var(--dark-cell-settled);
     --ink: var(--dark-ink);
     --ink-2: var(--dark-ink-2);
     --ink-3: var(--dark-ink-3);
@@ -409,6 +423,7 @@ html[data-theme='dark'] {
   --surface-1: var(--dark-surface-1);
   --surface-2: var(--dark-surface-2);
   --surface-3: var(--dark-surface-3);
+  --cell-settled: var(--dark-cell-settled);
   --ink: var(--dark-ink);
   --ink-2: var(--dark-ink-2);
   --ink-3: var(--dark-ink-3);
@@ -440,6 +455,7 @@ html[data-theme='light'] {
   --surface-1: var(--light-surface-1);
   --surface-2: var(--light-surface-2);
   --surface-3: var(--light-surface-3);
+  --cell-settled: var(--light-cell-settled);
   --ink: var(--light-ink);
   --ink-2: var(--light-ink-2);
   --ink-3: var(--light-ink-3);
@@ -471,19 +487,20 @@ html[data-theme='light'] {
      3. the preview looks, last, because a preview *modifies* a resting look
    Every look differs from its neighbours in at least one channel that survives
    greyscale, colour-blindness and forced colours:
-     unmarked      no glyph · solid hairline · no texture
+     unmarked      no glyph · solid hairline · no texture · raised press highlight
      mine          filled diamond (rotated square) · heavier weight
      mine-locked   filled diamond · corner stamp (a shape, not a colour)
-     blank         centred dot
-     blank-locked  centred dot · pressed-in inner ring
+     blank         centred dot · settled fill (recessed shading)
+     blank-locked  centred dot · settled fill · pressed-in inner ring
      wrong-mine    hollow diamond · 1.5px DASHED border · hatch
      wrong-blank   hollow ring · 1.5px DASHED border · hatch
-     revealed      no border at all (absence) · no press highlight
+     revealed      settled fill · no border at all (absence) · no press highlight
      preview-hit   2px DOTTED inset outline · glyph at 45%
      preview-risk  2px DOTTED inset outline · wrong glyph at 45% · faint hatch
      preview-none  deliberately nothing, so "no change here" reads as absence
-   Solid, dashed and dotted are each used for one meaning only, which is what
-   makes the board readable with no colour perception at all.
+   Solid, dashed and dotted are each used for one meaning only, and only the
+   untouched cell keeps the raised highlight, which is what makes the board
+   readable with no colour perception at all.
    ============================================================================= */
 
 /* The glyph is a real text character so it scales with --cell-glyph-size and
@@ -552,24 +569,31 @@ html[data-theme='light'] {
   --cell-stamp-color: var(--confirm);
 }
 
-/* Blank asserted: a centred dot. */
+/* Blank asserted: a centred dot on the settled fill — the same recessed
+   shading a revealed line wears, because both mean "this ground is known
+   empty". The fill is the primary separator from an unmarked cell's raised
+   `--surface-3`; the confirm border and the dot (at 0.38em) reinforce it.
+   Three channels — fill, border colour, glyph — so removing any one still
+   leaves two. */
 .mg-cell[data-state='blank'],
 .mg-cell[data-state='blank-locked'] {
   --cell-glyph: '\00B7'; /* · */
-  --cell-glyph-size: 2px;
+  --cell-glyph-size: 0.38em;
   --cell-glyph-weight: 700;
   --cell-glyph-color: var(--confirm);
   --cell-glyph-rotate: 0deg;
-  --cell-fill: var(--surface-3);
+  --cell-fill: var(--cell-settled);
   --cell-border-style: solid;
   --cell-border-width: var(--rule-w);
-  --cell-border-color: var(--rule-cell);
+  --cell-border-color: var(--confirm);
   --cell-inset: none;
 }
 
-/* Locked blank: the dot pressed into the paper — a 1px inner ring. */
+/* Locked blank: the dot pressed into the paper — a 1px inner ring in the full
+   confirm ink. A washed ring measured under 1.5:1 against the settled fill,
+   which is below the 3:1 a meaning-carrying boundary has to clear. */
 .mg-cell[data-state='blank-locked'] {
-  --cell-inset: inset 0 0 0 var(--rule-w) var(--wash-confirm);
+  --cell-inset: inset 0 0 0 var(--rule-w) var(--confirm);
 }
 
 /* A wrong mine: the claim failed. A hollow diamond, a 1.5px dashed border and
@@ -616,12 +640,13 @@ html[data-theme='light'] {
 }
 
 /* Auto-revealed: the game filled this cell in because its line closed. The
-   channel is absence — no border and no press highlight — and the line's own
-   edge hairline, which board.css draws on the line's container, is what makes
-   the band readable. */
+   channel is absence — no border and no press highlight — plus the settled
+   fill it shares with an asserted blank, and the line's own edge hairline,
+   which board.css draws on the line's container, is what makes the band
+   readable. */
 .mg-cell[data-state='revealed'] {
   --cell-glyph: '';
-  --cell-fill: var(--surface-3);
+  --cell-fill: var(--cell-settled);
   --cell-border-style: solid;
   --cell-border-width: 0px; /* absence is the shape here */
   --cell-border-color: transparent;
@@ -697,21 +722,20 @@ html[data-theme='light'] {
    render. The same rule applies to every badge below.
    ======================================================================== */
 :root {
-  /* Clue run states. A complete run gets a 2px solid underline; an invariant
-     but incomplete run gets a 1px dotted "tape" in the muted ink. */
+  /* Clue run states. A complete run gets a 2px solid underline, and its own
+     numeral turns --confirm at 600 weight (clues.css binds that to
+     `data-run-state` on the numeral itself — there is no chip box); an
+     invariant but incomplete run gets a 1px dotted "tape" in the muted ink. */
   --clue-run-underline: 1px dotted var(--ink-3);
   --clue-run-underline-complete: var(--rule-w-heavy) solid var(--confirm);
-  --clue-chip-bg: transparent;
-  --clue-chip-bg-complete: color-mix(in srgb, var(--confirm) 12%, transparent);
-
   /* Clue line states, one border treatment each so the rail is readable in
-     greyscale: solid at rest, dashed for a contradiction, dotted for unknown. */
+     greyscale: solid at rest, dashed for a contradiction, dotted for unknown.
+     A complete line has NO border and no fill — the numerals carry it. */
   --clue-line-border: var(--rule-w) solid var(--rule);
-  --clue-line-border-complete: var(--rule-w) solid var(--confirm);
   --clue-line-border-contradiction: var(--rule-w-strong) dashed var(--accent);
   --clue-line-border-unknown: var(--rule-w) dotted var(--unknown);
 
-  /* Badges: the ✓ / ✕ / ? that sit on a chip or a rail cell, and the `!` that
+  /* Badges: the ✓ / ✕ / ? that sit on a rail cell, and the `!` that
      warns a preview would take the score to zero. */
   --badge-size: 14px;
   --badge-complete: '\2713'; /* ✓ */

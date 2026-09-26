@@ -60,10 +60,10 @@ import { reasonLabel } from './reasonCopy'
 
 export type UiStatus = GameLifecycle
 export type MarkingMode = 'mine' | 'blank' | 'erase'
-export type ZoomStep = 'fit' | 's' | 'm' | 'l'
+export type ZoomStep = 'fit' | 's' | 'm' | 'l' | 'xl' | 'xxl'
 
 export const MARKING_MODES: readonly MarkingMode[] = Object.freeze(['mine', 'blank', 'erase'])
-export const ZOOM_STEPS: readonly ZoomStep[] = Object.freeze(['fit', 's', 'm', 'l'])
+export const ZOOM_STEPS: readonly ZoomStep[] = Object.freeze(['fit', 's', 'm', 'l', 'xl', 'xxl'])
 
 export interface DimensionsView {
   readonly rows: number

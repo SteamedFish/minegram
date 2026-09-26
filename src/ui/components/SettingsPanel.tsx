@@ -40,7 +40,7 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
   const invalid = validation.error !== null
   return (
-    <section className="mg-panel" id={id} aria-labelledby={`${id}-title`}>
+    <section className="mg-panel" id={id} aria-labelledby={`${id}-title`} tabIndex={-1}>
       <h2 className="mg-panel__title" id={`${id}-title`}>
         {t.settings.title}
       </h2>

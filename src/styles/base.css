@@ -406,9 +406,10 @@ table {
    a 30x30 board gives up instead is width — 804px at S, 984px at M, 1224px at L —
    so a 360px phone scrolls the board horizontally rather than showing 11px
    cells. That is the correct trade for a grid that has to be read cell by cell,
-   and the compensation is the zoom control's S/M/L steps (each one a larger
-   `--cell`, a wider board) plus browser zoom, which at 200% takes a 32px cell
-   past 44px and clears the floor with room to spare.
+   and the compensation is the zoom control's S/M/L/XL/XXL steps (each one a
+   larger `--cell`, a wider board, and the pane scrolls) plus browser zoom,
+   which at 200% takes a 32px cell past 44px and clears the floor with room to
+   spare.
    -------------------------------------------------------------------------- */
 @media (pointer: coarse) {
   :where(button, a, input, select, textarea, summary, [role='button'], [role='switch'], [role='tab'], [tabindex]) {

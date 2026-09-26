@@ -450,6 +450,10 @@ function zoomLabel(t: Copy, zoom: ZoomStep): string {
       return t.toolbar.zooms.m
     case 'l':
       return t.toolbar.zooms.l
+    case 'xl':
+      return t.toolbar.zooms.xl
+    case 'xxl':
+      return t.toolbar.zooms.xxl
     default:
       return t.toolbar.zooms.m
   }

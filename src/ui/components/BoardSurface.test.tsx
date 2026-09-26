@@ -333,11 +333,11 @@ describe('BoardSurface — the height-aware Fit', () => {
     stubPane(400, 58)
     store = openStore()
     paint(store.getSnapshot(), store)
-    // 400px wide over 2 columns would be 200px cells, and the ceiling would let 44 of
-    // them through: 88px of board in a 58px pane, with the last row cut in half. The
+    // 400px wide over 2 columns would be 200px cells, and the ceiling would let 56 of
+    // them through: 112px of board in a 58px pane, with the last row cut in half. The
     // height solve gives floor(58 / 2) = 29px and the board is 58px: it fits. 29 is
-    // strictly inside the 24–44 band, so a wrong reading of either axis cannot produce
-    // this number — the width answer clamps to 44 and the floor answer is 24.
+    // strictly inside the 24–56 band, so a wrong reading of either axis cannot produce
+    // this number — the width answer clamps to 56 and the floor answer is 24.
     expect(fitCell()).toBe('29px')
   })
 
@@ -347,7 +347,7 @@ describe('BoardSurface — the height-aware Fit', () => {
     paint(store.getSnapshot(), store)
     // 200 / 2 = 100 clamped to the ceiling, and 400 / 2 = 200 is wider still, so the
     // answer is the ceiling: a wide, short pane grows the board, up to the cap.
-    expect(fitCell()).toBe('44px')
+    expect(fitCell()).toBe('56px')
   })
 
   it('never shrinks a cell below the 24px floor, whatever the pane says', () => {
@@ -361,7 +361,7 @@ describe('BoardSurface — the height-aware Fit', () => {
     // A display:none board region measures zero in every axis, and a hidden board must
     // not be sized to the 24px floor merely because it is not on screen yet. 60px over
     // two columns is 30px, which sits between the floor and the ceiling, so a wrong
-    // fallback would show up as either 24 or 44.
+    // fallback would show up as either 24 or 56.
     stubPane(60, 0)
     store = openStore()
     paint(store.getSnapshot(), store)
@@ -382,7 +382,7 @@ describe('BoardSurface — the height-aware Fit', () => {
     // The rail column is a real width cost: it must come off the pane's box before the
     // cells divide what is left, or every board is a rail too wide. 100px less a 40px
     // rail over two columns is 30px; taking the rail as free would answer 50px and
-    // clamp to 44px, so this distinguishes the two.
+    // clamp to 56px, so this distinguishes the two.
     stubPane(100, 0, 40)
     store = openStore()
     paint(store.getSnapshot(), store)
@@ -410,7 +410,7 @@ describe('BoardSurface — the height-aware Fit', () => {
     const inline = Array.from(stage.style)
     expect(inline.sort()).toEqual(['--cell', '--cols', '--rail-col', '--rows'])
     // 400 wide and 58 tall over two cells: the width solve would answer 200 and clamp to
-    // the 44px ceiling, so 29 can only be the height solve — floor(58 / 2).
+    // the 56px ceiling, so 29 can only be the height solve — floor(58 / 2).
     expect(stage.style.getPropertyValue('--cell')).toBe('29px')
     // A cap written in `--cell` or `--rows` would read a variable that lives on the
     // stage — its own child — so the pane would shrink as the board grew and the

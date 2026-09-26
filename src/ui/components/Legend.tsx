@@ -69,17 +69,55 @@ function LegendSwatch({ entry }: { readonly entry: (typeof ENTRIES)[number] }) {
         </span>
       )
     case 'runComplete':
+      /* The run completion signal lives ON the numeral now, so the swatch is a
+         rail cell carrying one closed run — the same attributes ClueCell renders. */
       return (
-        <span className="mg-legend__swatch">
-          <span className="mg-run-tape" data-run="complete" data-cap="only" />
+        <span className="mg-legend__swatch mg-rail-cell">
+          <span className="mg-rail-cell__clue">
+            <span className="mg-rail-cell__run">
+              <span className="mg-rail-cell__numeral" data-run-state="complete">
+                3
+              </span>
+            </span>
+          </span>
         </span>
       )
     case 'lineComplete':
-      return <span className="mg-legend__swatch mg-rail-cell" data-line-state="complete" />
+      return (
+        <span className="mg-legend__swatch mg-rail-cell" data-line-state="complete">
+          <span className="mg-rail-cell__clue">
+            <span className="mg-rail-cell__run">
+              <span className="mg-rail-cell__numeral" data-run-state="complete">
+                3
+              </span>
+            </span>
+          </span>
+        </span>
+      )
     case 'contradiction':
-      return <span className="mg-legend__swatch mg-rail-cell" data-line-state="contradiction" />
+      return (
+        <span className="mg-legend__swatch mg-rail-cell" data-line-state="contradiction">
+          <span className="mg-rail-cell__clue">
+            <span className="mg-rail-cell__run">
+              <span className="mg-rail-cell__numeral" data-run-state="open">
+                3
+              </span>
+            </span>
+          </span>
+        </span>
+      )
     case 'unresolved':
-      return <span className="mg-legend__swatch mg-rail-cell" data-line-state="unknown" />
+      return (
+        <span className="mg-legend__swatch mg-rail-cell" data-line-state="unknown">
+          <span className="mg-rail-cell__clue">
+            <span className="mg-rail-cell__run">
+              <span className="mg-rail-cell__numeral" data-run-state="open">
+                3
+              </span>
+            </span>
+          </span>
+        </span>
+      )
     case 'revealed':
       return <span className="mg-legend__swatch mg-rail-cell" data-revealed="true" />
     default:

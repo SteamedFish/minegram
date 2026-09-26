@@ -187,6 +187,8 @@ describe('copy', () => {
       'storage.theme',
       'storage.onboarded',
       'storage.fingerMarking',
+      'storage.panelSettings',
+      'storage.panelLegend',
       'help.actions.cancelDrag.keyboard',
       'cell.describe',
       'clue.describe',
