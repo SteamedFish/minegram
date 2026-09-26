@@ -174,10 +174,39 @@ export type GameResultReason =
   | 'cell-already-marked'
   | 'cell-already-unknown'
 
+/**
+ * One line the game filled for free because the player had already located
+ * every mine in it. The UI renders and announces these, so the shape is stable.
+ */
+export interface RevealedLine {
+  readonly orientation: 'row' | 'column'
+  readonly index: number
+  /** Cells this pass wrote into this line. Always at least 1 when reported. */
+  readonly cells: number
+}
+
+/** Result of {@link revealEligibleLines}: the lines filled and the folded arrays. */
+export interface AutoRevealResult {
+  readonly lines: readonly RevealedLine[]
+  readonly marks: readonly CellMark[]
+  readonly locked: readonly boolean[]
+}
+
 export type GameReducerResult =
   | {
       readonly type: 'transition'
       readonly transition: GameTransition
+      /**
+       * Lines this transition filled for free, in the order they were written.
+       * Only lines that actually wrote at least one cell are reported.
+       */
+      readonly autoRevealedLines: readonly RevealedLine[]
+      /**
+       * Cells the auto-reveal turned visible. A cell shared by two eligible
+       * lines is attributed to the first of them, so this equals the sum of
+       * `autoRevealedLines[].cells` and counts every cell exactly once.
+       */
+      readonly autoRevealedCells: number
       readonly state: GameState
     }
   | {
@@ -328,11 +357,25 @@ function projectDifficulty(value: unknown): GameDifficulty | null {
   throw new TypeError(`difficulty status must be known or unknown; received ${String(value.status)}`)
 }
 
+const NO_REVEALED_LINES: readonly RevealedLine[] = Object.freeze([])
+
+/**
+ * `transition` takes only the reported line list, never a whole reveal result,
+ * so a caller can never accidentally commit the `marks`/`locked` of a gated-out
+ * placeholder instead of its own arrays.
+ */
 function transition(
   state: GameState,
   transitionName: GameTransition,
+  autoRevealedLines: readonly RevealedLine[] = NO_REVEALED_LINES,
 ): GameReducerResult {
-  return Object.freeze({ type: 'transition', transition: transitionName, state })
+  return Object.freeze({
+    type: 'transition',
+    transition: transitionName,
+    autoRevealedLines,
+    autoRevealedCells: revealedCellCount(autoRevealedLines),
+    state,
+  })
 }
 
 function ignored(state: GameState, reason: GameResultReason): GameReducerResult {
@@ -491,6 +534,12 @@ function acceptGeneratedRound(
   }
 
   const board = snapshotBoard(generated.board)
+  // Deliberately NO auto-reveal here. A fresh board has no marks, so every row
+  // and column satisfies the reveal gate vacuously ("every mine marked" and "no
+  // wrong mark" both hold over an empty mark set). Revealing now would blank the
+  // whole board before the player's first click and fire the win gate at accept
+  // time. The gate on the reveal therefore requires a live round that already
+  // carries at least one mark; see `revealForRound`.
   return transition(
     Object.freeze({
       ...state,
@@ -591,6 +640,166 @@ function roundIsComplete(board: BinaryMineBoard, marks: readonly CellMark[]): bo
 }
 
 /**
+ * A line is eligible when the player has located every mine in it AND the line
+ * carries no wrong mark. Both conditions are read straight off the solution
+ * board: no legal-pattern enumeration, so this can never fail closed on a
+ * resource limit or burn a search budget the way a pattern-based check would.
+ */
+function lineIsEligible(
+  board: BinaryMineBoard,
+  marks: readonly CellMark[],
+  start: number,
+  stride: number,
+  length: number,
+): boolean {
+  let mines = 0
+  let markedMines = 0
+  for (let offset = 0; offset < length; offset += 1) {
+    const index = start + offset * stride
+    const isMine = board[index] === 1
+    if (isMine) {
+      mines += 1
+    }
+    const mark = marks[index]
+    if (mark === 'unknown') {
+      continue
+    }
+    // A wrong mark anywhere in the line disqualifies it, whatever else is known.
+    if ((mark === 'mine') !== isMine) {
+      return false
+    }
+    if (isMine) {
+      markedMines += 1
+    }
+  }
+  return mines === markedMines
+}
+
+/**
+ * Fills the gaps of every line whose mines the player has already located,
+ * exactly as the game rule requires: a fully known line is shown for free.
+ *
+ * This is a pure fold over `(board, marks, locked)` and is idempotent. A single
+ * pass over the rows and then the columns is already the fixpoint, because a
+ * write can never feed either eligibility gate: it lands on a
+ * `board[index] === 0` cell, so it cannot satisfy the "every mine marked" half,
+ * and `'unknown'` was not a wrong mark, so it cannot break the other half.
+ * There is deliberately no cascade loop here. Two eligible lines that share a
+ * cell both write `'blank'` there, which is a no-op rather than a conflict.
+ *
+ * When nothing is eligible the incoming arrays are returned unchanged (same
+ * references), so an inert pass is free.
+ */
+export function revealEligibleLines(
+  board: BinaryMineBoard,
+  marks: readonly CellMark[],
+  locked: readonly boolean[],
+  rows: number,
+  columns: number,
+): AutoRevealResult {
+  let nextMarks: CellMark[] | null = null
+  let nextLocked: boolean[] | null = null
+  const lines: RevealedLine[] = []
+
+  const fill = (
+    start: number,
+    stride: number,
+    length: number,
+    orientation: 'row' | 'column',
+    line: number,
+  ): void => {
+    let written = 0
+    for (let offset = 0; offset < length; offset += 1) {
+      const index = start + offset * stride
+      // Never overwrite: a cell that already carries any mark keeps it. The
+      // working copy is consulted so a cell shared with an already-filled line
+      // is written once and counted once.
+      if ((nextMarks ?? marks)[index] !== 'unknown') {
+        continue
+      }
+      // A gate-eligible line has no unmarked mine left, so this only makes the
+      // "a reveal never writes a wrong mark" invariant structural.
+      if (board[index] === 1) {
+        continue
+      }
+      if (nextMarks === null || nextLocked === null) {
+        nextMarks = [...marks]
+        nextLocked = [...locked]
+      }
+      nextMarks[index] = 'blank'
+      nextLocked[index] = true
+      written += 1
+    }
+    if (written > 0) {
+      lines.push(Object.freeze({ orientation, index: line, cells: written }))
+    }
+  }
+
+  for (let row = 0; row < rows; row += 1) {
+    if (lineIsEligible(board, marks, row * columns, 1, columns)) {
+      fill(row * columns, 1, columns, 'row', row)
+    }
+  }
+  for (let column = 0; column < columns; column += 1) {
+    if (lineIsEligible(board, marks, column, columns, rows)) {
+      fill(column, columns, rows, 'column', column)
+    }
+  }
+
+  if (nextMarks === null || nextLocked === null) {
+    return Object.freeze({ lines: NO_REVEALED_LINES, marks, locked })
+  }
+  return Object.freeze({
+    lines: Object.freeze(lines),
+    marks: Object.freeze(nextMarks),
+    locked: Object.freeze(nextLocked),
+  })
+}
+
+/** Distinct cells written by a reveal; a cell shared by two lines counts once. */
+function revealedCellCount(lines: readonly RevealedLine[]): number {
+  let total = 0
+  for (const line of lines) {
+    total += line.cells
+  }
+  return total
+}
+
+/** Whether the round carries at least one player mark (the reveal's live gate). */
+function hasAnyMark(marks: readonly CellMark[]): boolean {
+  for (const mark of marks) {
+    if (mark !== 'unknown') {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * The auto-reveal only runs on a live round that already carries a mark. Both
+ * halves of that gate are load-bearing: a `generating`/`failed` round must keep
+ * the exact arrays it was handed, and a mark-less board would satisfy the
+ * reveal gate vacuously in every line (see `acceptGeneratedRound`).
+ *
+ * The board is stored with its round dimensions in `puzzle`, so that is the
+ * authoritative source for the row/column geometry here.
+ */
+function revealForRound(
+  state: GameState,
+  marks: readonly CellMark[],
+  locked: readonly boolean[],
+): AutoRevealResult {
+  if (state.status !== 'playing' || state.puzzle === null || state.board === null) {
+    return { lines: NO_REVEALED_LINES, marks, locked }
+  }
+  if (!hasAnyMark(marks)) {
+    return { lines: NO_REVEALED_LINES, marks, locked }
+  }
+  const { rows, columns } = state.puzzle.dimensions
+  return revealEligibleLines(state.board, marks, locked, rows, columns)
+}
+
+/**
  * A win keeps the finished board, marks, and score so the UI can show the
  * completed round, and deliberately consumes no generation slot. The next round
  * is requested by an explicit `generation/start`, which derives the new
@@ -642,6 +851,11 @@ function applyMarkBatch(state: GameState, value: unknown): GameReducerResult {
 
     score = Math.max(0, score - 1)
     if (score === 0) {
+      // The auto-reveal deliberately does NOT run before this. The round is
+      // over, the score is already clamped to zero, and nothing further can be
+      // asserted, so filling gaps here would only repaint a board the player
+      // can no longer act on. The reveal runs on the committed arrays below,
+      // after the loop, and the win gate runs after that.
       return transition(
         Object.freeze({
           ...state,
@@ -659,23 +873,32 @@ function applyMarkBatch(state: GameState, value: unknown): GameReducerResult {
   if (!changed) {
     // Nothing was written. A locked cell in the batch is the reported reason
     // (including mixed identical+locked batches); an all-identical batch is
-    // never mislabeled as 'locked-cell'.
+    // never mislabeled as 'locked-cell'. The round's state is returned
+    // untouched, so there is nothing for the auto-reveal to fold.
     if (sawLockedCell) {
       return ignored(state, 'locked-cell')
     }
     return ignored(state, 'cell-already-marked')
   }
-  const completed = roundIsComplete(board, marks)
+
+  // The reveal runs on the committed arrays, and the win gate runs AFTER it.
+  // Ordering matters: the batch that marks the round's last mine leaves the
+  // remaining blanks 'unknown', so evaluating `roundIsComplete` first would
+  // return false, return `marks-applied`, and then soft-lock the round — every
+  // cell is now locked, so no further batch can ever arrive to re-evaluate it.
+  const reveal = revealForRound(state, marks, locked)
+  const completed = roundIsComplete(board, reveal.marks)
   const nextState = Object.freeze({
     ...state,
     score,
-    marks: Object.freeze(marks),
-    locked: Object.freeze(locked),
+    marks: reveal.marks,
+    locked: reveal.locked,
     failure: null,
   })
   return transition(
     completed ? beginNextRound(nextState) : nextState,
     completed ? 'round-won' : 'marks-applied',
+    reveal.lines,
   )
 }
 
@@ -695,9 +918,17 @@ function clearMark(state: GameState, index: number): GameReducerResult {
 
   const marks = [...state.marks]
   marks[index] = 'unknown'
+  // Clearing can free a line that was blocked by the erased wrong mark: erasing
+  // a wrong 'mine' on a blank removes a gate-(b) violation, so the line's mines
+  // may now all be marked and the line fills itself again. Clearing a wrong
+  // 'blank' on a mine instead breaks gate (a) and the line stops being
+  // eligible. Either way the extra pass is one O(cells) fold, and it is
+  // idempotent, so the second and later passes cost nothing.
+  const reveal = revealForRound(state, marks, state.locked)
   return transition(
-    Object.freeze({ ...state, marks: Object.freeze(marks) }),
+    Object.freeze({ ...state, marks: reveal.marks, locked: reveal.locked }),
     'mark-cleared',
+    reveal.lines,
   )
 }
 
@@ -720,17 +951,48 @@ function resumeRound(state: GameState): GameReducerResult {
   if (state.puzzle === null || state.board === null || state.status !== 'failed') {
     return ignored(state, 'round-not-resumable')
   }
-  if (roundIsComplete(state.board, state.marks)) {
-    return transition(beginNextRound(state), 'round-resumed')
+  // The reveal runs BEFORE the completed-board guard, and directly rather than
+  // through `revealForRound`, because this transition is about re-entering a
+  // kept round: the guard and the win path must test the same predicate the win
+  // gate tests, which is `roundIsComplete` over post-reveal marks. In practice
+  // the fold is a no-op — a kept board's marks only ever move through
+  // `applyMarkBatch`, which already revealed them, and the reveal is idempotent
+  // — but running it here means the guard can never disagree with the win path
+  // about whether a kept board is finished.
+  //
+  // The `status === 'playing'` half of `revealForRound`'s gate is deliberately
+  // NOT applied here (this state is `failed` by definition), but the
+  // at-least-one-mark half is: a kept board can legitimately hold an all-unknown
+  // mark array (accept a round, start a generation, let it fail), and every row
+  // and column of that board is then vacuously eligible, so an ungated fold
+  // would hand the player the whole board with only the mines left to find.
+  const reveal = hasAnyMark(state.marks)
+    ? revealEligibleLines(
+        state.board,
+        state.marks,
+        state.locked,
+        state.puzzle.dimensions.rows,
+        state.puzzle.dimensions.columns,
+      )
+    : { lines: NO_REVEALED_LINES, marks: state.marks, locked: state.locked }
+  if (roundIsComplete(state.board, reveal.marks)) {
+    return transition(
+      beginNextRound({ ...state, marks: reveal.marks, locked: reveal.locked }),
+      'round-resumed',
+      reveal.lines,
+    )
   }
   return transition(
     Object.freeze({
       ...state,
+      marks: reveal.marks,
+      locked: reveal.locked,
       status: 'playing',
       pendingGeneration: null,
       failure: null,
     }),
     'round-resumed',
+    reveal.lines,
   )
 }
 

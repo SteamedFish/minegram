@@ -104,14 +104,12 @@ describe('game selectors', () => {
       locked: false,
       correct: null,
     })
-    const correct = gameReducer(state, {
-      type: 'round/markBatch',
-      cells: [{ index: 0, assertion: 'mine' }],
-    })
-    if (correct.type !== 'transition') throw new Error('expected correct mark')
-    state = correct.state
-    expect(selectCell(state, 0)).toMatchObject({ mark: 'mine', locked: true, correct: true })
-
+    // The wrong mark has to come first on this 2x2 fixture. Marking the mine at
+    // 0 also makes row 0 and column 0 eligible for the auto-reveal, which fills
+    // cells 1 and 2 as locked blanks and leaves only the mine at 3 free — so a
+    // wrong mark asserted after a correct one is refused as `locked-cell`, not
+    // charged. Asserting it first keeps every line ineligible (the wrong mark
+    // breaks the row's no-wrong-mark gate and the other lines still hide mines).
     const wrong = gameReducer(state, {
       type: 'round/markBatch',
       cells: [{ index: 1, assertion: 'mine' }],
@@ -123,6 +121,14 @@ describe('game selectors', () => {
       correct: false,
     })
     expect(selectCell(wrong.state, -1)).toBeNull()
+
+    const correct = gameReducer(wrong.state, {
+      type: 'round/markBatch',
+      cells: [{ index: 0, assertion: 'mine' }],
+    })
+    if (correct.type !== 'transition') throw new Error('expected correct mark')
+    state = correct.state
+    expect(selectCell(state, 0)).toMatchObject({ mark: 'mine', locked: true, correct: true })
   })
 
   it('derives complete row and column views from a correct full board', () => {

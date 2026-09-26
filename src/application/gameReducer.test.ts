@@ -29,6 +29,35 @@ const settings = normalizeGenerationSettings({
 
 const generatedRound: GeneratedRound = { settings, board, puzzle }
 
+/**
+ * A 3x3 board with exactly one mine per row and per column:
+ *
+ * ```
+ *  1 0 0
+ *  0 0 1
+ *  0 1 0
+ * ```
+ *
+ * Every row and every column therefore needs a non-trivial fill, and the
+ * columns that only become eligible after a later mine is marked make the
+ * row/column orientations genuinely independent.
+ */
+const board3x3 = [1, 0, 0, 0, 0, 1, 0, 1, 0] as const
+const dimensions3x3 = { rows: 3, columns: 3 } as const
+const settings3x3 = normalizeGenerationSettings({
+  rows: 3,
+  columns: 3,
+  densityPercent: 34,
+  seed: 'fixture-seed-3x3',
+  difficulty: 'starter',
+  maxAttempts: 3,
+})
+const generatedRound3x3: GeneratedRound = {
+  settings: settings3x3,
+  board: board3x3,
+  puzzle: { dimensions: dimensions3x3, clues: derivePuzzleClues(board3x3, dimensions3x3) },
+}
+
 function start(settingsOverride = settings, initialScore = 5): GameState {
   return startWithRound(
     { ...generatedRound, settings: normalizeGenerationSettings(settingsOverride) },
@@ -71,10 +100,6 @@ function markBatch(state: GameState, cells: readonly { readonly index: number; r
   return apply(state, { type: 'round/markBatch', cells })
 }
 
-function correctFor(index: number): CellAssertion {
-  return board[index] === 1 ? 'mine' : 'blank'
-}
-
 describe('gameReducer', () => {
   it('creates normalized idle state with the default score and immutable defaults', () => {
     const state = createInitialGameState()
@@ -93,8 +118,12 @@ describe('gameReducer', () => {
       { index: 0, assertion: 'mine' },
       { index: 1, assertion: 'blank' },
     ])
-    expect(correct.marks).toEqual(['mine', 'blank', 'unknown', 'unknown'])
-    expect(correct.locked).toEqual([true, true, false, false])
+    // Cells 0 and 1 are the batch's own work. Cell 2 was NOT in the batch: it
+    // carries no mine, and marking the row-0 mine made column 0 a known line, so
+    // the auto-reveal filled cell 2 for free and locked it. Both writes are
+    // correct, so `score` is untouched at 5.
+    expect(correct.marks).toEqual(['mine', 'blank', 'blank', 'unknown'])
+    expect(correct.locked).toEqual([true, true, true, false])
     expect(correct.score).toBe(5)
 
     const lockedAttempt = gameReducer(correct, {
@@ -204,14 +233,16 @@ describe('gameReducer', () => {
       expect(allLocked.reason).toBe('locked-cell')
     }
 
-    // Cell 2 carries no mark yet, so first give it a wrong one, then build a
+    // Cell 3 carries no mark yet, so first give it a wrong one, then build a
     // batch mixing an identical re-assertion with a locked opposite assertion.
-    const wrong = markBatch(correct, [{ index: 2, assertion: 'mine' }])
+    // (Cell 2 is no longer available: the auto-reveal filled and locked it when
+    // the batch above made row 0 and column 0 known lines.)
+    const wrong = markBatch(correct, [{ index: 3, assertion: 'blank' }])
     expect(wrong.score).toBe(4)
     const mixed = gameReducer(wrong, {
       type: 'round/markBatch',
       cells: [
-        { index: 2, assertion: 'mine' },
+        { index: 3, assertion: 'blank' },
         { index: 0, assertion: 'blank' },
       ],
     })
@@ -328,7 +359,12 @@ describe('gameReducer', () => {
     expect(result.state.status).toBe('lost')
     expect(result.state.score).toBe(0)
     expect(result.state.pendingGeneration).toBeNull()
+    // Cells 0 and 1 carry a correct and a wrong mine mark here, so row 0's mine
+    // is located — but the auto-reveal is deliberately NOT run on the loss path,
+    // which is why cells 2 and 3 are still 'unknown' rather than filled.
     expect(result.state.marks).toEqual(['mine', 'mine', 'unknown', 'unknown'])
+    expect(result.autoRevealedLines).toEqual([])
+    expect(result.autoRevealedCells).toBe(0)
   })
 
   it('previews deduplicated cost and zero projection without mutating state', () => {
@@ -447,20 +483,69 @@ describe('gameReducer', () => {
     }
   })
 
-  it('wins on a correct full board and hands the next round to an explicit start', () => {
-    let state = start(settings, 3)
-    for (const index of [0, 1, 2]) {
-      state = markBatch(state, [{ index, assertion: correctFor(index) }])
+  it('wins by marking only the mines, because a known line fills its own gaps', () => {
+    // The user rule: "if every mine in a row/column is marked, the whole line is
+    // shown automatically - all the gaps appear for free". The player asserts
+    // three mines and never touches a blank; the six blanks are filled by the
+    // rows and columns whose mines are now known.
+    let state = startWithRound(generatedRound3x3, 5)
+    const mines = board3x3
+      .map((cell, index) => (cell === 1 ? index : -1))
+      .filter((index) => index >= 0)
+    expect(mines).toEqual([0, 5, 7])
+
+    for (const index of mines) {
+      const result = gameReducer(state, {
+        type: 'round/markBatch',
+        cells: [{ index, assertion: 'mine' }],
+      })
+      expect(result.type).toBe('transition')
+      if (result.type !== 'transition') {
+        throw new Error('expected transition')
+      }
+      state = result.state
     }
-    const won = gameReducer(state, {
+
+    // Every cell is now asserted and correct, and no score was ever charged.
+    expect(state.marks).toEqual([
+      'mine',
+      'blank',
+      'blank',
+      'blank',
+      'blank',
+      'mine',
+      'blank',
+      'mine',
+      'blank',
+    ])
+    expect(state.locked.every(Boolean)).toBe(true)
+    expect(state.score).toBe(5)
+    expect(state.status).toBe('won')
+  })
+
+  it('wins on a correct full board and hands the next round to an explicit start', () => {
+    // The two mine assertions go in one batch. Sequenced cell by cell they can
+    // no longer reach the blanks: marking the row-0 mine makes row 0 and column
+    // 0 known lines, so the reveal fills and LOCKS cells 1 and 2, and the next
+    // single-cell batch on cell 1 would be refused as `locked-cell`. The blanks
+    // are still all correct and locked in the end — they are just written by the
+    // reveal instead of by the player.
+    const played = start(settings, 3)
+    const won = gameReducer(played, {
       type: 'round/markBatch',
-      cells: [{ index: 3, assertion: 'mine' }],
+      cells: [
+        { index: 0, assertion: 'mine' },
+        { index: 3, assertion: 'mine' },
+      ],
     })
     expect(won.type).toBe('transition')
     if (won.type !== 'transition') {
       throw new Error('expected win transition')
     }
+    const state = won.state
     expect(won.transition).toBe('round-won')
+    expect(won.state.marks).toEqual(['mine', 'blank', 'blank', 'mine'])
+    expect(won.state.locked).toEqual([true, true, true, true])
     expect(won.state.status).toBe('won')
     expect(won.state.round).toBe(1)
     expect(won.state.score).toBe(3)
@@ -596,6 +681,10 @@ describe('gameReducer', () => {
   })
 
   it('keeps the derived next-round seed after a post-win failure but restores settings when a playing round fails', () => {
+    // One batch covering all four cells. This still wins after the auto-reveal
+    // was added, but only incidentally: the batch itself asserts every cell, so
+    // the reveal finds nothing left to fill. Asserting the mines alone would also
+    // win (see the 3x3 test above); the blanks here are the player's own work.
     const won = markBatch(start(), [
       { index: 0, assertion: 'mine' },
       { index: 1, assertion: 'blank' },
@@ -683,6 +772,8 @@ describe('gameReducer', () => {
   })
 
   it('resumes a post-win failure as won instead of soft-locking the finished board', () => {
+    // Incidental survival again: this batch asserts all four cells, so the
+    // auto-reveal has nothing to fill and the resume guard sees a finished board.
     const won = markBatch(start(), [
       { index: 0, assertion: 'mine' },
       { index: 1, assertion: 'blank' },
@@ -844,5 +935,370 @@ describe('gameReducer', () => {
       message: 'no unique board found',
       details: { attempts: 3, nested: { exhausted: true } },
     })
+  })
+})
+
+/**
+ * The 3x3 fixture, one mine per row and per column:
+ *
+ * ```
+ *  1 0 0        indices 0 1 2
+ *  0 0 1               3 4 5
+ *  0 1 0               6 7 8
+ * ```
+ *
+ * Rows and columns therefore have exactly one mine each, and a row and a column
+ * only become eligible at different moments, which is what makes the two
+ * orientations independent here.
+ */
+function start3x3(initialScore = 5): GameState {
+  return startWithRound(generatedRound3x3, initialScore)
+}
+
+/** The three mark patterns a batch can leave on a cell: mine, blank, or nothing. */
+const everyMark: readonly (CellAssertion | null)[] = ['mine', 'blank', null]
+const liveAssertions: readonly CellAssertion[] = ['mine', 'blank']
+
+/**
+ * Every locked cell must carry the mark the solution board calls for. A wrong
+ * UNLOCKED mark is legal and expected: the player may guess wrong and then
+ * correct it, and the wrong mark is what blocks a line from being revealed.
+ */
+function expectLockedCellsCorrect(state: GameState, solution: readonly number[]): void {
+  state.locked.forEach((isLocked, index) => {
+    if (!isLocked) {
+      return
+    }
+    expect(`cell ${index} locked as ${state.marks[index]}`).toBe(
+      `cell ${index} locked as ${solution[index] === 1 ? 'mine' : 'blank'}`,
+    )
+  })
+}
+
+describe('auto-reveal', () => {
+  it('fills a known line free, locks it, and reports the line and its cell count', () => {
+    const initial = start3x3()
+    const result = gameReducer(initial, {
+      type: 'round/markBatch',
+      cells: [{ index: 0, assertion: 'mine' }],
+    })
+    expect(result.type).toBe('transition')
+    if (result.type !== 'transition') {
+      throw new Error('expected transition')
+    }
+    // Row 0 and column 0 became known with that one mark. Row 0 contributed
+    // cells 1 and 2, column 0 contributed cells 3 and 6.
+    expect(result.transition).toBe('marks-applied')
+    expect(result.autoRevealedLines).toEqual([
+      { orientation: 'row', index: 0, cells: 2 },
+      { orientation: 'column', index: 0, cells: 2 },
+    ])
+    expect(result.autoRevealedCells).toBe(4)
+    expect(result.state.marks).toEqual([
+      'mine',
+      'blank',
+      'blank',
+      'blank',
+      'unknown',
+      'unknown',
+      'blank',
+      'unknown',
+      'unknown',
+    ])
+    expect(result.state.locked).toEqual([true, true, true, true, false, false, true, false, false])
+  })
+
+  it('never charges for a revealed cell', () => {
+    const initial = start3x3()
+    const result = gameReducer(initial, {
+      type: 'round/markBatch',
+      cells: [{ index: 0, assertion: 'mine' }],
+    })
+    if (result.type !== 'transition') {
+      throw new Error('expected transition')
+    }
+    // One correct mark, four free fills, and the score is untouched.
+    expect(result.state.score).toBe(initial.score)
+    expect(result.autoRevealedCells).toBe(4)
+    // For contrast, the same board does charge for a wrong mark.
+    const wrong = gameReducer(initial, {
+      type: 'round/markBatch',
+      cells: [{ index: 1, assertion: 'mine' }],
+    })
+    if (wrong.type !== 'transition') {
+      throw new Error('expected transition')
+    }
+    expect(wrong.state.score).toBe(initial.score - 1)
+  })
+
+  it('never overwrites a wrong mark in an otherwise eligible line, and charges it once', () => {
+    // Cell 4 is a blank, so a 'mine' there is wrong: charged, never locked.
+    const wrong = markBatch(start3x3(), [{ index: 4, assertion: 'mine' }])
+    expect(wrong.score).toBe(4)
+    const result = gameReducer(wrong, {
+      type: 'round/markBatch',
+      cells: [
+        { index: 0, assertion: 'mine' },
+        { index: 5, assertion: 'mine' },
+      ],
+    })
+    if (result.type !== 'transition') {
+      throw new Error('expected transition')
+    }
+    // Row 1 holds the wrong mark at cell 4, so row 1 stays unfilled even though
+    // its only mine (cell 5) is now marked. Row 0, column 0 and column 2 are
+    // unaffected by it and fill normally.
+    expect(result.autoRevealedLines).toEqual([
+      { orientation: 'row', index: 0, cells: 2 },
+      { orientation: 'column', index: 0, cells: 2 },
+      { orientation: 'column', index: 2, cells: 1 },
+    ])
+    expect(result.state.marks[4]).toBe('mine')
+    expect(result.state.locked[4]).toBe(false)
+    expect(result.state.score).toBe(4)
+
+    // Re-asserting the same batch changes nothing and is not charged again.
+    const repeated = gameReducer(result.state, {
+      type: 'round/markBatch',
+      cells: [
+        { index: 0, assertion: 'mine' },
+        { index: 5, assertion: 'mine' },
+      ],
+    })
+    expect(repeated.type).toBe('ignored')
+    if (repeated.type === 'ignored') {
+      expect(repeated.reason).toBe('cell-already-marked')
+    }
+    expect(repeated.state.score).toBe(4)
+  })
+
+  it('is idempotent: re-asserting and contradicting a revealed cell both change nothing', () => {
+    const revealed = markBatch(start3x3(), [{ index: 0, assertion: 'mine' }])
+    // A revealed cell is locked, so the drag controller and the preview chip
+    // treat it as inert without any new mechanism.
+    const identical = gameReducer(revealed, {
+      type: 'round/markBatch',
+      cells: [{ index: 1, assertion: 'blank' }],
+    })
+    expect(identical.type).toBe('ignored')
+    if (identical.type === 'ignored') {
+      expect(identical.reason).toBe('cell-already-marked')
+    }
+    expect(identical.state.marks).toBe(revealed.marks)
+    expect(identical.state.locked).toBe(revealed.locked)
+    expect(identical.state.score).toBe(revealed.score)
+
+    const opposite = gameReducer(revealed, {
+      type: 'round/markBatch',
+      cells: [{ index: 1, assertion: 'mine' }],
+    })
+    expect(opposite.type).toBe('ignored')
+    if (opposite.type === 'ignored') {
+      expect(opposite.reason).toBe('locked-cell')
+    }
+    expect(opposite.state.marks).toBe(revealed.marks)
+    expect(opposite.state.locked).toBe(revealed.locked)
+    expect(opposite.state.score).toBe(revealed.score)
+
+    expect(
+      previewMarkBatch(revealed, [{ index: 1, assertion: 'blank' }]),
+    ).toEqual({ valid: true, affectedCount: 0, scoreCost: 0, projectedScore: 5, reachesZero: false })
+    expect(
+      previewMarkBatch(revealed, [{ index: 1, assertion: 'mine' }]),
+    ).toEqual({ valid: true, affectedCount: 0, scoreCost: 0, projectedScore: 5, reachesZero: false })
+  })
+
+  it('writes the same value where two eligible lines share a cell, and counts it once', () => {
+    // Cells 0 and 7 make rows 0 and 2 eligible and columns 0 and 1 eligible.
+    // Cell 1 is shared by row 0 and column 1, cell 6 by row 2 and column 0.
+    const result = gameReducer(start3x3(), {
+      type: 'round/markBatch',
+      cells: [
+        { index: 0, assertion: 'mine' },
+        { index: 7, assertion: 'mine' },
+      ],
+    })
+    if (result.type !== 'transition') {
+      throw new Error('expected transition')
+    }
+    expect(result.autoRevealedLines).toEqual([
+      { orientation: 'row', index: 0, cells: 2 },
+      { orientation: 'row', index: 2, cells: 2 },
+      { orientation: 'column', index: 0, cells: 1 },
+      { orientation: 'column', index: 1, cells: 1 },
+    ])
+    // Six distinct cells, and the per-line counts add up to the same six because
+    // the second line to reach a shared cell does not count it again.
+    const summed = result.autoRevealedLines.reduce((total, line) => total + line.cells, 0)
+    expect(summed).toBe(6)
+    expect(result.autoRevealedCells).toBe(6)
+    expect(result.state.marks).toEqual([
+      'mine',
+      'blank',
+      'blank',
+      'blank',
+      'blank',
+      'unknown',
+      'blank',
+      'mine',
+      'blank',
+    ])
+    expect(result.state.locked[1]).toBe(true)
+    expect(result.state.locked[6]).toBe(true)
+    expect(result.state.score).toBe(5)
+    expect(result.state.status).toBe('playing')
+  })
+
+  it('wins a 1x1 board of one mine, with the reveal writing nothing', () => {
+    const settings1x1 = normalizeGenerationSettings({
+      rows: 1,
+      columns: 1,
+      densityPercent: 100,
+      seed: 'fixture-seed-1x1',
+      difficulty: 'starter',
+      maxAttempts: 3,
+    })
+    const board1x1 = [1] as const
+    const dimensions1x1 = { rows: 1, columns: 1 } as const
+    const result = gameReducer(startWithRound({
+      settings: settings1x1,
+      board: board1x1,
+      puzzle: { dimensions: dimensions1x1, clues: derivePuzzleClues(board1x1, dimensions1x1) },
+    }), { type: 'round/markBatch', cells: [{ index: 0, assertion: 'mine' }] })
+    if (result.type !== 'transition') {
+      throw new Error('expected transition')
+    }
+    expect(result.transition).toBe('round-won')
+    expect(result.state.status).toBe('won')
+    expect(result.state.marks).toEqual(['mine'])
+    expect(result.state.locked).toEqual([true])
+    expect(result.state.score).toBe(5)
+    expect(result.autoRevealedLines).toEqual([])
+    expect(result.autoRevealedCells).toBe(0)
+  })
+
+  it('reveals nothing on a fresh board, so accepting a round cannot win it', () => {
+    const initial = createInitialGameState({ settings: settings3x3, initialScore: 5 })
+    const started = gameReducer(initial, { type: 'generation/start' })
+    if (started.type !== 'transition') {
+      throw new Error('expected transition')
+    }
+    const succeeded = gameReducer(started.state, {
+      type: 'generation/succeeded',
+      generationId: started.state.generationId,
+      round: generatedRound3x3,
+    })
+    if (succeeded.type !== 'transition') {
+      throw new Error('expected transition')
+    }
+    // Every row and column of a mark-less board satisfies the gate vacuously, so
+    // this is the case that must NOT reveal.
+    expect(succeeded.state.status).toBe('playing')
+    expect(succeeded.state.marks).toEqual(Array(9).fill('unknown'))
+    expect(succeeded.state.locked).toEqual(Array(9).fill(false))
+    expect(succeeded.autoRevealedLines).toEqual([])
+    expect(succeeded.autoRevealedCells).toBe(0)
+  })
+
+  it('re-reveals a line that clearing a wrong mark unblocks, and reports the counts', () => {
+    // Cell 8 is a blank, so this wrong 'mine' is charged and stays unlocked.
+    const wrong = markBatch(start3x3(), [{ index: 8, assertion: 'mine' }])
+    expect(wrong.score).toBe(4)
+    const blocked = markBatch(wrong, [
+      { index: 0, assertion: 'mine' },
+      { index: 5, assertion: 'mine' },
+    ])
+    // Cell 8 is in row 2 and in column 2, and its wrong mark blocks both of
+    // them, so neither line fills while it stands.
+    expect(blocked.marks[8]).toBe('mine')
+    expect(blocked.locked[8]).toBe(false)
+
+    const cleared = gameReducer(blocked, { type: 'round/clearMark', index: 8 })
+    if (cleared.type !== 'transition') {
+      throw new Error('expected transition')
+    }
+    expect(cleared.transition).toBe('mark-cleared')
+    expect(cleared.autoRevealedLines).toEqual([{ orientation: 'column', index: 2, cells: 1 }])
+    expect(cleared.autoRevealedCells).toBe(1)
+    expect(cleared.state.marks[8]).toBe('blank')
+    expect(cleared.state.locked[8]).toBe(true)
+    // Clearing refunds nothing.
+    expect(cleared.state.score).toBe(4)
+  })
+
+  it('does not win while a wrong mark survives, even though every mine is marked', () => {
+    // The wrong mark has to be made first: marking the row-0 mine first would
+    // make column 0 a known line and lock cell 2 as a correct 'blank', so the
+    // wrong mark could never be placed there.
+    const wrong = markBatch(start(), [{ index: 2, assertion: 'mine' }])
+    expect(wrong.score).toBe(4)
+    const allMinesMarked = markBatch(wrong, [
+      { index: 0, assertion: 'mine' },
+      { index: 3, assertion: 'mine' },
+    ])
+    // Both mines are marked and every cell carries a mark, but cell 2 is wrong.
+    expect(allMinesMarked.marks).toEqual(['mine', 'blank', 'mine', 'mine'])
+    expect(allMinesMarked.marks.every((mark) => mark !== 'unknown')).toBe(true)
+    expect(allMinesMarked.locked).toEqual([true, true, false, true])
+    // Row 1 and column 0 both fail the "no wrong mark" half of the gate on cell
+    // 2, so neither fills, and the round is not won.
+    expect(allMinesMarked.status).toBe('playing')
+    expect(allMinesMarked.score).toBe(4)
+
+    // Correcting the wrong mark is the player's job, and it wins the round.
+    const corrected = gameReducer(allMinesMarked, {
+      type: 'round/markBatch',
+      cells: [{ index: 2, assertion: 'blank' }],
+    })
+    if (corrected.type !== 'transition') {
+      throw new Error('expected transition')
+    }
+    expect(corrected.transition).toBe('round-won')
+    expect(corrected.state.status).toBe('won')
+    expect(corrected.state.marks).toEqual(['mine', 'blank', 'blank', 'mine'])
+    expect(corrected.state.score).toBe(4)
+  })
+
+  it('locks only correct marks in every reachable state of the 3x3 board', () => {
+    // A locked cell must always carry the mark the solution calls for. The
+    // auto-reveal is the one writer that is not the player, so this is the
+    // invariant that proves it cannot lock a wrong mark.
+    //
+    // The sweep is exhaustive over the mark patterns a single batch can produce:
+    // for each of the 9 cells independently, assert 'mine', assert 'blank', or
+    // leave it out. 'unknown' is not a legal batch assertion, so leaving the
+    // cell out is how an unmarked cell is enumerated.
+    const solution = [...board3x3]
+    for (let assignment = 0; assignment < 3 ** 9; assignment += 1) {
+      const cells: { index: number; assertion: CellAssertion }[] = []
+      for (let index = 0; index < 9; index += 1) {
+        const choice = everyMark[Math.floor(assignment / 3 ** index) % 3]
+        if (choice !== null) {
+          cells.push({ index, assertion: choice })
+        }
+      }
+      if (cells.length === 0) {
+        // An empty batch is rejected by contract and reveals nothing.
+        continue
+      }
+      // initialScore 9 keeps every pattern inside one batch: at most 8 of the 9
+      // cells can be wrong, so no pattern ends the round early.
+      const played = gameReducer(start3x3(9), { type: 'round/markBatch', cells })
+      if (played.type !== 'transition') {
+        throw new Error(`expected transition, received ${played.type}: ${played.reason}`)
+      }
+      expectLockedCellsCorrect(played.state, solution)
+    }
+
+    // And on the states reached by the single marks a player actually makes.
+    for (let index = 0; index < 9; index += 1) {
+      for (const assertion of liveAssertions) {
+        const played = gameReducer(start3x3(), { type: 'round/markBatch', cells: [{ index, assertion }] })
+        if (played.type !== 'transition') {
+          throw new Error('expected transition')
+        }
+        expectLockedCellsCorrect(played.state, solution)
+      }
+    }
   })
 })
