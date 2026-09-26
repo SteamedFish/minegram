@@ -5,6 +5,26 @@ All notable Minegram changes are documented here. The format follows Keep a Chan
 ## [Unreleased]
 
 ### Added
+- Added a table of localised labels for all fourteen `GameResultReason` members (`src/ui/reasonCopy.ts`), guarded by a compile-time exhaustiveness assert so a new reason cannot ship unlabelled, and a bare fallback so a machine token can never reach the player.
+- Added `npm run verify:base` and a matching Pages-workflow step that statically assert every local asset in the built `index.html` resolves under the nested `/minegram/` base — the one class of breakage that works in `vite dev` and fails in production. The check is mutation-verified.
+- Added a permanent round-focus landing target inside the board scroller, so focus survives a round change, a new seed, and a resume alike.
+- Added a pre-generate board state with `board.empty.*` copy in both locales.
+- Added a line-reveal treatment for rows and columns, and a height-aware board fit.
+
+### Fixed
+- The auto-reveal now requires at least one mine in a line. A mine-less line was vacuously eligible — every one of its cells is "marked" when none is — and was reachable in principle only because the generator guarantees a mine per line, which the reducer is not entitled to assume. Swept 48 boards across six shapes to prove it, and confirmed the reveal suite has teeth with four mutations that each break it.
+- The status sentence's once-per-event guard was identity-based, and therefore always open: `projectSnapshot` re-freezes a fresh event object on every call, so `announced === lastEvent` could never hold. It now compares the four fields the sentence is derived from. The previous consequence was that the app announced nothing at all for a plain mark.
+- A locale switch erased the current announcement. `publish` never assigned the closure's `lastEvent`, so `setLocale` republished `null`.
+- Sentences pluralised on the wrong noun, producing "Marked 1 cells" and "The game filled 3 cell". Both reveal sentences now carry the line count and the cell count and are composed in each locale's own word order. The `Math.min(changed, autoRevealedCells)` clamp — a silent under-report — is deleted, because a line is reported only when it wrote a cell.
+- The reveal was announced only for `marks-applied`, though `round/clearMark` and `round/resume` also run it.
+- Refusals produced no announcement and had no printable reason. The store now publishes them with a localised label.
+- A won round's banner stole focus and then destroyed it, dumping a keyboard player to the top of the document after every win. A backgrounded tab could also consume a round by elapsing the interlude.
+- A first-time visitor saw "Round 0", and during the first generation two chips both read as rounds. The difficulty chip could print a raw engine reason code, the density readout echoed `mines: 0` while the draft was invalid, and the board's side bounds were hardcoded instead of read from the engine. All 225 cells carried a permanent `aria-selected="false"`.
+
+### Changed
+- A click on a locked cell is now a **deliberate silence**, documented as a ruling in `AGENTS.md` and measured in a real browser. The chain is measured, not assumed: `previewMarkBatch` skips locked cells, so an all-locked batch reports `affectedCount === 0`, and the drag controller commits only when `affectedCount > 0`, so no dispatch is ever issued. The reducer would still answer `ignored(state, 'locked-cell')` if asked, so the refusal machinery remains as defence in depth behind a correctly inert UI and is explicitly not dead code. This is the same rule as a free re-assertion: an assertion that cannot change anything says nothing.
+- The win interlude is 2500ms rather than 1200ms, and it no longer elapses while the document is hidden. Auto-advance stays part of the contract; the banner's own control starts a round immediately, so waiting is a default and never a gate.
+- The board fit is `Math.min` over both axes, clamped into `[24px, 44px]`, with a real `max-block-size` on the scroller. The previous `Math.max` grew a height-constrained board back out of its pane, and `max-block-size: none` meant the scroller never scrolled, so the sticky column rail resolved against a non-scrolling container. Measured: 15x15 at 1280x720 went from 150/225 cells visible to 225/225, and a 24x24 board scrolls internally with the rail pinned.
 - Initial product and architecture plan for the ordered mine-run puzzle generator.
 - Defined fail-closed uniqueness, transactional growth, scoring, difficulty, accessibility, and GitHub Pages requirements.
 - Scaffolded the Node 24+ React/TypeScript/Vite foundation with oxlint, Vitest/jsdom, and reproducible npm scripts.
