@@ -304,7 +304,10 @@ describe('App board contract', () => {
     expect(cells).toHaveLength(4)
     for (const cell of cells) {
       expect(cell.getAttribute('aria-label')).not.toBe('')
-      expect(cell.getAttribute('aria-selected')).toBe('false')
+      // No `aria-selected`: the board is a grid of toggle buttons, not a
+      // selection set, so claiming "not selected" on all 225 cells was noise
+      // for a screen reader on every single cell.
+      expect(cell.hasAttribute('aria-selected')).toBe(false)
     }
   })
 

@@ -12,6 +12,7 @@
     "lint": "oxlint",
     "typecheck": "tsc -b",
     "test": "vitest run",
+    "verify:base": "node scripts/verify-base.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

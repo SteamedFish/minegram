@@ -36,6 +36,12 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      - name: Verify the nested Pages base
+        # The site is served from /minegram/, not the domain root, so a
+        # root-absolute asset path would 404 in production while dev and a
+        # casual read of dist/ both look fine. Checked statically from the
+        # artefacts: deterministic, and it cannot flake the deploy.
+        run: node scripts/verify-base.mjs
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - name: Upload Pages artifact
