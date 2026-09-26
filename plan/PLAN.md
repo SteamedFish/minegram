@@ -17,7 +17,7 @@ Build a polished, fully client-side web game that:
 ### 2.1 Mine count and dimensions
 
 - Default: 15 rows × 15 columns, 60% density, initial score 5.
-- Dimensions: 1–30 per side and at most 900 cells.
+- Dimensions: 1–24 per side and at most 576 cells. The ceiling is the solver's line-pattern capacity, not a display or storage limit: the ordered-line decoder is bounded at 10,000 patterns / 300,000 materialized cells per line, and a ~25-cell line carrying the required internal blanks no longer fits that budget. Measured over 25 seeds at 60% density with a 30 s budget: 0/24 failures at 24×24 (slowest 968 ms) versus 5/24 at 25×25, then 2/2 at 26×26, 28×28 and 30×30. Raising `maxSolverNodes` to 400k/1.6M/6.4M or the time budget to 600 s leaves 30×30 failing identically in ~350 ms with `accepted=0 rollbacks=16`, because the binding cost is per-line pattern materialization rather than search effort. The UI must therefore not offer a side above `MAX_BOARD_SIDE`, and a draft above it is rejected by `normalizeGenerationSettings` with a `RangeError` instead of reaching the engine and failing as `resource-limit`.
 - Density input is an integer percentage and maps to `round(rows * columns * density / 100)`.
 - The accepted mine count is clamped to `[max(rows, columns), rows * columns]` so every row and column can contain a mine.
 - Exact mine-count input, if included in the final UI, uses the same feasible interval and is reflected back visibly.
@@ -130,7 +130,7 @@ A small-board exhaustive reference counter provides an independent test oracle.
 - Preview affected cells and score cost before pointer release on desktop.
 - Touch marking mode prevents board panning only while actively marking; normal page scrolling remains available outside the mode.
 - Native buttons, arrow-key navigation, `M`/`B` shortcuts, Escape cancellation, visible focus, ARIA live status, reduced-motion support.
-- Zoom control for boards up to 30×30; cell targets remain usable.
+- Zoom control for boards up to 24×24; cell targets remain usable.
 - Clear onboarding, legend, clue grammar explanation, and actionable generation-failure report with reproducible seed/settings.
 
 Phase 4 rulings that refine this section:
@@ -142,6 +142,7 @@ Phase 4 rulings that refine this section:
 - **Right button:** plain right-click applies the opposite of the current marking mode and never changes the mode. `Erase` is a real marking mode, so the left button clears in it; `Shift`+right-click erases a single cell without changing the mode.
 - **Non-drag alternative:** every drag gesture is also reachable by a single-cell path (native buttons, arrow keys, `M`/`B`/Escape), because drag alone fails WCAG 2.5.7.
 - **State containment:** the authoritative game state lives only in a module closure; components receive projected view data, and no view type can express the mine solution.
+- **Layer coupling from the UI layer:** components may import types from `src/domain`, `src/engine`, and `src/application` (erased at build time) and may import *pure constant tables* from them — `DIFFICULTY_BANDS`, the `DEFAULT_GENERATION_*` defaults, `DEFAULT_INITIAL_SCORE`, `MAX_BOARD_SIDE` — so the settings form and the form's default values share one source of truth instead of duplicating literals. They must not import any function, class, or value that can reach a board, puzzle, solver proof, or generation trace. A `?raw` source guard test, `src/ui/layerBoundary.test.ts`, enforces the rule.
 
 ## 6. Delivery Phases and Review Gates
 

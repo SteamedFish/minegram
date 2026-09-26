@@ -36,6 +36,7 @@ Dependencies point inward: `domain <- engine <- application <- ui`; the worker a
 
 ## Gameplay Contract
 - Default board: 15×15, 60% mines, initial score 5.
+- Supported board range: 1..24 per side, at most 576 cells. `MAX_BOARD_SIDE` / `MAX_BOARD_CELLS` in `src/domain/board.ts` are the single source of truth and the settings form must read them instead of repeating a literal. The ceiling is the solver's per-line legal-pattern enumeration (10,000 patterns / 300,000 materialized cells per line): a ~25-cell line carrying the required internal blanks no longer fits that budget, so every larger board exhausts the resource limit and fails closed with `resource-limit`. Measured over 25 seeds at 60% density with a 30s budget: 0/24 failures at 24x24 (slowest 968ms) versus 5/24 at 25x25, then 2/2 at 26x26, 28x28 and 30x30. Larger solver-node budgets (400k/1.6M/6.4M) and a 600s time budget do not change the outcome, so this is a capacity fact, not a search-effort problem.
 - Final boards contain at least one mine in every row and column.
 - Ordered run clues preserve sequence; internal separators require at least one blank.
 - Correct marks lock, and a locked cell rejects any later assertion. Wrong marks cost one point and may be corrected without refund. Score is clamped to zero and zero ends the game.

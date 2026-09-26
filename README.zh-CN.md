@@ -28,7 +28,7 @@ Minegram 是一款围绕“有顺序的连续地雷段”设计的网页解谜�
 
 ## Phase 2 确定性生成器与难度
 
-`src/engine/generator/` 提供 DOM-free 的 `normalizeGenerationSettings` 与 `generateMinegramPuzzle` API。设置支持每边 1–30 格、最多 900 格、0–100 的整数密度、默认 `starter`、字符串/数字 seed，以及正安全整数 `maxAttempts`。地雷数量为 `clamp(round(rows * columns * density / 100), max(rows, columns), rows * columns)`。
+`src/engine/generator/` 提供 DOM-free 的 `normalizeGenerationSettings` 与 `generateMinegramPuzzle` API。设置支持每边 1–24 格、最多 576 格、0–100 的整数密度、默认 `starter`、字符串/数字 seed，以及正安全整数 `maxAttempts`。24 格上限来自求解器每条线段的模式枚举容量，而非搜索预算：25×25 及更大的棋盘无论节点预算或时间预算如何，都会以 `resource-limit` 失败关闭。地雷数量为 `clamp(round(rows * columns * density / 100), max(rows, columns), rows * columns)`。
 
 每个 root 都派生独立的 seeded stream，先生成 Fisher–Yates 随机布局，再生成低 run 数的连续行结构化 fallback，并进行有界列覆盖修复。当下限雷数等于棋盘较长边时，确定性的 seeded matching 会为较长边每条线各放一颗雷，并覆盖另一边的每条线，因此矩形最小数量候选在 solver gate 前仍具备可行的行/列覆盖。候选必须拥有精确目标数量、每行每列至少一颗地雷、由棋盘推导的线索，以及返回解与候选一致的完整 `unique` 证明。随后生成器复用这一个已证明且不可变的 witness 来重放前缀：每个被接受的事件都记录前缀子集、精确 witness、线索、唯一性证明和解身份。交付前始终执行新的独立唯一性证明。生成调用默认使用 3,000 ms 的 wall-clock deadline；候选与最终证明共享 `maxSolverNodes` 节点预算（默认 100,000），精确难度分析使用独立的 generation-wide `maxDifficultyNodes` 预算（默认 2,000）。所有工作共享 deadline 与取消信号，任何预算耗尽都会 fail closed。
 

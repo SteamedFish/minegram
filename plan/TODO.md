@@ -39,11 +39,22 @@
 ## Phase 4 — UI/UX
 - [x] Implement localized copy dictionaries (en/zh-CN) and the pure snapshot/view-model projection layer.
 - [x] Implement the pointer drag state machine with erase mode, per-drag single charge, and `Shift`+right-click cell erase.
-- [ ] Implement the state store and `useSyncExternalStore` hooks with worker ownership and win→next-round handoff.
-- [ ] Implement responsive shell, settings, status, clue rails, and board components.
-- [ ] Implement the plain-CSS token layer with Auto/Light/Dark themes and non-color state vocabulary.
-- [ ] Implement onboarding, legend, result/failure states, zoom, and accessibility.
+- [x] Implement the state store and `useSyncExternalStore` hooks with worker ownership and win→next-round handoff.
+- [x] Implement responsive shell, settings, status, clue rails, and board components.
+- [x] Implement the plain-CSS token layer with Auto/Light/Dark themes and non-color state vocabulary.
+- [x] Implement onboarding, legend, result/failure states, zoom, and accessibility.
+- [x] Write the layout/board/clue/form/overlay style pass bound to the emitted DOM inventory (2,320 lines across five sheets).
+- [x] Make the drag snapshot and subscription methods safe to pass detached to `useSyncExternalStore` (arrow class fields; prototype methods crashed the hook).
+- [ ] Fix clue clipping in both rails: keep the constrained rail axis exactly `--cell` (alignment verified at 0.0 px delta for all 15 rows and 15 columns) and fit the clue in the free axis. Measured on a real 15x15/60% board: `column-clue-0` "1 1 1 3 4" needs 93 px of clue box in a 39 px cell (54 px clipped), `row-clue-2` "1 2 1 1 1 1" needs 55 px in a 40 px cell.
+- [ ] Fix the corner label overflowing its 68x39 box into the first column clue, the density echo wrapping `60 · mines: 135` onto 3 ragged lines (95.2x72 px), and the board bottom row clipped mid-cell (stage 642 px vs scroll client height 630 px at 1440x900).
+- [x] Eliminate the `unknown` rail state on ordinary input. Root cause was not a slow rail: one publish-level `PatternGenerationContext` was shared by all 30 rails, so a single trip (a browser's first cold-JIT projection costs ~1.5 ms for the whole publish and ~0.6 ms for the widest legal clue, and the old 8 ms budget only survived a ~5x slowdown) failed *every* later rail closed. Fixed with per-rail budgets plus per-rail memoisation on the rail's own inputs, so one mark re-derives at most 2 rails; a budget-truncated `unknown` is never cached. Real-browser census after the fix: 0 unknown across 25 publishes over 3 rounds.
+- [x] Inline an SVG favicon so the nested Pages base never 404s on `/favicon.ico`.
+- [x] Cap the offered board range at 1–24 per side (576 cells). The settings form used to accept 30, but every board above 24 could only fail as `resource-limit`; the bound is the solver's per-line pattern capacity (0/24 failures at 24x24 vs 5/24 at 25x25 over 25 seeds, unaffected by node or time budgets), so `MAX_BOARD_SIDE` in `src/domain/board.ts` is now the single source of truth and the form reads it instead of a literal.
 - [ ] Pass component tests and desktop/mobile visual review; complete design handoff and Oracle gate.
+
+Retracted after measurement (recorded so the audit trail stays honest): the rails were never
+misaligned, and mobile 390x844 has no overflow (`html`/`body`/`.mg-app` all at `top: 0`,
+`document.scrollWidth === innerWidth === 390`). Both were first-pass probe misreadings.
 
 ## Phase 5 — Release
 - [ ] Verify GitHub Actions Pages deployment from a nested path.
