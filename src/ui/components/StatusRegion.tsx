@@ -54,7 +54,16 @@ export function StatusRegion({
   const [chrome, setChrome] = useState<ChromeNote | null>(null)
   /** The last event whose sentence has already been shown, as state so render can read it. */
   const [announced, setAnnounced] = useState<UiLastEvent | null>(null)
+  /**
+   * A mirror of `announced` for effects. `announced` is genuinely read during render
+   * (the sentence is the event's only while it is the newest one), so it has to be
+   * state — but an effect must never *depend* on a value it sets, or it re-runs itself
+   * the moment it does. The effect that publishes `announced` reads this instead.
+   */
+  const announcedRef = useRef<UiLastEvent | null>(null)
   const base = useRef<{ marks: readonly CellMark[]; score: number } | null>(null)
+  /** The event the mark diff was last taken for, so it is taken for it exactly once. */
+  const diffed = useRef<UiLastEvent | null>(null)
   const toolbar = useRef<{ mode: MarkingMode; zoom: ZoomStep } | null>(null)
   const score = status.score.current
   /**
@@ -82,20 +91,32 @@ export function StatusRegion({
   useEffect(() => {
     if (board === null) {
       base.current = null
+      diffed.current = null
+      announcedRef.current = null
       setDelta(null)
       return
     }
     const before = base.current
+    // The base is *read* before it is advanced. Storing it first, as this used to, made
+    // the effect re-run against the board it had just stored — see `diffed` — so the
+    // correct delta computed below was overwritten by an empty one in the same commit.
+    // Advancing it here on every publish, rather than only on a commit that carries a
+    // diff, is what keeps the next diff measuring one commit: a `mark-cleared` publish
+    // also moves marks, and it is not a diff.
     base.current = { marks: board.cells.map((cell) => cell.mark), score }
-    if (lastEvent !== null && announced !== lastEvent) {
-      setAnnounced(lastEvent)
-      // A game event supersedes a toolbar note: the board changed, so the board is
-      // what the region says next.
-      setChrome(null)
-    }
     if (lastEvent?.transition !== 'marks-applied' || before === null) {
       return
     }
+    /**
+     * One diff per event. `setLocale` republishes the *same* `lastEvent` object with a
+     * freshly projected board (`src/ui/gameStore.ts`), so the board identity changing
+     * says nothing about whether the event is new; without this a locale switch would
+     * diff the board against itself and empty the sentence again.
+     */
+    if (lastEvent === diffed.current) {
+      return
+    }
+    diffed.current = lastEvent
     if (before.marks.length !== board.cells.length) {
       setDelta(null)
       return
@@ -114,6 +135,9 @@ export function StatusRegion({
     // and are not the player's assertions. They need no subtraction from `mines`:
     // a reveal only ever writes `blank`, so every mine in the diff is the
     // player's, and the count to credit is the diff minus the revealed cells.
+    // `revealedCells` is the event's own count and `cells` is the diff's, so the two
+    // come from different sources; the clamp exists only to keep `cells` non-negative
+    // if they ever disagree. It is not what emptied this sentence before.
     const revealedCells = Math.max(0, Math.min(changed, lastEvent?.autoRevealedCells ?? 0))
     const revealedLines = lastEvent?.autoRevealedLines ?? 0
     const cells = changed - revealedCells
@@ -124,7 +148,18 @@ export function StatusRegion({
       revealedCells,
       revealedLines,
     })
-  }, [announced, board, lastEvent, score])
+  }, [board, lastEvent, score])
+
+  useEffect(() => {
+    if (lastEvent === null || announcedRef.current === lastEvent) {
+      return
+    }
+    announcedRef.current = lastEvent
+    setAnnounced(lastEvent)
+    // A game event supersedes a toolbar note: the board changed, so the board is
+    // what the region says next.
+    setChrome(null)
+  }, [lastEvent])
 
   return (
     <div
