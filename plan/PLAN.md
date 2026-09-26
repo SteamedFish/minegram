@@ -133,6 +133,16 @@ A small-board exhaustive reference counter provides an independent test oracle.
 - Zoom control for boards up to 30×30; cell targets remain usable.
 - Clear onboarding, legend, clue grammar explanation, and actionable generation-failure report with reproducible seed/settings.
 
+Phase 4 rulings that refine this section:
+
+- **Theme:** an explicit `Auto / Light / Dark` switch, persisted and applied as `html[data-theme]`, defaulting to `Auto`. `Auto` must follow `prefers-color-scheme` with no JavaScript, and both palettes must be correct in CSS alone.
+- **Seed policy:** only the authored seed is ever rendered. The engine's derived next-round seed exists only inside the failure/copy report payload, which is formatted at click time and never stored in a value a component can read.
+- **Mine count:** a read-only echo of density, never an editable field, so the two cannot disagree.
+- **Resume:** a failed or cancelled generation attempt that kept a board leaves that board playable through an explicit `round/resume` action. Resuming a board that is already fully correct resolves to a win rather than an unfinishable round.
+- **Right button:** plain right-click applies the opposite of the current marking mode and never changes the mode. `Erase` is a real marking mode, so the left button clears in it; `Shift`+right-click erases a single cell without changing the mode.
+- **Non-drag alternative:** every drag gesture is also reachable by a single-cell path (native buttons, arrow keys, `M`/`B`/Escape), because drag alone fails WCAG 2.5.7.
+- **State containment:** the authoritative game state lives only in a module closure; components receive projected view data, and no view type can express the mine solution.
+
 ## 6. Delivery Phases and Review Gates
 
 ### Phase 0 — Contract and project foundation
