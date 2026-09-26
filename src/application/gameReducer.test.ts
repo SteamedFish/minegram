@@ -1,4 +1,4 @@
-import { derivePuzzleClues, type MinegramPuzzle } from '../domain'
+import { derivePuzzleClues, type BinaryMineBoard, type MinegramPuzzle } from '../domain'
 import { normalizeGenerationSettings } from '../engine/generator/settings'
 import { describe, expect, it } from 'vitest'
 import {
@@ -6,7 +6,9 @@ import {
   deriveNextRoundSettings,
   gameReducer,
   previewMarkBatch,
+  revealEligibleLines,
   type CellAssertion,
+  type CellMark,
   type GameAction,
   type GameState,
   type GeneratedRound,
@@ -1175,6 +1177,50 @@ describe('auto-reveal', () => {
     expect(result.state.score).toBe(5)
     expect(result.autoRevealedLines).toEqual([])
     expect(result.autoRevealedCells).toBe(0)
+  })
+
+  it('never reveals a line that holds no mine, because it confirms nothing', () => {
+    // Unreachable through the real game, which guarantees a mine in every row
+    // and column, but `revealEligibleLines` is exported, so the guard is pinned
+    // here instead of being assumed. A mine-less line satisfies "every mine is
+    // marked" vacuously and has no wrong mark to find, so without the `mines > 0`
+    // precondition it would be filled for no reason at all.
+    // One mine in the whole board, at index 0. That makes row 0 and column 0
+    // eligible and leaves row 1, row 2, column 1 and column 2 with no mine at
+    // all, so the guard is exercised against lines the player could never have
+    // learned anything about.
+    const sparseBoard: BinaryMineBoard = [1, 0, 0, 0, 0, 0, 0, 0, 0]
+    const sparseMarks: CellMark[] = [
+      'mine', 'unknown', 'unknown',
+      'unknown', 'unknown', 'unknown',
+      'unknown', 'unknown', 'unknown',
+    ]
+    const sparseLocked = sparseMarks.map(
+      (mark, index) => mark !== 'unknown' && (mark === 'mine') === (sparseBoard[index] === 1),
+    )
+    const result = revealEligibleLines(sparseBoard, sparseMarks, sparseLocked, 3, 3)
+
+    expect(result.lines).toEqual([
+      { orientation: 'row', index: 0, cells: 2 },
+      { orientation: 'column', index: 0, cells: 2 },
+    ])
+    expect(result.marks).toEqual([
+      'mine', 'blank', 'blank',
+      'blank', 'unknown', 'unknown',
+      'blank', 'unknown', 'unknown',
+    ])
+    expect(result.locked).toEqual([true, true, true, true, false, false, true, false, false])
+
+    // The whole-board case: with every line mine-less, nothing at all is
+    // revealed. The all-blank 3x3 is vacuously uniquely solvable, which is how
+    // an all-mine-less board reaches the helper in the property sweep.
+    const empty: BinaryMineBoard = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    const allUnknown: CellMark[] = Array.from({ length: 9 }, () => 'unknown' as CellMark)
+    const noneLocked: boolean[] = Array.from({ length: 9 }, () => false)
+    const untouched = revealEligibleLines(empty, allUnknown, noneLocked, 3, 3)
+    expect(untouched.lines).toEqual([])
+    expect(untouched.marks.every((mark) => mark === 'unknown')).toBe(true)
+    expect(untouched.locked.every((isLocked) => isLocked === false)).toBe(true)
   })
 
   it('reveals nothing on a fresh board, so accepting a round cannot win it', () => {

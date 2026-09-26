@@ -640,10 +640,20 @@ function roundIsComplete(board: BinaryMineBoard, marks: readonly CellMark[]): bo
 }
 
 /**
- * A line is eligible when the player has located every mine in it AND the line
- * carries no wrong mark. Both conditions are read straight off the solution
- * board: no legal-pattern enumeration, so this can never fail closed on a
- * resource limit or burn a search budget the way a pattern-based check would.
+ * A line is eligible when it actually has a mine to confirm, the player has
+ * located every one of them, AND the line carries no wrong mark. All three
+ * conditions are read straight off the solution board: no legal-pattern
+ * enumeration, so this can never fail closed on a resource limit or burn a
+ * search budget the way a pattern-based check would.
+ *
+ * The `mines > 0` precondition is not decoration. Without it a line with no
+ * mine at all satisfies `mines === markedMines` vacuously and has no wrong mark
+ * to find, so it would be reported as filled even though the player has learned
+ * nothing about it — a state change with no cause. A mine-less line has nothing
+ * to confirm and therefore nothing to reveal. Unreachable through the real game
+ * in any case, because the generator guarantees at least one mine per row and
+ * per column, but `revealEligibleLines` is exported and its property tests sweep
+ * arbitrary boards, so the guard lives here rather than being assumed.
  */
 function lineIsEligible(
   board: BinaryMineBoard,
@@ -672,7 +682,9 @@ function lineIsEligible(
       markedMines += 1
     }
   }
-  return mines === markedMines
+  // No mine means no confirmation and nothing to show, so the line is skipped
+  // rather than filled.
+  return mines > 0 && mines === markedMines
 }
 
 /**
