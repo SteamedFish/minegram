@@ -33,11 +33,15 @@
 - [x] Pass state-transition and Worker integration tests; complete parent validation.
 - [x] Close the Phase 3 Oracle findings (post-win seed replay, dispose liveness, per-cell charging) and tighten the documented scoring rule.
 - [x] Add `round/resume` so a board kept by a failed or cancelled generation attempt stays playable.
-- [ ] Complete the parent Phase 3 Oracle validation gate.
+- [x] Resume a kept finished board as a win instead of soft-locking it (shared `roundIsComplete` win predicate).
+- [x] Complete the parent Phase 3 Oracle validation gate (PASS on signed commit `0abea57`).
 
 ## Phase 4 — UI/UX
-- [ ] Implement responsive shell, settings, status, clue rails, and board.
-- [ ] Implement mouse/touch drag transaction previews and keyboard marking.
+- [x] Implement localized copy dictionaries (en/zh-CN) and the pure snapshot/view-model projection layer.
+- [x] Implement the pointer drag state machine with erase mode, per-drag single charge, and `Shift`+right-click cell erase.
+- [ ] Implement the state store and `useSyncExternalStore` hooks with worker ownership and win→next-round handoff.
+- [ ] Implement responsive shell, settings, status, clue rails, and board components.
+- [ ] Implement the plain-CSS token layer with Auto/Light/Dark themes and non-color state vocabulary.
 - [ ] Implement onboarding, legend, result/failure states, zoom, and accessibility.
 - [ ] Pass component tests and desktop/mobile visual review; complete design handoff and Oracle gate.
 
