@@ -51,20 +51,26 @@ export function Wordmark({ t }: { readonly t: Copy }) {
   )
 }
 
+/**
+ * One chip, not two. `round` is 0 until the first round is accepted, so an
+ * unconditional round chip tells a first-time visitor they are on "Round 0", and
+ * the second chip (the next round) uses the very same template, so a first
+ * generation reads "Round 0" and "Round 1" as two equally real rounds. While a
+ * generation is in flight the single chip names the round being MADE — that is
+ * the only round number the player can act on — and it keeps the busy styling, so
+ * a moving target is visibly different from a settled one.
+ */
 export function StatusChipRow({ t, status }: { readonly t: Copy; readonly status: StatusView }) {
+  const printing = status.isGenerating
   return (
     <ul className="mg-chip-row">
-      <li className="mg-chip" data-chip="round">
-        {interpolate(t.status.roundChip, { round: status.round })}
-      </li>
-      {status.nextRound === null ? null : (
-        <li className="mg-chip" data-chip="next-round">
-          {interpolate(t.status.nextRound, { round: status.nextRound })}
-        </li>
-      )}
-      {status.isGenerating ? (
+      {printing ? (
         <li className="mg-chip" data-chip="generating" data-busy="true">
-          {interpolate(t.generation.printing, { round: status.nextRound ?? status.round })}
+          {interpolate(t.generation.printing, { round: status.nextRound ?? Math.max(1, status.round) })}
+        </li>
+      ) : status.hasRound ? (
+        <li className="mg-chip" data-chip="round">
+          {interpolate(t.status.roundChip, { round: status.round })}
         </li>
       ) : null}
       {status.interactive ? null : (
@@ -77,9 +83,15 @@ export function StatusChipRow({ t, status }: { readonly t: Copy; readonly status
 
 /**
  * §4.7 + §8.15: the chip reports what the engine actually proved and nothing more.
- * `absent` is "difficulty unreported", `unknown` is "unresolved" with the engine's
- * own reason, and only `known` names a band — an unproven band is never dressed
- * up as a rating.
+ * `absent` is "difficulty unreported", `unknown` is "unresolved" with the reason in
+ * prose, and only `known` names a band — an unproven band is never dressed up as a
+ * rating.
+ *
+ * The reason is looked up in `t.tokens.unknownReasons`, the table that exists
+ * precisely to render machine tokens as prose. A token with no entry is dropped
+ * rather than printed: this is the primary chrome, and "difficulty-not-found" or
+ * "stale-generation-id" leaking into it is worse than a chip that says only
+ * "unresolved".
  */
 export function DifficultyChip({
   t,
@@ -96,9 +108,10 @@ export function DifficultyChip({
     )
   }
   if (difficulty.kind === 'unknown') {
+    const reason = unknownReason(t, difficulty.reason)
     return (
       <li className="mg-chip" data-chip="difficulty" data-difficulty="unknown">
-        {`${t.difficulty.unresolved}${difficulty.reason === null ? '' : ` · ${difficulty.reason}`}`}
+        {`${t.difficulty.unresolved}${reason === null ? '' : ` · ${reason}`}`}
       </li>
     )
   }
@@ -107,6 +120,15 @@ export function DifficultyChip({
       {`${t.difficulty.proved}: ${bandLabel(t, difficulty.band)}`}
     </li>
   )
+}
+
+/** Prose for a machine token, or null when the token has no entry in the table. */
+function unknownReason(t: Copy, token: string | null): string | null {
+  const table = t.tokens.unknownReasons
+  if (token === null || !Object.prototype.hasOwnProperty.call(table, token)) {
+    return null
+  }
+  return table[token as keyof typeof table]
 }
 
 /**

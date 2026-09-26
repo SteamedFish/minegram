@@ -1,4 +1,4 @@
-import { MAX_BOARD_SIDE } from '../../domain/board'
+import { MAX_BOARD_SIDE, MIN_BOARD_SIDE } from '../../domain/board'
 import { DIFFICULTY_BANDS } from '../../engine/solver/difficulty'
 import { interpolate, type Copy } from '../copy'
 import type { DraftValidation, SettingsDraft } from '../gameStore'
@@ -56,7 +56,8 @@ export function SettingsPanel({
           id={`${id}-rows`}
           label={t.settings.rows.label}
           value={draft.rows}
-          min={1}
+          /* The bounds come from the engine, not from a second copy of them here. */
+          min={MIN_BOARD_SIDE}
           max={MAX_BOARD_SIDE}
           step={1}
           hint={t.settings.rows.hint}
@@ -69,7 +70,7 @@ export function SettingsPanel({
           id={`${id}-columns`}
           label={t.settings.columns.label}
           value={draft.columns}
-          min={1}
+          min={MIN_BOARD_SIDE}
           max={MAX_BOARD_SIDE}
           step={1}
           hint={t.settings.columns.hint}
@@ -87,10 +88,18 @@ export function SettingsPanel({
           step={1}
           hint={t.settings.density.hint}
           /* §9.2: the mine count is a read-only derived echo, never an input. There
-             is no inverse — a mine count does not determine a density. */
-          echo={interpolate(t.settings.density.echo, {
-            count: validation.settings?.mineCount ?? 0,
-          })}
+             is no inverse — a mine count does not determine a density.
+
+             A draft that does not currently produce settings has no mine count, and
+             `?? 0` would print "mines: 0" exactly when the panel is lying to the
+             player: a half-typed one-digit rows field yields no settings, and a
+             fabricated zero reads like a rule rather than like a missing answer.
+             The echo is simply absent until the draft is real again. */
+          echo={
+            validation.settings === null
+              ? undefined
+              : interpolate(t.settings.density.echo, { count: validation.settings.mineCount })
+          }
           onChange={(value) => {
             onChange({ ...draft, densityPercent: String(value) })
           }}

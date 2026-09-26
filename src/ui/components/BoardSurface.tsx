@@ -77,12 +77,29 @@ const ZOOM_CELL: Readonly<Record<Exclude<ZoomStep, 'fit'>, string>> = {
 const FIT_FLOOR_PX = 24
 const FIT_CEILING_PX = 44
 
+/**
+ * The board region's stable focus destination, exported because `RoundBanner`
+ * hands focus to it: a win notice holds focus on its own primary button, and the
+ * interlude then unmounts that button, so whatever the browser focuses next is
+ * `<body>` and a keyboard player is back at the top of the document. The banner
+ * used to be the only thing that knew where focus was, and the banner is exactly
+ * the thing that disappears.
+ *
+ * The target is always mounted, so the round change has somewhere predictable to
+ * put focus whatever happened before it — and it is inside `.mg-board-scroll`,
+ * because the §3.6 handoff to the first cell only continues focus into the board
+ * when the board region already holds it. `tabIndex={-1}` keeps it out of the Tab
+ * order: it is a programmatic destination, never a stop on the way somewhere.
+ */
+export const ROUND_FOCUS_ID = 'mg-round-focus'
+
 export function BoardSurface(props: BoardSurfaceProps) {
   const { t, snapshot, board, store } = props
   const interactive = snapshot.status.interactive
   const scroll = useRef<HTMLDivElement | null>(null)
   const stage = useRef<HTMLDivElement | null>(null)
   const rail = useRef<HTMLDivElement | null>(null)
+  const landing = useRef<HTMLDivElement | null>(null)
   const captured = useRef<number | null>(null)
   const cells = useRef<(HTMLDivElement | null)[]>([])
   const live = useRef({ interactive })
@@ -202,6 +219,29 @@ export function BoardSurface(props: BoardSurfaceProps) {
     }
   }, [snapshot.status.status, focusCell])
 
+  // A round change is the one moment the board region must be able to CLAIM focus,
+  // because the interlude that follows a win tears out whatever held it. The round
+  // number — not the status — is the edge, so this fires for a round printed from the
+  // settings panel and for one printed by the win handoff alike, and it is
+  // independent of the banner's mount lifetime.
+  //
+  // The first render is deliberately not a round change: on load this must not pull
+  // focus out of whatever opened the app (the first-run help dialog does).
+  const seenRound = useRef(round)
+  useEffect(() => {
+    if (seenRound.current === round) {
+      return
+    }
+    seenRound.current = round
+    const active = document.activeElement
+    if (active !== null && active.closest('.mg-board-scroll') !== null) {
+      // The region already holds focus, so the effect above has just handed it to
+      // the first cell — the better destination, and this must not undo that.
+      return
+    }
+    landing.current?.focus({ preventScroll: true })
+  }, [round])
+
   useEffect(() => {
     const node = scroll.current
     if (node === null || typeof ResizeObserver === 'undefined' || columns === 0) {
@@ -309,6 +349,25 @@ export function BoardSurface(props: BoardSurfaceProps) {
 
   const cellSize = props.zoom === 'fit' ? `${fitCell}px` : ZOOM_CELL[props.zoom]
 
+  // The round-change destination. Always mounted, in both branches, and named after
+  // whatever the region currently holds, so focus lands on a thing that describes
+  // where it is instead of on a vanished button. `.mg-visually-hidden` keeps it in
+  // the accessibility tree — it is positioned and clipped, never hidden from it.
+  const roundFocus = (
+    <div
+      id={ROUND_FOCUS_ID}
+      ref={landing}
+      tabIndex={-1}
+      className="mg-visually-hidden"
+      data-testid="round-focus"
+      aria-label={
+        board === null
+          ? t.board.empty.title
+          : interpolate(t.board.label, { rows, columns })
+      }
+    />
+  )
+
   return (
     <div className="mg-board-surface">
       <BoardToolbar {...props} />
@@ -326,6 +385,7 @@ export function BoardSurface(props: BoardSurfaceProps) {
           }
         }}
       >
+        {roundFocus}
         {board === null ? (
           <BoardEmptyState t={t} />
         ) : (
@@ -754,7 +814,12 @@ export function BoardCell({
         registerCell(cell.index, node)
       }}
       tabIndex={tabIndex}
-      aria-selected="false"
+      /* No `aria-selected`. A gridcell that is always "not selected" advertises a
+         selection model the board does not have: the roving tabindex is a focus
+         cursor, and a click is an assertion, not a selection. The cell already
+         carries its own state in `aria-label`, and the grid declares no
+         `aria-multiselectable`, so claiming a false selection on all 225 cells only
+         misleads. */
       aria-label={describeCell(t, cell)}
       data-testid={`cell-${cell.index}`}
       data-cell-index={cell.index}

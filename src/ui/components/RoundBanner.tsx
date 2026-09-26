@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, type FocusEvent } from 'react'
 import { interpolate, type Copy } from '../copy'
 import { resumeAvailable, type UiSnapshot } from '../viewModel'
+import { ROUND_FOCUS_ID } from './BoardSurface'
 
 /**
  * The round banner: a full-width strip directly above the board, never a modal.
@@ -27,6 +28,15 @@ export function RoundBanner(props: RoundBannerProps) {
   const { t, snapshot } = props
   const state = bannerState(snapshot)
   const primary = useRef<HTMLButtonElement | null>(null)
+  // The last node inside this banner that held focus, captured on the way IN. A
+  // node being removed cannot report where it was afterwards, so the answer has to
+  // exist before the unmount.
+  const held = useRef<HTMLElement | null>(null)
+
+  const remember = useCallback((event: FocusEvent<HTMLDivElement>) => {
+    const target = event.target
+    held.current = target instanceof HTMLElement ? target : null
+  }, [])
 
   useEffect(() => {
     if (state !== 'won' && state !== 'lost') {
@@ -40,8 +50,39 @@ export function RoundBanner(props: RoundBannerProps) {
     }
   }, [state])
 
+  // The banner is about to stop rendering content — the interlude ended and the
+  // next round is printing, a loss was restarted, or a kept board came back. The
+  // node that held focus is being removed, and the browser's answer to that is
+  // `<body>`: a keyboard player lands at the top of the document with no way back
+  // to the board. Hand focus to the board region's always-mounted landing target,
+  // which outlives this banner.
+  //
+  // Guarded twice over: only a transition INTO 'none' counts, and only when focus
+  // is genuinely gone (`<body>` or a detached node). If the player had already
+  // tabbed somewhere else, that place keeps focus.
+  const previous = useRef(state)
+  useEffect(() => {
+    const before = previous.current
+    previous.current = state
+    if (before === 'none' || state !== 'none') {
+      return
+    }
+    const active = document.activeElement
+    const lost = active === null || active === document.body || active.isConnected === false
+    if (held.current === null || !lost) {
+      return
+    }
+    held.current = null
+    document.getElementById(ROUND_FOCUS_ID)?.focus({ preventScroll: true })
+  }, [state])
+
   return (
-    <div className="mg-round-banner" data-round-state={state} data-status={snapshot.status.status}>
+    <div
+      className="mg-round-banner"
+      data-round-state={state}
+      data-status={snapshot.status.status}
+      onFocus={remember}
+    >
       {state === 'resume' ? <ResumeNote t={t} resume={props.resume} onResume={props.onResume} /> : null}
       {state === 'won' ? (
         <div className="mg-round-banner__body" data-tone="won">

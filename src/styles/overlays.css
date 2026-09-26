@@ -607,13 +607,6 @@
   white-space: nowrap;
 }
 
-.mg-chip[data-chip='next-round'] {
-  /* Provisional: no fill, muted ink. The round being played is already filled. */
-  background-color: transparent;
-  color: var(--ink-3);
-  white-space: nowrap;
-}
-
 .mg-chip[data-chip='read-only'] {
   background-color: transparent;
   color: var(--ink-3);
