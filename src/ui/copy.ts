@@ -136,6 +136,11 @@ const en = {
     column: 'Column {index}',
     readOnly: 'The board is read only until a round is playing.',
     revealed: 'Line revealed',
+    empty: {
+      title: 'No round printed yet',
+      body: 'Choose a size and a density, then print a board. One mine-run puzzle at a time, proved to have a single answer.',
+      hint: 'Every line you close fills itself in.',
+    },
   },
 
   cell: {
@@ -371,6 +376,16 @@ const en = {
     roundWon: 'Round {round} complete. Score {score}. The next round starts now.',
     roundLost: 'Round lost. The score reached zero.',
     marksApplied: 'Marked {cells} cells as {assertion}. Wrong: {wrong}. Score {score}.',
+    /**
+     * Appended to `marksApplied` when the same commit also closed a line. The
+     * pair is singular/plural in English; Chinese has no plural inflection, so
+     * its two entries are the same sentence.
+     */
+    revealNoteOne: 'The game filled {cells} cell in the line you completed.',
+    revealNoteMany: 'The game filled {cells} cells in the {lines} lines you completed.',
+    /** Used when the fill accounts for the whole change, so nothing is credited. */
+    revealOnlyOne: 'You completed {lines} line. The game filled {cells} cell. Score {score}.',
+    revealOnlyMany: 'You completed {lines} lines. The game filled {cells} cells. Score {score}.',
     markCleared: 'Mark cleared.',
     roundResumed: 'Round {round} restored. Nothing was lost.',
     generationFailed: 'Generation stopped: {reason}',
@@ -722,6 +737,11 @@ export const zhCN: Partial<Copy> = {
     column: '第 {index} 列',
     readOnly: '只有本局进行中时棋盘才可操作。',
     revealed: '该行或列已确认',
+    empty: {
+      title: '还没有印出棋局',
+      body: '选定尺寸与密度，然后印出棋盘。一次一局矿道谜题，并已证明只有一个答案。',
+      hint: '你确认的每一行或列都会自动填满。',
+    },
   },
 
   cell: {
@@ -955,6 +975,10 @@ export const zhCN: Partial<Copy> = {
     roundWon: '第 {round} 局完成。分数 {score}。下一局即将开始。',
     roundLost: '本局结束，分数已归零。',
     marksApplied: '已把 {cells} 格标为{assertion}，其中 {wrong} 格标错。分数 {score}。',
+    revealNoteOne: '你完成的那一行里，游戏替你填上了 {cells} 格。',
+    revealNoteMany: '你完成的 {lines} 行里，游戏替你填上了 {cells} 格。',
+    revealOnlyOne: '你完成了 {lines} 行，游戏替你填上了 {cells} 格。分数 {score}。',
+    revealOnlyMany: '你完成了 {lines} 行，游戏替你填上了 {cells} 格。分数 {score}。',
     markCleared: '已擦除标记。',
     roundResumed: '第 {round} 局已恢复，没有丢失任何内容。',
     generationFailed: '生成已停止：{reason}',

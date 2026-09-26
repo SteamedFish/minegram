@@ -31,6 +31,7 @@ import type {
   ZoomStep,
 } from '../viewModel'
 import type { GameStore } from '../gameStore'
+import { BoardEmptyState } from './BoardEmptyState'
 
 /**
  * The board surface: one scroll container, one grid, and every gesture that can
@@ -207,9 +208,39 @@ export function BoardSurface(props: BoardSurfaceProps) {
       return
     }
     const measure = (): void => {
-      const allowance = rail.current?.offsetWidth ?? 0
-      const next = Math.floor((node.clientWidth - allowance) / columns)
-      setFitCell(Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, next)))
+      // The rail costs the pane a COLUMN on the inline axis and a BAND on the block
+      // axis, and both come off before the cells divide what is left. Reading them off
+      // the corner cell — which spans exactly the band — keeps the two axes symmetric
+      // and picks up any future change to the band without a constant to update here.
+      const corner = rail.current
+      const inlineCost = corner?.offsetWidth ?? 0
+      const blockCost = corner?.offsetHeight ?? 0
+      const byWidth = Math.floor((node.clientWidth - inlineCost) / columns)
+      // The vertical half of Fit, which §1.7's width-only solve never had. A cell has
+      // to fit BOTH axes, so the answer is the SMALLER of the two solves — `max` here
+      // would grow a board straight back out of the pane, which is the defect this
+      // solve exists to remove.
+      //
+      // Reading the pane's OWN box, rather than any board variable, is what keeps this
+      // free of the cap ⇄ cell-size loop. The pane is capped by `min(70vh, 46rem)` in
+      // board.css — a value no board can influence, because it is written in viewport
+      // units and in `rem`, and the stage inside the pane is `max-content`. So the
+      // measure's inputs cannot include the board's own output.
+      //
+      // The loop also closes on itself, which is why no settling pass is needed:
+      //   • board taller than the cap → the pane is a scroller at the cap, so
+      //     `byHeight` is exactly the cell that makes the board fit, and it stays.
+      //   • board shorter than the cap → the pane is a grid and shrinks to the board,
+      //     so `clientHeight` is the board's height and `byHeight` is the size the
+      //     board already is: the measure is a no-op.
+      // Either way the next observation returns the same number, and the floor and
+      // the ceiling are pure constants.
+      const available = node.clientHeight - blockCost
+      // A hidden region measures zero on both axes; the width solve is then the only
+      // one with an answer, and a board that is merely not on screen yet must not be
+      // sized to the floor because of it.
+      const byHeight = available > 0 ? Math.floor(available / rows) : byWidth
+      setFitCell(Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, Math.min(byWidth, byHeight))))
     }
     measure()
     const observer = new ResizeObserver(measure)
@@ -217,7 +248,7 @@ export function BoardSurface(props: BoardSurfaceProps) {
     return () => {
       observer.disconnect()
     }
-  }, [columns])
+  }, [columns, rows])
 
   function moveTo(next: number): void {
     const bounded = Math.max(0, Math.min(columns * rows - 1, next))
@@ -295,81 +326,106 @@ export function BoardSurface(props: BoardSurfaceProps) {
           }
         }}
       >
-        <div
-          className="mg-board-stage"
-          ref={stage}
-          role="grid"
-          aria-rowcount={rows + 1}
-          aria-colcount={columns + 1}
-          aria-label={interpolate(t.board.label, { rows, columns })}
-          aria-readonly={interactive ? undefined : true}
-          data-testid="board-stage"
-          data-dragging={dragState.phase === 'idle' ? undefined : 'true'}
-          data-finger-marking={props.fingerMarking ? 'on' : 'off'}
-          data-inert={interactive ? undefined : 'true'}
-          style={
-            {
-              '--cols': String(columns),
-              '--rows': String(rows),
-              '--cell': cellSize,
-              '--rail-col': 'max(4.5ch, calc(var(--cell) * 1.7))',
-            } as CSSProperties
-          }
-          onPointerDown={(event) => {
-            const input = pointerDownInput(event)
-            if (drag.onPointerDown(input).preventDefault) {
-              event.preventDefault()
+        {board === null ? (
+          <BoardEmptyState t={t} />
+        ) : (
+          <div
+            className="mg-board-stage"
+            ref={stage}
+            role="grid"
+            aria-rowcount={rows + 1}
+            aria-colcount={columns + 1}
+            aria-label={interpolate(t.board.label, { rows, columns })}
+            aria-readonly={interactive ? undefined : true}
+            data-testid="board-stage"
+            data-dragging={dragState.phase === 'idle' ? undefined : 'true'}
+            data-finger-marking={props.fingerMarking ? 'on' : 'off'}
+            data-inert={interactive ? undefined : 'true'}
+            style={
+              {
+                '--cols': String(columns),
+                '--rows': String(rows),
+                '--cell': cellSize,
+                '--rail-col': 'max(4.5ch, calc(var(--cell) * 1.7))',
+              } as CSSProperties
             }
-          }}
-          onPointerMove={(event) => {
-            const input = pointerMoveInput(event)
-            if (drag.onPointerMove(input).preventDefault) {
+            onPointerDown={(event) => {
+              const input = pointerDownInput(event)
+              if (drag.onPointerDown(input).preventDefault) {
+                event.preventDefault()
+              }
+            }}
+            onPointerMove={(event) => {
+              const input = pointerMoveInput(event)
+              if (drag.onPointerMove(input).preventDefault) {
+                event.preventDefault()
+              }
+            }}
+            onPointerUp={(event) => {
+              const input = pointerEndInput(event)
+              if (drag.onPointerUp(input).preventDefault) {
+                event.preventDefault()
+              }
+            }}
+            onPointerCancel={(event) => {
+              const input = pointerEndInput(event)
+              if (drag.onPointerCancel(input).preventDefault) {
+                event.preventDefault()
+              }
+            }}
+            onLostPointerCapture={(event) => {
+              const input = pointerEndInput(event)
+              if (drag.onLostPointerCapture(input).preventDefault) {
+                event.preventDefault()
+              }
+            }}
+            onContextMenu={(event) => {
               event.preventDefault()
-            }
-          }}
-          onPointerUp={(event) => {
-            const input = pointerEndInput(event)
-            if (drag.onPointerUp(input).preventDefault) {
-              event.preventDefault()
-            }
-          }}
-          onPointerCancel={(event) => {
-            const input = pointerEndInput(event)
-            if (drag.onPointerCancel(input).preventDefault) {
-              event.preventDefault()
-            }
-          }}
-          onLostPointerCapture={(event) => {
-            const input = pointerEndInput(event)
-            if (drag.onLostPointerCapture(input).preventDefault) {
-              event.preventDefault()
-            }
-          }}
-          onContextMenu={(event) => {
-            event.preventDefault()
-          }}
-          onKeyDown={onKeyDown}
-        >
-          {board === null ? null : (
-            <>
-              <ColumnClueRail t={t} board={board} focusWithin={focusInside} railRef={rail} />
-              {grid.map((rowCells) => (
-                <BoardRow
-                  key={rowCells[0]?.index ?? 0}
-                  t={t}
-                  row={rowCells[0]?.row ?? 0}
-                  cells={rowCells}
-                  board={board}
-                  drag={drag}
-                  roving={roving}
-                  registerCell={(index, node) => {
-                    cells.current[index] = node
-                  }}
-                />
-              ))}
-            </>
-          )}
-        </div>
+            }}
+            onKeyDown={onKeyDown}
+          >
+            {board === null ? (
+              <BoardEmptyState t={t} />
+            ) : (
+              <>
+                <ColumnClueRail t={t} board={board} focusWithin={focusInside} railRef={rail} />
+                {grid.map((rowCells) => (
+                  <BoardRow
+                    key={rowCells[0]?.index ?? 0}
+                    t={t}
+                    row={rowCells[0]?.row ?? 0}
+                    cells={rowCells}
+                    board={board}
+                    drag={drag}
+                    roving={roving}
+                    registerCell={(index, node) => {
+                      cells.current[index] = node
+                    }}
+                  />
+                ))}
+                {/* §5.4 on the column axis. A row has an element of its own to carry
+                    the band; a column does not, so one empty strip per COMPLETE column
+                    is added here, and board.css places it from `--k` between the first
+                    and last cell rows of the stage's own grid template. `aria-hidden`
+                    is load-bearing rather than decorative: this is a `role="grid"`,
+                    whose required children are rows, and an `aria-hidden` child is
+                    removed from the accessibility tree, so the grid's owned children
+                    stay exactly the rows `aria-rowcount` promises. */}
+                {board.columnProgress.map((line) =>
+                  line.complete ? (
+                    <div
+                      className="mg-board-column-reveal"
+                      key={`reveal-${line.index}`}
+                      aria-hidden="true"
+                      data-line-revealed="column"
+                      style={{ '--k': String(line.index) } as CSSProperties}
+                    />
+                  ) : null,
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
       <DragPreviewChip
         t={t}
@@ -637,7 +693,10 @@ export function BoardRow({
     return null
   }
   return (
-    <div className="mg-board-row" role="row">
+    // §5.4: the row IS the carrier, so the band is a tint on its cells and a
+    // gradient bar at each end. The attribute is absent unless the line is
+    // complete, so nothing in the DOM is being told about a line that is not.
+    <div className="mg-board-row" role="row" data-line-revealed={rowLine.complete ? 'row' : undefined}>
       <ClueCell t={t} line={rowLine} orientation="row" />
       {cells.map((cell) => {
         const columnLine = board.columnProgress[cell.column]

@@ -359,7 +359,7 @@
   --wash-accent: color-mix(in srgb, var(--accent) 8%, transparent); /* a wrong claim */
   --wash-accent-soft: color-mix(in srgb, var(--accent) 4%, transparent); /* …under a preview */
   --wash-confirm: color-mix(in srgb, var(--confirm) 30%, transparent); /* the locked-blank ring */
-  --wash-reveal: color-mix(in srgb, var(--ink-3) 8%, transparent); /* an auto-revealed line */
+  --wash-reveal: color-mix(in srgb, var(--confirm) 8%, transparent); /* an auto-revealed line */
 }
 
 /* =============================================================================
@@ -617,7 +617,8 @@ html[data-theme='light'] {
 
 /* Auto-revealed: the game filled this cell in because its line closed. The
    channel is absence — no border and no press highlight — and the line's own
-   edge hairline (below) is what makes the band readable. */
+   edge hairline, which board.css draws on the line's container, is what makes
+   the band readable. */
 .mg-cell[data-state='revealed'] {
   --cell-glyph: '';
   --cell-fill: var(--surface-3);
@@ -629,13 +630,14 @@ html[data-theme='light'] {
 
 /* ---- 2. orthogonal modifiers ---- */
 
-/* The revealed band's own tint, for the row/column container. The wash itself
-   is a plain token below, in the rail vocabulary; only the edge belongs to the
-   attribute, because only this state has an edge. */
-[data-revealed='true'] {
-  --line-reveal-edge: inset 0 0 0 var(--rule-w-heavy) var(--confirm);
-  --line-reveal-edge-color: color-mix(in srgb, var(--confirm) 35%, transparent);
-}
+/* The revealed band's own tint and edge are NOT declared on an attribute any
+   more. They used to be, which is why this file carried a pair of them that
+   nothing read: a token declared on a rail cell cannot reach the cells of its own
+   row, and no attribute anywhere said which board index a COLUMN sits at, so a
+   column could not be drawn from its rail cell at all. board.css now puts
+   `data-line-revealed` on the line's own container — the row for a row, a strip
+   positioned by the column index for a column — and both carry the same pair,
+   which lives in the rail vocabulary at the foot of this file. */
 
 /* A board that is not playable recedes. The primary channel is the status
    strip's text, not this dim — §7.3's rule is that the state is carried by
@@ -722,13 +724,48 @@ html[data-theme='light'] {
   --badge-color-preview: var(--accent);
   --badge-bg-preview: var(--accent);
 
-  /* A fully-labelled line's edge, and the faint tint inside it. */
+  /* A fully-labelled line's edge. §5.4 asks for a 2px edge and a ring that fades
+     to 60%. 60% of `--confirm` over `--surface-3` measures 2.77:1 in light and
+     2.98:1 in dark, and a non-text boundary has to clear 3:1, so the ring settles
+     at 70% — 3.35:1 light, 3.52:1 dark, both measured from the sRGB values above.
+     This is the steady state: the legend's swatch and anything else showing the
+     result rather than the arrival reads it, so it has to be finished without any
+     animation having run.
+
+     The fade is NOT here, and cannot be. A custom property is substituted at
+     computed-value time on the element that DECLARES it, so a `color-mix` in
+     `--line-reveal-alpha` declared on `:root` would freeze that alpha to 1 and
+     hand every descendant a ring that never moves. board.css re-declares this
+     colour on the line's own container — the same element it animates —
+     multiplying this share by `--line-reveal-alpha`, which is registered at the
+     foot of this file. The tint it fades alongside is `--wash-reveal`, in the
+     wash family above; there is no separate wash token here, because the band has
+     exactly one tint and one owner. */
+  --line-edge-share: 70%;
   --line-edge-width: var(--rule-w-heavy);
-  --line-edge-color: color-mix(in srgb, var(--confirm) 35%, transparent);
-  --line-reveal-wash: var(--wash-reveal);
+  --line-edge-color: color-mix(in srgb, var(--confirm) var(--line-edge-share), transparent);
 
   /* The status strip's generating caret and the travelling dashed border. Both
      are disabled under reduced motion, where the text alone carries the state. */
   --caret-duration: var(--dur-caret);
   --caret-steps: steps(2);
+}
+
+/* =============================================================================
+   The revealed band's one driver.
+   §5.4 wants the ring to fade in over `--dur-mid` and then stay. A `transition`
+   cannot carry that: a custom property that is not registered interpolates as a
+   jump, and a registered one only transitions if the change to it is written as
+   a transition — which would also have to survive the line REVEALING on a later
+   game, when the property is already at 1. An animation is the honest form: the
+   attribute arrives, the keyframe runs from 0, and `both` leaves it at 1 forever.
+   It is registered rather than left bare so the keyframe interpolates as a
+   number; left bare it would flip 0 → 1 in a single frame, which is a perfectly
+   acceptable degradation and the reason the steady state in `:root` is written
+   to look finished on its own.
+   ======================================================================== */
+@property --line-reveal-alpha {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
 }

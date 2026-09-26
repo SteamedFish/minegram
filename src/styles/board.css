@@ -20,11 +20,14 @@
    * `--cell`, `--cols`, `--rows` and `--rail-col` are set inline on the STAGE by
      the host, so the stage is the only place that reads them, and the rows read
      them by inheritance. There is no per-cell exception to keep in sync.
-   * The revealed line is drawn from the rail cell, not from a cell attribute.
-     §5.4 wants a tint and an edge on a whole line, and the component reports a
-     line's state in exactly one place: its rail cell's `data-line-state`. A row
-     is reachable with `:has()`; a COLUMN is not, because nothing in the DOM says
-     which index a column's rail cell is. See the note at the row edge below.
+   * A revealed line is drawn from the line's OWN container, never from a rail
+     cell. §5.4 wants a tint and an edge across a whole line, and a rail cell can
+     only ever say something about itself: a tint declared on one does not reach
+     the cells of its row, and no attribute anywhere says which board index a
+     COLUMN sits at, so a column could not be drawn from its rail cell at all.
+     The host therefore writes `data-line-revealed="row"` on the row and
+     `data-line-revealed="column"` on a strip it places by the column's index,
+     and both carry the same two treatments. See §6.
    * The sweep crosses from the status strip to the board plate through a custom
      property on a SIBLING combinator, because the alternative is a two-level
      descendant chain and this file does not have one.
@@ -50,39 +53,50 @@
      `contain: layout paint` is what keeps the board's intrinsic max-content width
      from ever giving the DOCUMENT a horizontal scrollbar.
 
-     NO CAP, and that is a decision rather than an omission. Three facts settle
-     it, and the first two are why the obvious one-line answer is wrong:
+     THE CAP, which replaces an earlier decision to have none. `overflow: auto`
+     with `max-block-size: none` is not a scroller, it is a box that happens to be
+     able to: a board taller than the pane simply grew the pane, the pane grew
+     the plate, the plate grew the document, and the sticky rails — the whole
+     reason §1.7 asks for one scroll container — had nothing to stick to inside
+     their own container. A capped pane gives them a scrollport, and the vertical
+     pan stops being a document scroll nobody can predict.
 
-       1. §1.7's Fit is WIDTH-only. `BoardSurface.tsx` solves `--cell` from
-          `clientWidth` and never reads the height, so the board's height is not
-          a function of the viewport. A fraction therefore cannot be right for
-          more than one board size: `min(70vh, 46rem)` (the cap this replaces)
-          bound at 630px and cut a 642px stage through the middle of its last row
-          at 1440x900, while every fraction loose enough to clear a 15x15 board
-          still amputates a 30x30 one.
-       2. The board's own variables CANNOT be used here. `--cell`, `--rows` and
-          `--cols` are written INLINE ON THE STAGE, which is this box's CHILD, so
-          a cap written in them is invalid at computed-value time and silently
-          drops to `none` (measured, in `.tmp/capdump.mjs`). A fallback is worse
-          than the invalid declaration: `var(--rows, 0)` would resolve here
-          against the 32px root default and cap the pane at 88px.
-       3. So the cap that cannot amputate a cell is no cap. The pane's height is
-          its content's height, a board is never cut by it, and the vertical axis
-          belongs to the DOCUMENT, where the reader scrolls at a boundary they
-          chose and the browser's own scrollbar says so. `overflow: auto` still
-          earns its place: a board WIDER than the pane — 15x15 at 100% zoom, 30x30
-          at any zoom — pans horizontally here, which is what keeps the
-          DOCUMENT free of a horizontal scrollbar.
-     `justify-content: safe center` below is the other half of that. */
-  max-block-size: none;
+     It is a viewport fraction, and that is the entire reason there is no loop:
+
+       * The cap reads `vh` and `rem` only. `--cell`, `--rows` and `--cols` live
+         INLINE ON THE STAGE, which is this box's CHILD, so a cap written in them
+         is invalid at computed-value time and silently drops to `none` (measured,
+         in `.tmp/capdump.mjs`); a fallback is worse than the invalid declaration,
+         because `var(--rows, 0)` would resolve here against the 32px root default
+         and cap the pane at 88px.
+       * Nothing the board DOES feeds the cap. The board can only change its own
+         width, and the cap is not a function of width. So the cap cannot unbind
+         when the board shrinks, which is the only way a cap → measure → cell-size
+         chain can oscillate: the earlier loop needed the cap to be written in
+         `--cell`, so shrinking the board released the cap, which re-fired the
+         measure and grew the board again. Here the measure reads the same cap
+         (see `byHeight` in BoardSurface.tsx) and is bounded by it, so the two
+         agree by construction instead of by luck.
+       * `70vh` leaves the banner and the toolbar above it, so the board is the
+         part that yields. `46rem` is the ceiling that stops a tall window from
+         turning the board into a wall of cells nobody can see past; a 15x15 board
+         never reaches it, and a board that does is panned, not cut — the pane's
+         whole purpose.
+
+     A board that FITS the cap is not touched: the pane is `max-block-size`, so
+     its height is its content's height whenever that is smaller. Nothing is
+     amputated, and `overflow: auto` never even shows a scrollbar.
+
+     `justify-content: safe center` below is the other half of the pan. */
+  max-block-size: min(70vh, 46rem);
   contain: layout paint;
   /* The stage is `inline-grid` and `max-content`, so it sits at the start of
      this block and leaves a wide empty band on its right whenever the board is
      smaller than the plate. Making this a grid and centring the one item fixes
-     that. `safe` is the load-bearing word: a board WIDER than the cap (15x15 at
-     100% zoom, 30x30 at any zoom) must overflow to the LEFT edge and scroll,
-     and plain `center` would push the first column out of the scroll range where
-     no amount of scrolling can bring it back. */
+     that. `safe` is the load-bearing word: a board WIDER than the pane must
+     overflow to the LEFT edge and scroll, and plain `center` would push the first
+     column out of the scroll range where no amount of scrolling can bring it
+     back. */
   display: grid;
   justify-content: safe center;
 }
@@ -92,6 +106,7 @@
       properties onto
    -------------------------------------------------------------------------- */
 .mg-board-stage {
+  position: relative; /* a column reveal strip's containing block — see §6 */
   display: inline-grid;
   /* A DEFINITE track, not `minmax()`. `minmax(var(--cell-min), var(--cell))`
      only reaches `--cell` while the container is being sized by its content
@@ -101,6 +116,13 @@
      24px floor and the rows overlapped each other. `var(--cell)` is the same
      number the stage resolves, by construction, with no growth phase. */
   grid-template-columns: var(--rail-col) repeat(var(--cols), var(--cell));
+  /* The row template is stated outright even though the rows are auto-placed.
+     It costs nothing to place them by column, and it buys §6 the two fixed lines
+     it needs to hang a column strip between (`2 / -1` is the first cell row down
+     to the last), which it could not name otherwise. Nothing moves: every item
+     below is `grid-column: 1 / -1` with an auto row, so an explicit row template
+     changes only the lines a strip can address. */
+  grid-template-rows: var(--rail-band) repeat(var(--rows), var(--cell));
   inline-size: max-content;
   margin-inline: auto; /* centres a narrow board; resolves to 0 when it overflows */
   background-color: var(--surface-2);
@@ -342,44 +364,133 @@
 }
 
 /* -----------------------------------------------------------------------------
-   6. The revealed line — §5.4's tint and edge
-   The rail cell of a complete line is the only element that knows the line is
-   complete, so it is what declares the treatment and the cells inherit it.
+   6. The revealed line — §5.4's tint and edge, on both axes
+   §5.4 wants a `--confirm` tint and a 2px edge on the line's OUTER border, and
+   the brief puts `data-line-revealed="row|column"` on the line's own container.
+   Both axes get the treatment, written as a PAIR so neither can drift: same
+   shares, same fade, same fallback, same channel. The two are told apart by their
+   edge AXIS and by a 0° join, which is shape rather than hue — a row reads as two
+   verticals standing at its ends, a column as two horizontals lying across its
+   top and bottom, and the band between them is only ever tinted, never edged.
 
-   A ROW is one `:has()` away, and both of its edges are drawable: the left edge
-   is the first cell, the right edge is the last, and a cell is neither a header
-   nor a tape. A COLUMN is not drawable from here: the top rail cell is its only
-   state carrier, and no attribute anywhere says which board index it sits at, so
-   a column's edge would need an inline custom property the components do not
-   set. The tint is drawn for rows; the column edge is reported as the one piece
-   of §5.4 with no DOM hook rather than faked with a `:nth-child` guess.
+   ONE CHANNEL, `background-image`, and that choice is why this section needs no
+   forced-colours block at all:
+
+     * `box-shadow` is dropped outright in forced colours, so a ring drawn as an
+       inset shadow would vanish exactly where a reader has asked the machine to
+       stop inventing colours. Its fallback would have to be a `border` — which
+       insets the cell, shifts the centred glyph and cuts `.mg-run-tape` at every
+       revealed line — or an `outline`, which cannot be limited to two sides and
+       would print a tick across the end cells' top and bottom as well.
+     * `background-image` is NOT forced. Painted as authored it survives, with no
+       `forced-color-adjust: none` anywhere: the file set has never used it and
+       this mechanism makes it unnecessary rather than merely forbidden.
+     * It also composes with a wrong claim. The hatch is itself a
+       `--cell-texture` background-image, so the wash is listed in FRONT of it: a
+       wash painted underneath is invisible under a wrong cell, and a
+       `background-color` cannot sit over another image at all.
+
+   A row's carrier is the row. A column has no element of its own, so the host
+   renders one empty strip per complete column and passes the column's index as
+   `--k`; the stage's own row template (§2) holds the strip between `2 / -1`.
+   `--k` is data a stylesheet cannot own — it is the column's index — and it is
+   the only value in this file the host sets inline.
+
+   Both carriers re-declare the two colours instead of inheriting them, and that
+   is the load-bearing subtlety: a custom property is substituted at
+   computed-value time on the element that DECLARES it, so the `:root` copy of
+   `--line-edge-color` has already resolved `--line-reveal-alpha` to 1 by the time
+   it arrives here and the fade would be frozen shut. Declaring on the same
+   element that animates is what lets the keyframe move the colour.
    -------------------------------------------------------------------------- */
-.mg-board-row:has(> .mg-rail-cell[data-line-state='complete']) > .mg-cell {
-  /* §5.4 / §7.3: the reveal fades in over 180ms and then stays. It is the one
-     place a transition belongs on a cell, because the edge is the difference
-     between "this line is finished" and "this line is finished and you just did
-     it" — and a grid repaint is not otherwise an event the eye can catch. */
-  background-color: var(--line-reveal-wash);
-  transition:
-    background-color var(--dur-mid) var(--ease-standard),
-    box-shadow var(--dur-mid) var(--ease-standard);
+@keyframes mg-line-reveal {
+  from {
+    --line-reveal-alpha: 0;
+  }
+}
+
+.mg-board-row[data-line-revealed='row'],
+.mg-board-column-reveal[data-line-revealed='column'] {
+  /* The 8% is `--wash-reveal`'s share, restated as a multiply because a wash is
+     mixed at its own strength and has no share token of its own. The edge reads
+     the share tokens.css publishes, so the ring's strength is a vocabulary
+     decision and stays one. */
+  --line-reveal-wash: color-mix(
+    in srgb,
+    var(--confirm) calc(var(--line-reveal-alpha) * 8%),
+    transparent
+  );
+  --line-edge-color: color-mix(
+    in srgb,
+    var(--confirm) calc(var(--line-reveal-alpha) * var(--line-edge-share)),
+    transparent
+  );
+  /* The attribute arrives with the line already closed, so a keyframe is the only
+     honest form: it runs from 0 on arrival, and `both` leaves the band at full
+     strength for the rest of the game. A transition would have nothing to
+     transition FROM on this mount, and would have to be re-armed if a later game
+     closed the same line again. Unregistered, the whole fade is a no-op and the
+     pair above reads at full strength, which is the finished look anyway. */
+  animation: mg-line-reveal var(--dur-mid) var(--ease-standard) both;
+}
+
+/* A ROW's wash and edges, one channel. The edge is a 2px gradient bar and not an
+   inset shadow, so a revealed line's end cell keeps `--shadow-cell` untouched and
+   no `box-shadow` list has to be rebuilt to gain an edge. */
+.mg-board-row[data-line-revealed='row'] > .mg-cell {
+  /* A `background-image`, not a `background-color`: under forced colours a
+     `background-color` is forced to an opaque Canvas, which would erase the band
+     AND the mark it covers, while `background-image` is not forced and survives
+     as authored. It is also the only channel that can sit over a wrong claim's
+     hatch without cancelling it — the hatch is itself a `--cell-texture`
+     background-image, and the wash has to be listed in FRONT of it or it paints
+     underneath and the band disappears under a wrong cell. */
+  background-image: linear-gradient(var(--line-reveal-wash), var(--line-reveal-wash)), var(--cell-texture, none);
 }
 
 /* Positional, not `:first-of-type`: every child of a board row is a `div`, so
    `:first-of-type` would name the RAIL cell and never a cell at all. The rail is
-   the first child, so the first cell is the second. */
-.mg-board-row:has(> .mg-rail-cell[data-line-state='complete']) > .mg-cell:nth-child(2) {
-  /* `--shadow-cell` is repeated in front of the new ring on purpose: a
-     `box-shadow` declaration REPLACES the list, so without it the two end cells
-     of a revealed line would lose the 1px top inset that every other cell keeps,
-     and the row would show a hairline seam exactly where the edge was added. */
-  box-shadow: var(--shadow-cell), inset var(--rule-w-heavy) 0 0 var(--line-edge-color);
+   the first child, so the first cell is the second. `90deg` runs to the right, so
+   a solid stop at 0 IS the left edge; `270deg` runs to the left, so the same
+   stop IS the right one. */
+.mg-board-row[data-line-revealed='row'] > .mg-cell:nth-child(2) {
+  background-image: linear-gradient(90deg, var(--line-edge-color) 0 var(--line-edge-width), transparent var(--line-edge-width)), linear-gradient(var(--line-reveal-wash), var(--line-reveal-wash)), var(--cell-texture, none);
 }
 
-.mg-board-row:has(> .mg-rail-cell[data-line-state='complete']) > .mg-cell:last-child {
-  box-shadow:
-    var(--shadow-cell),
-    inset calc(var(--rule-w-heavy) * -1) 0 0 var(--line-edge-color);
+.mg-board-row[data-line-revealed='row'] > .mg-cell:last-child {
+  background-image: linear-gradient(270deg, var(--line-edge-color) 0 var(--line-edge-width), transparent var(--line-edge-width)), linear-gradient(var(--line-reveal-wash), var(--line-reveal-wash)), var(--cell-texture, none);
+}
+
+/* A COLUMN: the same three layers turned a quarter turn, on its own strip.
+   `180deg` runs to the bottom, so its solid stop is the top edge; `0deg` runs to
+   the top, so it is the bottom one.
+
+   The strip is taken OUT of flow, and that is the whole trick, because an
+   in-flow strip in row 2 is a measured lie rather than a visual one: the cell
+   rows are auto-placed, so a definite `grid-row` on the strip makes every one of
+   them step around it into implicit tracks. Measured in the running app at
+   15x15 / 32px cells, three injected strips take the stage from 563px across 16
+   tracks to 1043px across 31 — one whole extra board, with the real board
+   pushed below the fold. `position: absolute` costs the strip its track
+   participation, so the rows stop dodging.
+
+   Position still comes from the grid (the lines are the only place the rail
+   width is written down), but the BOX cannot come from it: an abspos grid child
+   with auto insets resolves to its static position at zero size — measured 0x0 for
+   every column — and with `inset: 0` but auto sizes it stretches to the end of
+   the row, measured 480px wide at column 0. So `inset: 0` asks the grid area for
+   the box's edges and the two sizes are stated outright, which is what the same
+   measurements call for: 32x480 at x=55, 151, 503 for columns 0, 3 and 14, on a
+   stage left at 563px. */
+.mg-board-column-reveal {
+  position: absolute;
+  inset: 0;
+  grid-row: 2 / -1; /* the first cell row down to the last: the rail band is not part of the line */
+  grid-column: calc(var(--k) + 2); /* grid column 1 is the rail track, so a board column is its index + 2 */
+  inline-size: var(--cell); /* one board column, whatever the rail width works out to */
+  block-size: calc(var(--rows) * var(--cell)); /* every cell row, and not the rail band above them */
+  pointer-events: none; /* the cells underneath own every pointer event */
+  background-image: linear-gradient(180deg, var(--line-edge-color) 0 var(--line-edge-width), transparent var(--line-edge-width)), linear-gradient(0deg, var(--line-edge-color) 0 var(--line-edge-width), transparent var(--line-edge-width)), linear-gradient(var(--line-reveal-wash), var(--line-reveal-wash));
 }
 
 /* -----------------------------------------------------------------------------
@@ -389,6 +500,14 @@
    `--gen-edge` is declared by overlays.css on a sibling selector; when it is
    absent the pseudo-element is not generated at all, which is why the gate is a
    `content` value rather than an opacity.
+
+   It is positioned against the STAGE, which §2 gave a `position: relative` for
+   the column strips and which is therefore also what the sweep now measures
+   against. The stage is the plate as far as a reader is concerned — the plate
+   is the frame around it, and the frame keeps its edge at rest — so the two
+   edges meet the same lines. `.mg-board-surface` keeps its own `position:
+   relative` for the preview chip's shadow and the empty state, which is a
+   different containing block entirely.
    -------------------------------------------------------------------------- */
 @keyframes mg-sweep {
   to {
@@ -418,6 +537,107 @@
 }
 
 /* -----------------------------------------------------------------------------
+   9. The unprinted board — what the region says before there is a board
+   A puzzle printed one round at a time should LOOK unprinted before the first
+   round, so this is a proof sheet: a dotted field with a label card lying on it.
+   The field is a pseudo-element rather than the box's own background because it
+   has to be masked — a mask applies to an element's children too, so masking the
+   box would fade the card as well. Two `z-index` values and no stacking context
+   do the layering the mask cannot.
+   -------------------------------------------------------------------------- */
+.mg-board-empty {
+  position: relative; /* the field's containing block */
+  display: grid;
+  place-items: center;
+  /* The region holds its place, so the toolbar above it does not jump when a
+     board lands. A viewport fraction again, for the same no-loop reason as the
+     scroll cap: nothing the board prints can move it. */
+  min-block-size: min(56vh, 28rem);
+  inline-size: min(100%, 36rem);
+}
+
+.mg-board-empty::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: radial-gradient(var(--rule-cell) 1px, transparent 1.2px);
+  background-size: var(--sp-3) var(--sp-3);
+  /* Faded to nothing well before the card's text, so the field reads as paper
+     rather than as a second, competing grid. `background-image` is not forced,
+     so the field survives forced colours as authored. */
+  mask-image: radial-gradient(closest-side, #000 18%, transparent 72%);
+}
+
+.mg-board-empty__sheet {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: center;
+  text-align: center;
+  max-inline-size: 28rem;
+  padding: var(--sp-5) var(--sp-4);
+  background-color: var(--surface-1);
+  /* Dashed, not solid: this is the one border in the file that means "not printed
+     yet" rather than "an edge of the paper". §0's second principle is honoured
+     by the dash itself, so the card is legible in greyscale and in forced
+     colours, where the border colour is forced and the fill becomes Canvas. */
+  border: var(--rule-w) dashed var(--rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.mg-board-empty__glyph {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  font-size: var(--fs-lead);
+  line-height: 1;
+}
+
+/* The mine mark, in the ink a rail uses for "not settled yet". The region's whole
+   point is that nothing is decided, so it borrows that ink rather than the confirm
+   or the wrong-mark inks. */
+.mg-board-empty__mark {
+  color: var(--unknown);
+}
+
+/* The fold: a heavy rule where a printed sheet would crease. */
+.mg-board-empty__fold {
+  inline-size: var(--sp-5);
+  block-size: var(--rule-w-heavy);
+  background-color: var(--rule-hc);
+}
+
+.mg-board-empty__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+  color: var(--ink);
+}
+
+.mg-board-empty__body {
+  margin: 0;
+  max-inline-size: 26rem;
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+.mg-board-empty__hint {
+  margin: 0;
+  padding-block-start: var(--sp-2);
+  border-block-start: var(--rule-w) solid var(--rule);
+  color: var(--ink-3);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+/* -----------------------------------------------------------------------------
    8. Reduced motion, this file's own
    The sweep stops dead and the plate's edge becomes a static dashed rule: the
    state is still visible, it just no longer moves. §7.3 asks for exactly this,
@@ -431,8 +651,12 @@
     animation: none;
   }
 
-  .mg-board-row > .mg-cell {
-    /* The reveal still happens, it just arrives without a fade. */
-    transition: none;
+  .mg-board-row[data-line-revealed='row'],
+  .mg-board-column-reveal[data-line-revealed='column'] {
+    /* With no keyframe the pair in §6 is read at the alpha the registered
+       property falls back to, which is 1: the reveal still happens, it just
+       arrives already finished. That is the whole treatment — there is no
+       intermediate state to neutralise. */
+    animation: none;
   }
 }

@@ -546,9 +546,13 @@
 }
 
 /* The revealed entry teaches the tint and the edge that board.css draws across a
-   whole row. A single swatch cannot inherit from a row that is not there. */
+   whole line. A single swatch cannot inherit from a row that is not there, and
+   neither can it sit at 0° the way a row's two ends do. The tint is therefore a
+   `background-image` here too — a `background-color` is forced to an opaque
+   Canvas under forced colours, which would leave this swatch teaching a band
+   that the board refuses to paint. */
 .mg-legend__swatch[data-revealed='true'] {
-  background-color: var(--line-reveal-wash);
+  background-image: linear-gradient(var(--wash-reveal), var(--wash-reveal));
   box-shadow: inset var(--line-edge-width) 0 0 var(--line-edge-color);
 }
 

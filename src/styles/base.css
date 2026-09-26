@@ -270,10 +270,12 @@ table {
     scroll-behavior: auto !important;
   }
 
-  /* The caret and the travelling dashed border cannot be a motion channel when
-     motion is off, so the words carry the state instead. */
-  .mg-generating,
-  .mg-revealed-line {
+  /* The printing sweep must not travel when motion is off. board.css owns the
+     reveal carriers in its own last block, because those two are the ones whose
+     steady state is a strength rather than a duration; this names the sweep's
+     carrier so the rule survives an `animation` landing on the stage itself. */
+  .mg-board-stage,
+  .mg-board-stage::after {
     animation: none !important;
   }
 }
