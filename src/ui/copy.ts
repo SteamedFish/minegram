@@ -364,7 +364,15 @@ const en = {
         action: 'Next round',
         mouse: 'Banner button',
         touch: 'Banner button',
-        keyboard: 'Focus lands on it after a win',
+        /**
+         * The player's own route, which is true whatever focus does. This row used to
+         * promise "Focus lands on it after a win", and that stopped being true when the
+         * win handoff was made conditional (§3.6: a win must not steal focus from
+         * whatever the player was reading) and the board grew an always-mounted landing
+         * target for the interlude that has nothing to do with this button. A keyboard
+         * row is a claim about access, so a false one is a defect, not a preference.
+         */
+        keyboard: 'Tab to the banner button, then Enter',
       },
     },
   },
@@ -375,23 +383,47 @@ const en = {
     roundReady: 'Round {round} ready',
     roundWon: 'Round {round} complete. Score {score}. The next round starts now.',
     roundLost: 'Round lost. The score reached zero.',
-    marksApplied: 'Marked {cells} cells as {assertion}. Wrong: {wrong}. Score {score}.',
     /**
-     * Appended to `marksApplied` when the same commit also closed a line. The
-     * pair is singular/plural in English; Chinese has no plural inflection, so
-     * its two entries are the same sentence.
+     * What the player asserted, which is the mark diff minus the cells the game
+     * filled. Split on the player's own count: a single drag over one cell said
+     * "Marked 1 cells".
      */
-    revealNoteOne: 'The game filled {cells} cell in the line you completed.',
-    revealNoteMany: 'The game filled {cells} cells in the {lines} lines you completed.',
+    marksAppliedOne: 'Marked {cells} cell as {assertion}. Wrong: {wrong}. Score {score}.',
+    marksAppliedMany: 'Marked {cells} cells as {assertion}. Wrong: {wrong}. Score {score}.',
+    /**
+     * The reveal's sentences, and the phrases they are composed from.
+     *
+     * One line can hide any number of filled cells and one commit can close two
+     * lines, so the line count and the cell count are inflected separately and
+     * substituted as whole phrases: selecting the sentence on the line count while
+     * interpolating the cell count is what put "3 cell" in the live region. Both
+     * templates carry both placeholders because the two languages order the two
+     * facts differently — English says the cells first, Chinese says the line
+     * first — so the order has to belong to the dictionary.
+     */
+    revealNote: 'The game filled {cells} in {lines}.',
     /** Used when the fill accounts for the whole change, so nothing is credited. */
-    revealOnlyOne: 'You completed {lines} line. The game filled {cells} cell. Score {score}.',
-    revealOnlyMany: 'You completed {lines} lines. The game filled {cells} cells. Score {score}.',
+    revealOnly: 'You completed {lines}. The game filled {cells}. Score {score}.',
+    revealCellsOne: '{cells} cell',
+    revealCellsMany: '{cells} cells',
+    revealLinesOne: 'the line you completed',
+    revealLinesMany: 'the {lines} lines you completed',
+    revealCountOne: '{lines} line',
+    revealCountMany: '{lines} lines',
     markCleared: 'Mark cleared.',
     roundResumed: 'Round {round} restored. Nothing was lost.',
     generationFailed: 'Generation stopped: {reason}',
     generationCancelled: 'The round was cancelled before it was printed.',
-    ignored: 'Nothing changed: {reason}',
+    /**
+     * A refusal, which the store publishes as its own null-transition event: the
+     * reducer changed nothing and the player still gets an answer. `{reason}` is the
+     * label `src/ui/reasonCopy.ts` resolved the identifier into, never the identifier
+     * itself — `locked-cell` must not reach a player. `rejectedBare` is the frame on
+     * its own, for a snapshot that carries a reason but no label, so the clause is
+     * dropped rather than filled with something untrue.
+     */
     rejected: 'Not applied: {reason}',
+    rejectedBare: 'Not applied.',
     assertions: {
       mine: 'mines',
       blank: 'empty',
@@ -964,7 +996,7 @@ export const zhCN: Partial<Copy> = {
         action: '下一局',
         mouse: '横幅上的按钮',
         touch: '横幅上的按钮',
-        keyboard: '胜利后焦点会落在该按钮上',
+        keyboard: 'Tab 移到横幅按钮，再按 Enter',
       },
     },
   },
@@ -974,17 +1006,24 @@ export const zhCN: Partial<Copy> = {
     roundReady: '第 {round} 局已就绪',
     roundWon: '第 {round} 局完成。分数 {score}。下一局即将开始。',
     roundLost: '本局结束，分数已归零。',
-    marksApplied: '已把 {cells} 格标为{assertion}，其中 {wrong} 格标错。分数 {score}。',
-    revealNoteOne: '你完成的那一行里，游戏替你填上了 {cells} 格。',
-    revealNoteMany: '你完成的 {lines} 行里，游戏替你填上了 {cells} 格。',
-    revealOnlyOne: '你完成了 {lines} 行，游戏替你填上了 {cells} 格。分数 {score}。',
-    revealOnlyMany: '你完成了 {lines} 行，游戏替你填上了 {cells} 格。分数 {score}。',
+    // 中文没有复数变化，所以每个 One/Many 词对的两项是同一段话；英文的
+    // 两个数各自变位，见上面的说明。
+    marksAppliedOne: '已把 {cells} 格标为{assertion}，其中 {wrong} 格标错。分数 {score}。',
+    marksAppliedMany: '已把 {cells} 格标为{assertion}，其中 {wrong} 格标错。分数 {score}。',
+    revealNote: '你完成的{lines}里，游戏替你填上了 {cells}。',
+    revealOnly: '你完成了 {lines}，游戏替你填上了 {cells}。分数 {score}。',
+    revealCellsOne: '{cells} 格',
+    revealCellsMany: '{cells} 格',
+    revealLinesOne: '那一行',
+    revealLinesMany: '那 {lines} 行',
+    revealCountOne: '{lines} 行',
+    revealCountMany: '{lines} 行',
     markCleared: '已擦除标记。',
     roundResumed: '第 {round} 局已恢复，没有丢失任何内容。',
     generationFailed: '生成已停止：{reason}',
     generationCancelled: '这一局在生成前已取消。',
-    ignored: '没有变化：{reason}',
     rejected: '未生效：{reason}',
+    rejectedBare: '未生效。',
     assertions: {
       mine: '雷',
       blank: '空',

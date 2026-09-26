@@ -52,6 +52,7 @@ import {
   type Copy,
   type Locale,
 } from './copy'
+import { reasonLabel } from './reasonCopy'
 
 // --------------------------------------------------------------------------------------
 // Verbatim prop contracts (§2.2)
@@ -148,7 +149,21 @@ export interface PreviewView {
 
 export interface UiLastEvent {
   readonly transition: GameTransition | null
+  /**
+   * Why the reducer changed nothing, as a `GameResultReason`. `null` on every
+   * transition: a refusal is published as its own null-transition event, so a
+   * reason never rides along with a later change.
+   */
   readonly reason: GameResultReason | null
+  /**
+   * `reason` already resolved into a player-facing sentence, in the locale this
+   * snapshot is projected for. `null` whenever `reason` is `null`.
+   *
+   * Required: every producer in the tree declares it, and `projectSnapshot`
+   * always populates it. It was optional only while a hand-built test literal
+   * omitted it, which is exactly the shape a real snapshot never has.
+   */
+  readonly reasonLabel: string | null
   /**
    * How many lines the game filled for free in the same commit, and how many
    * cells that amounted to. Both are `0` for every result that is not a
@@ -162,6 +177,36 @@ export interface UiLastEvent {
    */
   readonly autoRevealedLines: number
   readonly autoRevealedCells: number
+}
+
+/**
+ * Whether two events describe the same thing, compared by CONTENT.
+ *
+ * `projectSnapshot` re-freezes its event on every call, so `===` between two
+ * snapshots' `lastEvent` is always false — including for the *same* event
+ * re-projected after a locale switch. A consumer that wants "has anything
+ * happened yet?" must compare content, or it will re-derive a sentence for an
+ * event the player has already been told about.
+ *
+ * `reasonLabel` is part of the comparison, so a locale switch is correctly
+ * seen as a change of label. Every event the store publishes for a *transition*
+ * has `reason: null`, and therefore a `null` label in every locale, so a
+ * transition event still compares equal across a locale switch.
+ */
+export function sameLastEvent(left: UiLastEvent | null, right: UiLastEvent | null): boolean {
+  if (left === right) {
+    return true
+  }
+  if (left === null || right === null) {
+    return false
+  }
+  return (
+    left.transition === right.transition &&
+    left.reason === right.reason &&
+    left.autoRevealedLines === right.autoRevealedLines &&
+    left.autoRevealedCells === right.autoRevealedCells &&
+    (left.reasonLabel ?? null) === (right.reasonLabel ?? null)
+  )
 }
 
 export interface UiSnapshot {
@@ -613,6 +658,12 @@ function projectCells(state: GameState): readonly CellView[] {
 export interface ProjectOptions {
   /** Dictionary to project with. Takes precedence over `locale`. */
   readonly copy?: Copy
+  /**
+   * The locale to project in. `copy` wins for the dictionary, but the event's
+   * `reasonLabel` is ALWAYS resolved from this field, so a caller that supplies
+   * a non-default `copy` must also pass `locale` or reason copy stays English.
+   * The store, the only production caller, passes both.
+   */
   readonly locale?: Locale
   /** Monotonic counter for `UiSnapshot.version`; defaults to the state generation. */
   readonly version?: number
@@ -638,7 +689,8 @@ export interface ProjectOptions {
  * every call; the store owns the memoisation key.
  */
 export function projectSnapshot(state: GameState, options: ProjectOptions = {}): UiSnapshot {
-  const t = options.copy ?? getCopy(options.locale ?? DEFAULT_LOCALE)
+  const eventLocale = options.locale ?? DEFAULT_LOCALE
+  const t = options.copy ?? getCopy(eventLocale)
   const view: GameStatusView = selectStatus(state)
   const now = options.now ?? defaultNow
   const { rowProgress, columnProgress } = projectRails(
@@ -678,10 +730,14 @@ export function projectSnapshot(state: GameState, options: ProjectOptions = {}):
       })
     : null
 
+  // A fresh frozen object per call, by design: this projection is the only
+  // place an event is normalised, and `sameLastEvent` is how a consumer decides
+  // whether two of them describe the same thing.
   const lastEvent = options.lastEvent
     ? Object.freeze({
         transition: options.lastEvent.transition,
         reason: options.lastEvent.reason,
+        reasonLabel: reasonLabel(options.lastEvent.reason, eventLocale),
         autoRevealedLines: options.lastEvent.autoRevealedLines,
         autoRevealedCells: options.lastEvent.autoRevealedCells,
       })

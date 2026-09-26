@@ -178,10 +178,13 @@ describe('useGameSnapshot', () => {
     expect(renders.count).toBe(mounted + 1)
 
     act(() => {
-      // Ignored: the snapshot identity holds, so React must not re-render.
+      // Refused: the round is `generating`, so `round/clearMark` writes nothing.
+      // A refusal is still a publish — the store announces why, with a
+      // `reasonLabel` the player can read, instead of leaving silence where a
+      // click went — so this costs exactly one more render, not two.
       store.dispatch({ type: 'round/clearMark', index: 0 })
     })
-    expect(renders.count).toBe(mounted + 1)
+    expect(renders.count).toBe(mounted + 2)
 
     view.unmount()
     const afterUnmount = renders.count

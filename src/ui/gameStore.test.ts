@@ -21,8 +21,9 @@ import {
   type GameStoreOptions,
   type SettingsDraft,
   type TimerHandle,
+  type VisibilityProbe,
 } from './gameStore'
-import type { BoardView, CellView, UiSnapshot } from './viewModel'
+import { sameLastEvent, type BoardView, type CellView, type UiSnapshot } from './viewModel'
 
 // ======================================================================================
 // Fixtures
@@ -180,6 +181,39 @@ function createFakeTimers(): FakeTimers {
 }
 
 // --------------------------------------------------------------------------------------
+// Fake page visibility
+// --------------------------------------------------------------------------------------
+
+interface FakeVisibility extends VisibilityProbe {
+  setVisible: (next: boolean) => void
+  fire: () => void
+  readonly subscribers: () => number
+}
+
+function createFakeVisibility(visible = true): FakeVisibility {
+  let isVisible = visible
+  const handlers = new Set<() => void>()
+  return {
+    isVisible: () => isVisible,
+    subscribe(handler) {
+      handlers.add(handler)
+      return () => {
+        handlers.delete(handler)
+      }
+    },
+    setVisible(next) {
+      isVisible = next
+    },
+    fire() {
+      for (const handler of [...handlers]) {
+        handler()
+      }
+    },
+    subscribers: () => handlers.size,
+  }
+}
+
+// --------------------------------------------------------------------------------------
 // Harness
 // --------------------------------------------------------------------------------------
 
@@ -317,12 +351,13 @@ describe('gameStore publish mechanics', () => {
     expect(store.getSnapshot().lastEvent).toEqual({
       transition: 'generation-started',
       reason: null,
+      reasonLabel: null,
       autoRevealedLines: 0,
       autoRevealedCells: 0,
     })
   })
 
-  it('keeps the same snapshot object when the reducer ignores the action', () => {
+  it('publishes a refusal as a null-transition event and leaves the board alone', () => {
     const { store } = createHarness()
     reachPlaying(store)
     let notifications = 0
@@ -330,16 +365,86 @@ describe('gameStore publish mechanics', () => {
       notifications += 1
     })
     const before = store.getSnapshot()
+    const marksOf = (snapshot: UiSnapshot): string =>
+      (snapshot.board?.cells ?? []).map((cell) => String(cell.mark)).join('|')
 
-    // Clearing a cell that is already unknown is ignored, and a cancellation for an
-    // unknown generation is stale: nothing changed, so nothing is published and
-    // useSyncExternalStore cannot loop.
+    // Clearing a cell that is already empty changes nothing, and a cancellation
+    // for an unknown generation is stale. Neither moves the board, but both are
+    // answers the player is owed: a silent refusal reads as a broken game.
     store.dispatch({ type: 'round/clearMark', index: 0 })
+    expect(store.getSnapshot().lastEvent).toEqual({
+      transition: null,
+      reason: 'cell-already-unknown',
+      reasonLabel: 'That cell is already empty.',
+      autoRevealedLines: 0,
+      autoRevealedCells: 0,
+    })
     store.dispatch({ type: 'round/clearMark', index: 0 })
     store.dispatch({ type: 'generation/cancelled', generationId: 999 })
+    expect(store.getSnapshot().lastEvent).toEqual({
+      transition: null,
+      reason: 'stale-generation-id',
+      reasonLabel: 'That answer belonged to an earlier generation, so it was ignored.',
+      autoRevealedLines: 0,
+      autoRevealedCells: 0,
+    })
 
-    expect(store.getSnapshot()).toBe(before)
+    expect(notifications).toBe(3)
+    expect(store.getSnapshot().version).toBeGreaterThan(before.version)
+    expect(marksOf(store.getSnapshot())).toBe(marksOf(before))
+    expect(store.getSnapshot().status.status).toBe('playing')
+  })
+
+  it('keeps a free re-assertion silent', () => {
+    const { store } = createHarness()
+    reachPlaying(store)
+    store.actions.mark([{ index: 0, assertion: 'mine' }])
+    const before = store.getSnapshot()
+    let notifications = 0
+    store.subscribe(() => {
+      notifications += 1
+    })
+
+    // Re-marking the mine the player just placed is free and a no-op by contract
+    // (§4.2), so it must not become an announcement. A drag across several
+    // already-marked cells is the same case, and so is the blank the game itself
+    // just filled.
+    store.actions.mark([{ index: 0, assertion: 'mine' }])
+    store.actions.mark([
+      { index: 0, assertion: 'mine' },
+      { index: 1, assertion: 'blank' },
+      { index: 2, assertion: 'blank' },
+    ])
+
     expect(notifications).toBe(0)
+    expect(store.getSnapshot()).toBe(before)
+  })
+
+  it('refuses a locked cell loudly, in the language the store is in', () => {
+    const { store } = createHarness()
+    reachPlaying(store)
+    // The mine at 0 closes row 0 and column 0, so the game fills 1 and 2 and locks
+    // them. The player cannot change them, and the click must be answered.
+    store.actions.mark([{ index: 0, assertion: 'mine' }])
+    store.actions.clear(1)
+    expect(store.getSnapshot().lastEvent).toEqual({
+      transition: null,
+      reason: 'locked-cell',
+      reasonLabel: 'That cell is already locked, so its mark cannot change.',
+      autoRevealedLines: 0,
+      autoRevealedCells: 0,
+    })
+    expect(store.getSnapshot().board?.cells[1]?.mark).toBe('blank')
+
+    // A language switch re-projects the live event, it does not replace it.
+    store.setLocale('zh-CN')
+    expect(store.getSnapshot().lastEvent).toEqual({
+      transition: null,
+      reason: 'locked-cell',
+      reasonLabel: '该格已被锁定，标记无法更改。',
+      autoRevealedLines: 0,
+      autoRevealedCells: 0,
+    })
   })
 
   it('publishes a change an ignored-looking action still makes', () => {
@@ -355,6 +460,7 @@ describe('gameStore publish mechanics', () => {
     expect(store.getSnapshot().lastEvent).toEqual({
       transition: 'marks-applied',
       reason: null,
+      reasonLabel: null,
       autoRevealedLines: 2,
       autoRevealedCells: 2,
     })
@@ -371,6 +477,7 @@ describe('gameStore publish mechanics', () => {
     expect(store.getSnapshot().lastEvent).toEqual({
       transition: 'generation-succeeded',
       reason: null,
+      reasonLabel: null,
       autoRevealedLines: 0,
       autoRevealedCells: 0,
     })
@@ -381,20 +488,24 @@ describe('gameStore publish mechanics', () => {
     expect(store.getSnapshot().lastEvent).toEqual({
       transition: 'marks-applied',
       reason: null,
+      reasonLabel: null,
       autoRevealedLines: 0,
       autoRevealedCells: 0,
     })
     expect(store.getSnapshot().board?.cells[1]?.mark).toBe('unknown')
   })
 
-  it('carries a recorded refusal reason into the next published event', () => {
+  it('never lets a refusal ride along with the next published event', () => {
     const { store } = createHarness()
     reachPlaying(store)
     store.dispatch({ type: 'round/clearMark', index: 0 })
+    expect(store.getSnapshot().lastEvent?.reason).toBe('cell-already-unknown')
+
     store.dispatch({ type: 'round/markBatch', cells: [{ index: 0, assertion: 'mine' }] })
     expect(store.getSnapshot().lastEvent).toEqual({
       transition: 'marks-applied',
-      reason: 'cell-already-unknown',
+      reason: null,
+      reasonLabel: null,
       autoRevealedLines: 2,
       autoRevealedCells: 2,
     })
@@ -443,6 +554,37 @@ describe('gameStore publish mechanics', () => {
     const shape = (cells: readonly CellView[] | undefined): string =>
       (cells ?? []).map((cell) => `${String(cell.index)}:${String(cell.row)}:${String(cell.mark)}`).join('|')
     expect(shape(after.board?.cells)).toBe(shape(before.board?.cells))
+  })
+
+  it('keeps the live announcement across a locale change', () => {
+    const { store } = createHarness()
+    reachPlaying(store)
+    // The mine at 0 closes a row and a column at once, so this event carries the
+    // game's share of the commit and the region has a real sentence to diff.
+    store.actions.mark([{ index: 0, assertion: 'mine' }])
+    const before = store.getSnapshot()
+    const contentOf = (snapshot: UiSnapshot): string =>
+      JSON.stringify({
+        transition: snapshot.lastEvent?.transition ?? null,
+        reason: snapshot.lastEvent?.reason ?? null,
+        autoRevealedLines: snapshot.lastEvent?.autoRevealedLines ?? 0,
+        autoRevealedCells: snapshot.lastEvent?.autoRevealedCells ?? 0,
+      })
+    const contentBefore = contentOf(before)
+
+    store.setLocale('zh-CN')
+
+    const after = store.getSnapshot()
+    expect(after).not.toBe(before)
+    expect(after.lastEvent?.transition).toBe('marks-applied')
+    expect(after.lastEvent?.autoRevealedLines).toBe(2)
+    expect(after.lastEvent?.autoRevealedCells).toBe(2)
+    // Unchanged apart from the new locale's label, which is null here because a
+    // transition has no reason to translate: a language switch must not erase the
+    // sentence the player is reading, and must not re-announce it either.
+    expect(contentOf(after)).toBe(contentBefore)
+    expect(after.lastEvent?.reasonLabel).toBeNull()
+    expect(sameLastEvent(before.lastEvent, after.lastEvent)).toBe(true)
   })
 
   it('keeps one snapshot when the locale is unchanged', () => {
@@ -953,6 +1095,80 @@ describe('gameStore win handoff', () => {
     expect(deferred).toEqual([true])
     expect(store.getSnapshot().status.status).toBe('playing')
   })
+
+  it('holds the won banner long enough to read it', () => {
+    // The banner is the only place the round outcome is stated in full, so the
+    // default interlude is pinned here: 1.2 s was too short to reach the
+    // "Next round" button, let alone read it.
+    expect(DEFAULT_WIN_INTERLUDE_MS).toBe(2_500)
+  })
+
+  it('waits for a visible tab before burning a round', () => {
+    const visibility = createFakeVisibility(false)
+    const { store, worker, timers } = createHarness({ visibility })
+    reachPlaying(store)
+    store.actions.mark(SOLUTION)
+    expect(store.getSnapshot().status.status).toBe('won')
+    expect(timers.pending()).toBe(0)
+    expect(timers.recorded).toEqual([])
+    expect(worker.posted).toHaveLength(0)
+
+    visibility.setVisible(true)
+    visibility.fire()
+
+    expect(timers.recorded).toEqual([DEFAULT_WIN_INTERLUDE_MS])
+    expect(timers.pending()).toBe(1)
+    timers.runAll()
+    expect(worker.posted).toHaveLength(1)
+  })
+
+  it('hands the round back when the tab is hidden before the timer fires', () => {
+    const visibility = createFakeVisibility(true)
+    const { store, worker, timers } = createHarness({ visibility })
+    reachPlaying(store)
+    store.actions.mark(SOLUTION)
+    expect(timers.pending()).toBe(1)
+
+    visibility.setVisible(false)
+    timers.runAll()
+    expect(worker.posted).toHaveLength(0)
+    expect(store.getSnapshot().status.status).toBe('won')
+
+    visibility.setVisible(true)
+    visibility.fire()
+    expect(timers.recorded).toEqual([DEFAULT_WIN_INTERLUDE_MS, DEFAULT_WIN_INTERLUDE_MS])
+    timers.runAll()
+    expect(worker.posted).toHaveLength(1)
+  })
+
+  it('keeps the won announcement identical while the handoff waits for a visible tab', () => {
+    // The status region carries the sentence, not the banner, so deferring the
+    // handoff must publish exactly the event a visible tab publishes.
+    const shown = createHarness({ visibility: createFakeVisibility(true) })
+    const hidden = createHarness({ visibility: createFakeVisibility(false) })
+    reachPlaying(shown.store)
+    reachPlaying(hidden.store)
+    shown.store.actions.mark(SOLUTION)
+    hidden.store.actions.mark(SOLUTION)
+    expect(shown.timers.pending()).toBe(1)
+    expect(hidden.timers.pending()).toBe(0)
+
+    const visibleEvent = shown.store.getSnapshot().lastEvent
+    const deferredEvent = hidden.store.getSnapshot().lastEvent
+    expect(visibleEvent?.transition).toBe('round-won')
+    expect(deferredEvent?.transition).toBe('round-won')
+    expect(deferredEvent?.reasonLabel).toBeNull()
+    expect(sameLastEvent(visibleEvent, deferredEvent)).toBe(true)
+    expect(hidden.store.getSnapshot().status.failure).toBeNull()
+  })
+
+  it('stops watching the page once the store is disposed', () => {
+    const visibility = createFakeVisibility(true)
+    const { store } = createHarness({ visibility })
+    expect(visibility.subscribers()).toBe(1)
+    store.dispose()
+    expect(visibility.subscribers()).toBe(0)
+  })
 })
 
 // ======================================================================================
@@ -1163,7 +1379,30 @@ describe('gameStore source guards', () => {
       expect(source).not.toContain('new Date(')
       expect(source).not.toContain('Date.now()')
       expect(source).not.toContain('console.log')
-      expect(source).not.toContain('document.')
+    }
+    // useGameSnapshot is a React hook with no business touching the page at all.
+    expect(stripComments(await readSource('useGameSnapshot.ts'))).not.toContain('document.')
+  })
+
+  it('reads the page only through the visibility seam', async () => {
+    // The store may learn whether the tab is hidden, and only there: the win
+    // interlude is the one behaviour that depends on it. Every `document.` read
+    // has to sit inside documentVisibility, so the day the interlude grows a
+    // second dependency this guard says where to look.
+    const source = stripComments(await readSource('gameStore.ts'))
+    const seam = source.indexOf('function documentVisibility')
+    expect(seam).toBeGreaterThan(-1)
+    const read = 'document.'
+    const occurrences: number[] = []
+    for (let at = source.indexOf(read); at !== -1; at = source.indexOf(read, at + read.length)) {
+      occurrences.push(at)
+    }
+    const seamEnd = source.indexOf('\n}\n', seam)
+    expect(seamEnd).toBeGreaterThan(seam)
+    expect(occurrences.length).toBeGreaterThan(0)
+    for (const at of occurrences) {
+      expect(at).toBeGreaterThanOrEqual(seam)
+      expect(at).toBeLessThan(seamEnd)
     }
   })
 })

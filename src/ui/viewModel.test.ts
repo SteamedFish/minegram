@@ -23,6 +23,7 @@ import {
   projectResume,
   projectSnapshot,
   resumeAvailable,
+  sameLastEvent,
   type PreviewView,
   type UiSnapshot,
 } from './viewModel'
@@ -338,11 +339,12 @@ describe('projectSnapshot lifecycle', () => {
 
   it('passes the last event through when the store supplies one', () => {
     const snapshot = projectSnapshot(won, {
-      lastEvent: { transition: 'round-won', reason: null, autoRevealedLines: 0, autoRevealedCells: 0 },
+      lastEvent: { transition: 'round-won', reason: null, reasonLabel: null, autoRevealedLines: 0, autoRevealedCells: 0 },
     })
     expect(snapshot.lastEvent).toEqual({
       transition: 'round-won',
       reason: null,
+      reasonLabel: null,
       autoRevealedLines: 0,
       autoRevealedCells: 0,
     })
@@ -354,15 +356,90 @@ describe('projectSnapshot lifecycle', () => {
     // itself, so the counts have to survive the projection: a snapshot that
     // dropped them would credit the game-written cells to the player.
     const snapshot = projectSnapshot(playing, {
-      lastEvent: { transition: 'marks-applied', reason: null, autoRevealedLines: 2, autoRevealedCells: 2 },
+      lastEvent: { transition: 'marks-applied', reason: null, reasonLabel: null, autoRevealedLines: 2, autoRevealedCells: 2 },
     })
     expect(snapshot.lastEvent).toEqual({
       transition: 'marks-applied',
       reason: null,
+      reasonLabel: null,
       autoRevealedLines: 2,
       autoRevealedCells: 2,
     })
     expect(Object.isFrozen(snapshot.lastEvent)).toBe(true)
+  })
+
+  it('resolves a refusal reason into a localised sentence', () => {
+    const locked = projectSnapshot(playing, {
+      lastEvent: {
+        transition: null,
+        reason: 'locked-cell',
+        reasonLabel: null,
+        autoRevealedLines: 0,
+        autoRevealedCells: 0,
+      },
+    })
+    expect(locked.lastEvent?.reason).toBe('locked-cell')
+    expect(locked.lastEvent?.reasonLabel).toBe('That cell is already locked, so its mark cannot change.')
+    expect(locked.lastEvent?.reasonLabel).not.toContain('locked-cell')
+
+    const zh = projectSnapshot(playing, {
+      locale: 'zh-CN',
+      lastEvent: {
+        transition: null,
+        reason: 'locked-cell',
+        reasonLabel: null,
+        autoRevealedLines: 0,
+        autoRevealedCells: 0,
+      },
+    })
+    expect(zh.lastEvent?.reason).toBe('locked-cell')
+    expect(zh.lastEvent?.reasonLabel).toBe('该格已被锁定，标记无法更改。')
+  })
+
+  it('treats two projections of the same event content as the same event', () => {
+    // The invariant, not the symptom: `projectSnapshot` re-freezes its event on
+    // every call, so object identity can NEVER hold across two publishes — a
+    // consumer that compares with `===` re-announces an event the player has
+    // already been told about, and a locale switch is exactly such a re-publish.
+    const event = {
+      transition: 'marks-applied',
+      reason: null,
+      reasonLabel: null,
+      autoRevealedLines: 2,
+      autoRevealedCells: 2,
+    } as const
+    const first = projectSnapshot(playing, { lastEvent: event })
+    const second = projectSnapshot(playing, { lastEvent: event })
+
+    expect(first.lastEvent).not.toBe(second.lastEvent)
+    expect(sameLastEvent(first.lastEvent, second.lastEvent)).toBe(true)
+
+    // A locale switch re-projects the same event in another language. Every
+    // transition event has `reason: null`, hence a `null` label in every locale,
+    // so the content is unchanged and the consumer must not re-announce.
+    const localized = projectSnapshot(playing, { locale: 'zh-CN', lastEvent: event })
+    expect(sameLastEvent(first.lastEvent, localized.lastEvent)).toBe(true)
+
+    // Any single field differing is a different event, label included.
+    const other = projectSnapshot(playing, {
+      lastEvent: { ...event, autoRevealedCells: 1 },
+    })
+    expect(sameLastEvent(first.lastEvent, other.lastEvent)).toBe(false)
+    const refusal = projectSnapshot(playing, {
+      lastEvent: { transition: null, reason: 'locked-cell', reasonLabel: null, autoRevealedLines: 0, autoRevealedCells: 0 },
+    })
+    expect(sameLastEvent(first.lastEvent, refusal.lastEvent)).toBe(false)
+    expect(sameLastEvent(null, first.lastEvent)).toBe(false)
+    expect(sameLastEvent(null, null)).toBe(true)
+
+    // A refusal's label IS its content, so a locale switch of a refusal is a
+    // real change — the sentence the player must be told changed.
+    const refusalZh = projectSnapshot(playing, {
+      locale: 'zh-CN',
+      lastEvent: { transition: null, reason: 'locked-cell', reasonLabel: null, autoRevealedLines: 0, autoRevealedCells: 0 },
+    })
+    expect(refusal.lastEvent?.reason).toBe(refusalZh.lastEvent?.reason)
+    expect(sameLastEvent(refusal.lastEvent, refusalZh.lastEvent)).toBe(false)
   })
 })
 

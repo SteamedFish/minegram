@@ -42,6 +42,43 @@ interface MarkDelta {
  */
 type ChromeNote = { readonly kind: 'mode' } | { readonly kind: 'zoom' }
 
+/**
+ * Whether two events are the *same* event, asked about content rather than identity.
+ *
+ * `projectSnapshot` freezes a new `lastEvent` out of the stored event on every call
+ * (`src/ui/viewModel.ts:680-688`), so a republish of one event arrives as a different
+ * object with identical fields. Compared by identity it read as a brand-new event, which
+ * cost the player their sentence twice over: the diff was recomputed against the board it
+ * had just stored and came out empty, and the render gate refused the event outright, so
+ * the region fell back to the resting mode sentence. `setLocale` republishes, so that was
+ * the switch-to-Chinese path.
+ *
+ * The two reveal counts are part of the content: a commit that closed a line is not the
+ * same commit as one that did not, even though both are `marks-applied`.
+ *
+ * `reasonLabel` is deliberately NOT one of the fields, and this predicate is deliberately
+ * not `sameLastEvent` from `src/ui/viewModel.ts`, which compares five. They are two
+ * different questions. `sameLastEvent` is the snapshot contract — "did the event content
+ * change?" — and a locale switch does change the content, because it changes
+ * `reasonLabel`, so it correctly reports a difference. This one is the announcement gate:
+ * "is this still the current announcement?", and it has to stay locale-INsensitive,
+ * because a language switch has to keep the sentence and rebuild it from the new `t` and
+ * the new `reasonLabel`. Treating a relabelled event as a new one would drop the
+ * announcement on every language switch, which is the defect this whole arrangement
+ * exists to fix. Merging the two predicates reinstates it, so do not.
+ */
+function sameEvent(a: UiLastEvent | null, b: UiLastEvent | null): boolean {
+  if (a === null || b === null) {
+    return a === b
+  }
+  return (
+    a.transition === b.transition &&
+    a.reason === b.reason &&
+    a.autoRevealedLines === b.autoRevealedLines &&
+    a.autoRevealedCells === b.autoRevealedCells
+  )
+}
+
 export function StatusRegion({
   t,
   status,
@@ -108,16 +145,20 @@ export function StatusRegion({
       return
     }
     /**
-     * One diff per event. `setLocale` republishes the *same* `lastEvent` object with a
-     * freshly projected board (`src/ui/gameStore.ts`), so the board identity changing
-     * says nothing about whether the event is new; without this a locale switch would
-     * diff the board against itself and empty the sentence again.
+     * One diff per event *content*, not per object. `setLocale` republishes the newest
+     * event with a freshly projected board, and the new snapshot carries a new frozen
+     * object for it, so the board identity changing says nothing about whether the event
+     * is new.
+     *
+     * The mark diff is the discriminator that identity can no longer be. A republish
+     * leaves the marks exactly where they were, so `changed === 0` with an equal event is
+     * the same publish arriving twice and keeps the delta standing. Two *consecutive*
+     * batches both report `marks-applied` with nothing revealed, so their events are
+     * equal in content too — there the marks moved, and each batch has to be counted for
+     * itself, which is why the guard below sits after the diff rather than before it.
      */
-    if (lastEvent === diffed.current) {
-      return
-    }
-    diffed.current = lastEvent
     if (before.marks.length !== board.cells.length) {
+      diffed.current = lastEvent
       setDelta(null)
       return
     }
@@ -131,16 +172,25 @@ export function StatusRegion({
         }
       }
     }
-    // The auto-reveal writes into the same commit, so its cells are in this diff
-    // and are not the player's assertions. They need no subtraction from `mines`:
-    // a reveal only ever writes `blank`, so every mine in the diff is the
-    // player's, and the count to credit is the diff minus the revealed cells.
-    // `revealedCells` is the event's own count and `cells` is the diff's, so the two
-    // come from different sources; the clamp exists only to keep `cells` non-negative
-    // if they ever disagree. It is not what emptied this sentence before.
-    const revealedCells = Math.max(0, Math.min(changed, lastEvent?.autoRevealedCells ?? 0))
+    if (changed === 0 && sameEvent(lastEvent, diffed.current)) {
+      return
+    }
+    diffed.current = lastEvent
+    // The auto-reveal writes into the same commit, so its cells are in this diff and are
+    // not the player's assertions. They need no subtraction from `mines`: a reveal only
+    // ever writes `blank`, so every mine in the diff is the player's, and the count to
+    // credit is the diff minus the revealed cells.
+    //
+    // The revealed count is the *event's*, not the diff's, and that is the whole point of
+    // the split. A republish of a revealing event can leave the marks untouched — the
+    // store re-projects a board it already published — and clamping the event's count to
+    // the diff turned that into "The game filled 0 cell". The reducer only ever reports a
+    // line that actually wrote at least one cell (`src/application/gameReducer.ts:201`),
+    // so `autoRevealedLines > 0` already guarantees `autoRevealedCells >= 1` and the
+    // reveal clause can never claim the game filled nothing.
+    const revealedCells = lastEvent?.autoRevealedCells ?? 0
     const revealedLines = lastEvent?.autoRevealedLines ?? 0
-    const cells = changed - revealedCells
+    const cells = Math.max(0, changed - revealedCells)
     setDelta({
       cells,
       wrong: Math.max(0, before.score - score),
@@ -151,7 +201,16 @@ export function StatusRegion({
   }, [board, lastEvent, score])
 
   useEffect(() => {
-    if (lastEvent === null || announcedRef.current === lastEvent) {
+    /**
+     * Publishing is what makes a new dictionary render: a locale switch re-renders this
+     * region with a different `t`, and the sentence has to be rebuilt from those new
+     * strings or the player keeps reading the language they switched away from. So the
+     * sentence is not gated here at all — an equal event is republished and re-rendered
+     * on purpose, and the sentence is gated on the event's *content* in `announcement`
+     * below, which is what stops one event being shown twice. Gating this on content as
+     * well would be redundant, and gating *that* one on identity is the defect.
+     */
+    if (lastEvent === null || sameEvent(announcedRef.current, lastEvent)) {
       return
     }
     announcedRef.current = lastEvent
@@ -217,7 +276,11 @@ function stateWord(t: Copy, status: StatusView): string {
  *
  * Priority is event, then toolbar, then the resting mode sentence. An event is used
  * only while it is the *newest* one (`announced`), so a toolbar change after a mark
- * still gets its own sentence instead of being drowned out by the mark.
+ * still gets its own sentence instead of being drowned out by the mark. A refusal is
+ * an event: it is published as its own null-transition event, it names something the
+ * player just tried, and it outranks a toolbar note for the same reason a mark does.
+ * Its branch is `case null`, so it can only ever be reached by an event that has no
+ * transition — it cannot shadow a sentence for a real one.
  */
 function announcement(
   t: Copy,
@@ -230,7 +293,7 @@ function announcement(
   announced: UiLastEvent | null,
 ): string {
   const reason = lastEvent?.reason ?? null
-  if (lastEvent !== null && announced === lastEvent) {
+  if (lastEvent !== null && sameEvent(announced, lastEvent)) {
     switch (lastEvent.transition) {
       case 'generation-started':
         return interpolate(t.announce.generationStarted, {
@@ -248,15 +311,39 @@ function announcement(
       case 'marks-applied':
         return marksApplied(t, status, delta, mode)
       case 'mark-cleared':
-        return t.announce.markCleared
+        return withReveal(t, t.announce.markCleared, lastEvent)
       case 'round-resumed':
-        return interpolate(t.announce.roundResumed, { round: status.round })
+        return withReveal(
+          t,
+          interpolate(t.announce.roundResumed, { round: status.round }),
+          lastEvent,
+        )
       case 'generation-failed':
         return interpolate(t.announce.generationFailed, {
           reason: reason ?? status.failure?.headline ?? t.failure.headlineFallback,
         })
       case 'generation-cancelled':
         return t.announce.generationCancelled
+      case null: {
+        /**
+         * A refusal. The store publishes it when the reducer returns its input state by
+         * reference, so there is no transition to switch on: without this the region fell
+         * through every branch and answered a refused click with "Marking: Mine".
+         *
+         * `reason` is the identifier and is only ever tested here. What the player reads
+         * is `reasonLabel`, the sentence `src/ui/reasonCopy.ts` resolved it into for this
+         * locale — `locked-cell` must not reach the screen, and the whole reason table
+         * exists to stop it. A refusal with a reason but no label answers with the bare
+         * frame, because inventing a clause would be as untrue as printing the token.
+         */
+        if (reason === null) {
+          break
+        }
+        const label = lastEvent.reasonLabel ?? null
+        return label === null
+          ? t.announce.rejectedBare
+          : interpolate(t.announce.rejected, { reason: label })
+      }
       default:
         break
     }
@@ -265,9 +352,6 @@ function announcement(
     return chrome.kind === 'zoom'
       ? interpolate(t.announce.zoom, { zoom: zoomLabel(t, zoom) })
       : interpolate(t.announce.mode, { mode: modeLabel(t, mode) })
-  }
-  if (reason !== null) {
-    return interpolate(t.announce.ignored, { reason })
   }
   return interpolate(t.announce.mode, { mode: modeLabel(t, mode) })
 }
@@ -289,26 +373,59 @@ function marksApplied(t: Copy, status: StatusView, delta: MarkDelta | null, mode
     return resting
   }
   if (delta.cells === 0) {
-    return interpolate(delta.revealedLines === 1 ? t.announce.revealOnlyOne : t.announce.revealOnlyMany, {
-      lines: delta.revealedLines,
-      cells: delta.revealedCells,
+    return interpolate(t.announce.revealOnly, {
+      lines: revealCount(t, delta.revealedLines),
+      cells: revealCells(t, delta.revealedCells),
       score: status.score.current,
     })
   }
-  const marked = interpolate(t.announce.marksApplied, {
+  const marked = interpolate(delta.cells === 1 ? t.announce.marksAppliedOne : t.announce.marksAppliedMany, {
     cells: delta.cells,
     assertion: delta.assertion === 'mine' ? t.announce.assertions.mine : t.announce.assertions.blank,
     wrong: delta.wrong,
     score: status.score.current,
   })
-  if (delta.revealedLines === 0) {
-    return marked
+  return delta.revealedLines === 0 ? marked : `${marked} ${revealNote(t, delta)}`
+}
+
+/**
+ * The reveal clause, appended to whichever sentence the entry point produced. The
+ * reducer reveals on `mark-cleared` and on `round-resumed` as well as on
+ * `marks-applied`, so erasing a wrong mine can fill a line while the board visibly
+ * changes; `AGENTS.md` requires the filled lines to be announced whatever the entry
+ * point was, and it is the same clause each time.
+ *
+ * `autoRevealedLines > 0` implies `autoRevealedCells >= 1` — the reducer only reports
+ * a line that actually wrote a cell — so there is no "filled nothing" case to word.
+ */
+function withReveal(t: Copy, sentence: string, lastEvent: UiLastEvent): string {
+  if (lastEvent.autoRevealedLines === 0) {
+    return sentence
   }
-  const note = interpolate(
-    delta.revealedLines === 1 ? t.announce.revealNoteOne : t.announce.revealNoteMany,
-    { lines: delta.revealedLines, cells: delta.revealedCells },
-  )
-  return `${marked} ${note}`
+  return `${sentence} ${revealNote(t, {
+    revealedLines: lastEvent.autoRevealedLines,
+    revealedCells: lastEvent.autoRevealedCells,
+  })}`
+}
+
+function revealNote(t: Copy, revealed: { readonly revealedLines: number; readonly revealedCells: number }): string {
+  return interpolate(t.announce.revealNote, {
+    cells: revealCells(t, revealed.revealedCells),
+    lines:
+      revealed.revealedLines === 1
+        ? t.announce.revealLinesOne
+        : interpolate(t.announce.revealLinesMany, { lines: revealed.revealedLines }),
+  })
+}
+
+/** The filled-cell count, inflected on its own: one line can hold three of them. */
+function revealCells(t: Copy, cells: number): string {
+  return interpolate(cells === 1 ? t.announce.revealCellsOne : t.announce.revealCellsMany, { cells })
+}
+
+/** The closed-line count on its own, for the sentence that credits no cells. */
+function revealCount(t: Copy, lines: number): string {
+  return interpolate(lines === 1 ? t.announce.revealCountOne : t.announce.revealCountMany, { lines })
 }
 
 function modeLabel(t: Copy, mode: MarkingMode): string {
