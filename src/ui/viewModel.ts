@@ -149,6 +149,19 @@ export interface PreviewView {
 export interface UiLastEvent {
   readonly transition: GameTransition | null
   readonly reason: GameResultReason | null
+  /**
+   * How many lines the game filled for free in the same commit, and how many
+   * cells that amounted to. Both are `0` for every result that is not a
+   * `transition`, and for a transition that revealed nothing — including the
+   * round-accepting one, which never reveals.
+   *
+   * Counts, not the reducer's `RevealedLine[]`: the region announces a number,
+   * and a component must not reach into the application layer for the line
+   * details (`layerBoundary.test.ts`). `autoRevealedCells` counts every written
+   * cell exactly once even when two lines share it.
+   */
+  readonly autoRevealedLines: number
+  readonly autoRevealedCells: number
 }
 
 export interface UiSnapshot {
@@ -199,7 +212,7 @@ export const LINE_PATTERN_BUDGET_MS = 64
 export const LINE_PATTERN_PUBLISH_BUDGET_MS = 250
 
 /** Bumped whenever a field changes shape, so a memoised tree can discard it. */
-export const SNAPSHOT_SCHEMA_VERSION = 1
+export const SNAPSHOT_SCHEMA_VERSION = 2
 
 function defaultNow(): number {
   return typeof performance === 'undefined' ? Date.now() : performance.now()
@@ -669,6 +682,8 @@ export function projectSnapshot(state: GameState, options: ProjectOptions = {}):
     ? Object.freeze({
         transition: options.lastEvent.transition,
         reason: options.lastEvent.reason,
+        autoRevealedLines: options.lastEvent.autoRevealedLines,
+        autoRevealedCells: options.lastEvent.autoRevealedCells,
       })
     : null
 

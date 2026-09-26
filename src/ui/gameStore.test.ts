@@ -314,7 +314,12 @@ describe('gameStore publish mechanics', () => {
     expect(notifications).toBe(1)
     expect(store.getSnapshot()).not.toBe(before)
     expect(store.getSnapshot().status.status).toBe('generating')
-    expect(store.getSnapshot().lastEvent).toEqual({ transition: 'generation-started', reason: null })
+    expect(store.getSnapshot().lastEvent).toEqual({
+      transition: 'generation-started',
+      reason: null,
+      autoRevealedLines: 0,
+      autoRevealedCells: 0,
+    })
   })
 
   it('keeps the same snapshot object when the reducer ignores the action', () => {
@@ -343,8 +348,43 @@ describe('gameStore publish mechanics', () => {
     const before = store.getSnapshot()
     store.actions.mark([{ index: 0, assertion: 'mine' }])
     expect(store.getSnapshot()).not.toBe(before)
-    expect(store.getSnapshot().lastEvent).toEqual({ transition: 'marks-applied', reason: null })
+    // The mine at 0 closes row 0 and column 0 at once, so the same commit
+    // reports the game's share: two lines, and the two blank cells they had
+    // left. Cell 1 is written by the row and cell 2 by the column, so the
+    // counts are one each, not two.
+    expect(store.getSnapshot().lastEvent).toEqual({
+      transition: 'marks-applied',
+      reason: null,
+      autoRevealedLines: 2,
+      autoRevealedCells: 2,
+    })
     expect(store.getSnapshot().board?.cells[0]?.correct).toBe(true)
+  })
+
+  it('reports zero reveal counts when the game filled nothing', () => {
+    const { store } = createHarness()
+    store.dispatch({ type: 'generation/start', settings: ROUND.settings, initialScore: 5 })
+    store.dispatch({ type: 'generation/succeeded', generationId: 1, round: cloneRound() })
+    // Accepting a round never reveals, so both counters are zero rather than
+    // absent: the region subtracts them from the player's diff, and a missing
+    // field would read as `undefined` there.
+    expect(store.getSnapshot().lastEvent).toEqual({
+      transition: 'generation-succeeded',
+      reason: null,
+      autoRevealedLines: 0,
+      autoRevealedCells: 0,
+    })
+
+    // A wrong mark closes nothing: it disqualifies row 0 and column 0 outright,
+    // and the mine in row 1 and column 1 is still unmarked.
+    store.actions.mark(WRONG_SINGLE)
+    expect(store.getSnapshot().lastEvent).toEqual({
+      transition: 'marks-applied',
+      reason: null,
+      autoRevealedLines: 0,
+      autoRevealedCells: 0,
+    })
+    expect(store.getSnapshot().board?.cells[1]?.mark).toBe('unknown')
   })
 
   it('carries a recorded refusal reason into the next published event', () => {
@@ -355,6 +395,8 @@ describe('gameStore publish mechanics', () => {
     expect(store.getSnapshot().lastEvent).toEqual({
       transition: 'marks-applied',
       reason: 'cell-already-unknown',
+      autoRevealedLines: 2,
+      autoRevealedCells: 2,
     })
   })
 
@@ -664,15 +706,24 @@ describe('gameStore preview', () => {
   it('reports a no-op for repeated and locked assertions', () => {
     const { store } = createHarness()
     reachPlaying(store)
+    // The wrong mark is asserted first, and that ordering is the point. On this
+    // 2x2 fixture a correct mark at 0 completes row 0 and column 0 at once, so
+    // the auto-reveal would fill cells 1 and 2 as locked blanks and leave no
+    // free cell to hold a wrong mark. Asserting the wrong mark first keeps row 0
+    // ineligible (it carries the wrong mark) and leaves only column 0 to close
+    // when the mine at 0 lands — so cell 2 is the game's to fill, and cells 0
+    // and 1 still belong to the player.
+    store.actions.mark([{ index: 1, assertion: 'mine' }])
+    // A wrong mark is not locked, so re-asserting it is free while asserting the
+    // right thing is still a hit: the two halves of the no-op contract.
+    expect(store.previewOf(1, 'mine')).toBe('none')
+    expect(store.previewOf(1, 'blank')).toBe('hit')
+
     store.actions.mark([{ index: 0, assertion: 'mine' }])
     // A correct mark locks the cell, so neither the same nor the opposite
     // assertion changes anything: the drag layer must see no risk at all.
     expect(store.previewOf(0, 'mine')).toBe('none')
     expect(store.previewOf(0, 'blank')).toBe('none')
-
-    store.actions.mark([{ index: 1, assertion: 'mine' }])
-    expect(store.previewOf(1, 'mine')).toBe('none')
-    expect(store.previewOf(1, 'blank')).toBe('hit')
 
     store.actions.mark(SOLUTION)
     expect(store.previewOf(0, 'mine')).toBe('none')

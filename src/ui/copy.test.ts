@@ -404,6 +404,77 @@ describe('failureCopy', () => {
   })
 })
 
+describe('reveal announcement copy', () => {
+  /**
+   * The region interpolates the singular form when exactly one line closed and the
+   * plural otherwise, so the pairs are not interchangeable: a "1 lines" or a
+   * "1 cell" in the live region is the defect these keys exist to prevent.
+   */
+  it('has a singular and a plural form for each reveal sentence, in both locales', () => {
+    for (const locale of LOCALES_TESTED) {
+      const t = getCopy(locale)
+      const localised: readonly { readonly one: string; readonly many: string }[] = [
+        { one: t.announce.revealNoteOne, many: t.announce.revealNoteMany },
+        { one: t.announce.revealOnlyOne, many: t.announce.revealOnlyMany },
+      ]
+      for (const pair of localised) {
+        expect(pair.one.trim().length, locale).toBeGreaterThan(0)
+        expect(pair.many.trim().length, locale).toBeGreaterThan(0)
+      }
+      // English needs the pair; the en forms must actually differ. Chinese has no
+      // plural inflection, so its two forms are the same sentence on purpose.
+      if (locale === 'en') {
+        for (const pair of localised) {
+          expect(pair.one).not.toBe(pair.many)
+        }
+      }
+    }
+  })
+
+  it('interpolates the revealed counts into every reveal sentence', () => {
+    const counts = { lines: 3, cells: 5, score: 4 }
+    for (const locale of LOCALES_TESTED) {
+      const t = getCopy(locale)
+      // `revealNoteOne` names the line count implicitly — "the line you completed"
+      // is already the number one — so it is the one template without `{lines}`.
+      const templates: readonly { readonly text: string; readonly lines: boolean }[] = [
+        { text: t.announce.revealNoteOne, lines: false },
+        { text: t.announce.revealNoteMany, lines: true },
+        { text: t.announce.revealOnlyOne, lines: true },
+        { text: t.announce.revealOnlyMany, lines: true },
+      ]
+      for (const { text, lines } of templates) {
+        const label = `${locale}:${text}`
+        expect(text, label).toContain('{cells}')
+        expect(text.includes('{lines}'), label).toBe(lines)
+        const sentence = interpolate(text, counts)
+        expect(sentence, label).not.toMatch(/\{[a-z]+\}/)
+        expect(sentence, label).toContain('5')
+        if (lines) {
+          expect(sentence, label).toContain('3')
+        }
+      }
+    }
+  })
+
+  it('never credits the game-written cells to the player', () => {
+    // The player's own count is the `cells` of `marksApplied`, and it excludes the
+    // reveal. The reveal's sentence must not reuse `marksApplied`'s wording, or
+    // the region would be claiming an assertion the player never made.
+    const t = getCopy('en')
+    const revealSentences = [
+      t.announce.revealNoteOne,
+      t.announce.revealNoteMany,
+      t.announce.revealOnlyOne,
+      t.announce.revealOnlyMany,
+    ]
+    for (const sentence of revealSentences) {
+      expect(sentence).not.toContain(t.announce.marksApplied)
+      expect(sentence).toContain('game')
+    }
+  })
+})
+
 describe('bandLabel', () => {
   it('names a known band and passes an unknown token through', () => {
     const t = getCopy('en')

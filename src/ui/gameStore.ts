@@ -319,6 +319,12 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
     const event: UiLastEvent = {
       transition: result.type === 'transition' ? result.transition : null,
       reason: result.type === 'transition' ? pendingReason : result.reason,
+      // The reducer owns the reveal's accounting and already reports `0`/`[]` for
+      // every transition that did not reveal — the round-accepting one included.
+      // Only an `ignored` result has no counters to read, and it published nothing
+      // new, so it gets zeros rather than a guess.
+      autoRevealedLines: result.type === 'transition' ? result.autoRevealedLines.length : 0,
+      autoRevealedCells: result.type === 'transition' ? result.autoRevealedCells : 0,
     }
     pendingReason = null
     const transition = result.type === 'transition' ? result.transition : null

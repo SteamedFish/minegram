@@ -24,9 +24,15 @@ export interface StatusRegionProps {
 }
 
 interface MarkDelta {
+  /**
+   * Cells the *player* changed, i.e. the mark diff minus the cells the auto-reveal
+   * filled in the same commit. This is the number the region credits.
+   */
   readonly cells: number
   readonly wrong: number
   readonly assertion: Exclude<CellMark, 'unknown'>
+  readonly revealedCells: number
+  readonly revealedLines: number
 }
 
 /**
@@ -51,6 +57,18 @@ export function StatusRegion({
   const base = useRef<{ marks: readonly CellMark[]; score: number } | null>(null)
   const toolbar = useRef<{ mode: MarkingMode; zoom: ZoomStep } | null>(null)
   const score = status.score.current
+  /**
+   * `won` and `lost` are the two states the round banner also states in full, in
+   * the same words. Two visible statements of one fact is a screen-reader
+   * interruption and a sighted duplication, so in those two states this region
+   * keeps its text for assistive technology only: `mg-visually-hidden` clips the
+   * box without leaving the accessibility tree, which `display: none` and
+   * `visibility: hidden` would both do — and either of those would silence a
+   * polite live region whose whole job is to say the round ended. Every other
+   * state keeps the region visible and unchanged.
+   */
+  const terminal = status.status === 'won' || status.status === 'lost'
+  const rest = terminal ? ' mg-visually-hidden' : ''
 
   useEffect(() => {
     const before = toolbar.current
@@ -82,20 +100,29 @@ export function StatusRegion({
       setDelta(null)
       return
     }
-    let cells = 0
+    let changed = 0
     let mines = 0
     for (let index = 0; index < board.cells.length; index += 1) {
       if (board.cells[index].mark !== before.marks[index]) {
-        cells += 1
+        changed += 1
         if (board.cells[index].mark === 'mine') {
           mines += 1
         }
       }
     }
+    // The auto-reveal writes into the same commit, so its cells are in this diff
+    // and are not the player's assertions. They need no subtraction from `mines`:
+    // a reveal only ever writes `blank`, so every mine in the diff is the
+    // player's, and the count to credit is the diff minus the revealed cells.
+    const revealedCells = Math.max(0, Math.min(changed, lastEvent?.autoRevealedCells ?? 0))
+    const revealedLines = lastEvent?.autoRevealedLines ?? 0
+    const cells = changed - revealedCells
     setDelta({
       cells,
       wrong: Math.max(0, before.score - score),
       assertion: mines * 2 >= cells ? 'mine' : 'blank',
+      revealedCells,
+      revealedLines,
     })
   }, [announced, board, lastEvent, score])
 
@@ -107,13 +134,13 @@ export function StatusRegion({
       aria-atomic="true"
       data-status={status.status}
     >
-      <span className="mg-status__state">{stateWord(t, status)}</span>
+      <span className={`mg-status__state${rest}`}>{stateWord(t, status)}</span>
       {status.isGenerating ? (
         <span className="mg-status__caret" aria-hidden="true">
           {t.generation.caret}
         </span>
       ) : null}
-      <span className="mg-status__message">
+      <span className={`mg-status__message${rest}`}>
         {announcement(t, status, lastEvent, delta, mode, zoom, chrome, announced)}
       </span>
       {status.isGenerating ? (
@@ -147,10 +174,11 @@ function stateWord(t: Copy, status: StatusView): string {
  * already committed, so this can never claim something that did not happen.
  *
  * `marks-applied` is the one branch that needs arithmetic: `UiLastEvent` carries a
- * transition and a reason, not the batch, so the cell count comes from diffing
- * this board against the previous one and the wrong count from the score delta.
- * Both are exact — a cell's mark only ever changes when a batch is applied, and a
- * cell is charged at most once per batch.
+ * transition, a reason and the auto-reveal's two counts, not the batch, so the cell
+ * count comes from diffing this board against the previous one, minus the cells the
+ * game filled itself, and the wrong count from the score delta. Both are exact — a
+ * cell's mark only ever changes when a batch is applied, a reveal only ever writes
+ * `blank`, and a cell is charged at most once per batch.
  *
  * Priority is event, then toolbar, then the resting mode sentence. An event is used
  * only while it is the *newest* one (`announced`), so a toolbar change after a mark
@@ -183,15 +211,7 @@ function announcement(
       case 'round-lost':
         return t.announce.roundLost
       case 'marks-applied':
-        return delta === null
-          ? interpolate(t.announce.mode, { mode: modeLabel(t, mode) })
-          : interpolate(t.announce.marksApplied, {
-              cells: delta.cells,
-              assertion:
-                delta.assertion === 'mine' ? t.announce.assertions.mine : t.announce.assertions.blank,
-              wrong: delta.wrong,
-              score: status.score.current,
-            })
+        return marksApplied(t, status, delta, mode)
       case 'mark-cleared':
         return t.announce.markCleared
       case 'round-resumed':
@@ -217,6 +237,45 @@ function announcement(
   return interpolate(t.announce.mode, { mode: modeLabel(t, mode) })
 }
 
+/**
+ * The `marks-applied` sentence, split so the auto-reveal's share is never read as
+ * the player's.
+ *
+ * The same commit can do both things at once: the player marks the last mine in a
+ * line and the game fills that line's gaps. Crediting the whole diff would tell the
+ * player they asserted cells they never touched, so the revealed cells come off the
+ * player's count and get their own clause, which also says how many lines the game
+ * closed. If the fill is the whole change, there is nothing to credit and the
+ * sentence says so instead of claiming "marked 0 cells".
+ */
+function marksApplied(t: Copy, status: StatusView, delta: MarkDelta | null, mode: MarkingMode): string {
+  const resting = interpolate(t.announce.mode, { mode: modeLabel(t, mode) })
+  if (delta === null || (delta.cells === 0 && delta.revealedLines === 0)) {
+    return resting
+  }
+  if (delta.cells === 0) {
+    return interpolate(delta.revealedLines === 1 ? t.announce.revealOnlyOne : t.announce.revealOnlyMany, {
+      lines: delta.revealedLines,
+      cells: delta.revealedCells,
+      score: status.score.current,
+    })
+  }
+  const marked = interpolate(t.announce.marksApplied, {
+    cells: delta.cells,
+    assertion: delta.assertion === 'mine' ? t.announce.assertions.mine : t.announce.assertions.blank,
+    wrong: delta.wrong,
+    score: status.score.current,
+  })
+  if (delta.revealedLines === 0) {
+    return marked
+  }
+  const note = interpolate(
+    delta.revealedLines === 1 ? t.announce.revealNoteOne : t.announce.revealNoteMany,
+    { lines: delta.revealedLines, cells: delta.revealedCells },
+  )
+  return `${marked} ${note}`
+}
+
 function modeLabel(t: Copy, mode: MarkingMode): string {
   switch (mode) {
     case 'mine':
@@ -229,7 +288,6 @@ function modeLabel(t: Copy, mode: MarkingMode): string {
       return t.toolbar.modes.mine
   }
 }
-
 function zoomLabel(t: Copy, zoom: ZoomStep): string {
   switch (zoom) {
     case 'fit':

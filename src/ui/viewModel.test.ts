@@ -338,10 +338,31 @@ describe('projectSnapshot lifecycle', () => {
 
   it('passes the last event through when the store supplies one', () => {
     const snapshot = projectSnapshot(won, {
-      lastEvent: { transition: 'round-won', reason: null },
+      lastEvent: { transition: 'round-won', reason: null, autoRevealedLines: 0, autoRevealedCells: 0 },
     })
-    expect(snapshot.lastEvent).toEqual({ transition: 'round-won', reason: null })
+    expect(snapshot.lastEvent).toEqual({
+      transition: 'round-won',
+      reason: null,
+      autoRevealedLines: 0,
+      autoRevealedCells: 0,
+    })
     expect(projectSnapshot(won).lastEvent).toBeNull()
+  })
+
+  it('carries the auto-reveal counts into the snapshot', () => {
+    // The region subtracts the revealed cells from the mark diff it computes
+    // itself, so the counts have to survive the projection: a snapshot that
+    // dropped them would credit the game-written cells to the player.
+    const snapshot = projectSnapshot(playing, {
+      lastEvent: { transition: 'marks-applied', reason: null, autoRevealedLines: 2, autoRevealedCells: 2 },
+    })
+    expect(snapshot.lastEvent).toEqual({
+      transition: 'marks-applied',
+      reason: null,
+      autoRevealedLines: 2,
+      autoRevealedCells: 2,
+    })
+    expect(Object.isFrozen(snapshot.lastEvent)).toBe(true)
   })
 })
 
