@@ -1,0 +1,729 @@
+/* =============================================================================
+   Minegram — overlays and readouts
+   Everything the app says: the status line, the round banner, the failure
+   report, the help dialog, the legend, the drag preview chip, and the live
+   readouts in the header.
+
+   Division of labour: layout.css draws the header's box and the two panels'
+   surfaces (and the legend's, because it is a panel and a surface is a surface);
+   this file draws what those surfaces CONTAIN. forms.css owns the control box and
+   the toolbar, so the buttons in this file only add a tone.
+
+   Six decisions worth stating:
+
+   * A tone is chosen once and spent three times. The status strip, the round
+     banner, the failure report and the score all pick a hue in ONE rule keyed on
+     one attribute, then spend it on a leading rule, a title and a fill. Adding a
+     state means adding a hue, not restyling a component.
+   * The status strip is a flex row that wraps, not a grid. Its four children are
+     in reading order and one of them is conditional, and a grid would need a
+     template for every combination of which ones are present. The detail line
+     takes `flex-basis: 100%` and is therefore always on its own line.
+   * The legend is not allowed to lie. Every swatch reuses the board's own
+     classes and attributes, so a legend entry IS a claim about a selector — which
+     means the legend has to set up the two things the board gets for free from
+     its own context: `--cell` (the board gets it inline, the legend does not) and
+     the tape's orientation (the board gets it from an attribute, the legend's
+     tape has none). Both are supplied here, with the gap reported.
+   * The help table's cells carry no classes, so they are not styled: no cell
+     rules, no `th`/`td` selectors, no breach of the ceiling. The table gets its
+     rhythm from `border-spacing` and its ink from the table, and the missing
+     hook is reported instead of worked around.
+   * The reveal of the win/loss banner does not animate. §7.3's six rises are spent
+     on the load choreography, and a banner that animates in while the player is
+     reading it is motion pointed at the wrong thing.
+   * Nothing in this file invents a keyframe that another file also declares. The
+     blink is `mg-blink` from clues.css, reused here so a working rail badge and a
+     working chip are the same motion at the same cadence.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   1. The status line
+   The app's only live region. A label in the tone, a caret while the generator
+   works, the sentence, and — only while generating — the note about where the
+   work happens.
+   -------------------------------------------------------------------------- */
+.mg-status {
+  --tone: var(--rule);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background-color: var(--surface-1);
+  border: var(--rule-w) solid var(--rule);
+  border-inline-start: var(--rule-w-heavy) solid var(--tone);
+  /* The other three corners are sharp: a live region is a label on the edge of a
+     panel, not a card, and squaring three corners says "this is a strip cut out
+     of the page" without a single extra declaration of intent. */
+  border-start-start-radius: var(--radius-sharp);
+  border-end-start-radius: var(--radius-sharp);
+}
+
+.mg-status[data-status='generating'] {
+  --tone: var(--unknown);
+}
+
+.mg-status[data-status='won'] {
+  --tone: var(--confirm);
+}
+
+.mg-status[data-status='lost'],
+.mg-status[data-status='failed'] {
+  /* One hue for "this attempt is over", won or lost: the report below, and the
+     round banner, are what distinguish a wrong claim from a settings pair that
+     can never generate. The status line's job is to say the round stopped. */
+  --tone: var(--accent);
+}
+
+.mg-status__state {
+  flex: none;
+  color: var(--tone);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  letter-spacing: var(--track-micro);
+  text-transform: uppercase;
+}
+
+.mg-status__caret {
+  flex: none;
+  color: var(--unknown);
+  font-family: var(--font-mono);
+  animation: mg-blink var(--caret-duration) var(--caret-steps) infinite;
+}
+
+.mg-status__message {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  color: var(--ink);
+}
+
+.mg-status__detail {
+  /* Its own line, always: it is a paragraph about the background worker and it
+     must never share a line with the sentence it explains. */
+  flex-basis: 100%;
+  color: var(--ink-3);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+/* The generation sweep is gated from here, not from board.css. The stage's
+   pseudo-element reads `--gen-edge`, and a custom property is the only thing that
+   can reach a SIBLING's pseudo-element without a two-level descendant chain.
+   An empty string is a valid `content`; `none` would paint nothing, and the
+   pseudo-element must not exist at all when the board is not printing. */
+.mg-status[data-status='generating'] ~ .mg-board-surface {
+  --gen-edge: '';
+}
+
+/* -----------------------------------------------------------------------------
+   2. The round banner
+   The one thing that says what just happened. It carries the same `data-status`
+   the status line does, so the two cannot disagree about the round.
+   -------------------------------------------------------------------------- */
+.mg-round-banner[data-round-state='none'] {
+  /* The container is always rendered; with no state there is nothing in it, and
+     an empty panel in the grid would be a gap the player has to look past. */
+  display: none;
+}
+
+.mg-round-banner {
+  display: grid;
+  padding: var(--sp-4);
+  background-color: var(--surface-1);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-panel);
+}
+
+.mg-round-banner__body {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-2);
+}
+
+.mg-round-banner__body[data-tone='won'] {
+  --banner-tone: var(--confirm);
+  --banner-ink: var(--surface-1);
+}
+
+.mg-round-banner__body[data-tone='lost'] {
+  --banner-tone: var(--accent);
+  --banner-ink: var(--accent-ink);
+}
+
+.mg-round-banner__body[data-tone='resume'] {
+  --banner-tone: var(--ink-2);
+  --banner-ink: var(--surface-1);
+}
+
+.mg-round-banner__title {
+  font-family: var(--font-display);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+  color: var(--banner-tone, var(--ink));
+}
+
+.mg-round-banner__text {
+  color: var(--ink-2);
+}
+
+.mg-round-banner__text[data-tone='muted'] {
+  color: var(--ink-3);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+.mg-round-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+/* The one control the whole game asks you to press. It is the only button in the
+   app that is 44px tall on a fine pointer, and it earns that: it is the answer
+   to a round, not a utility. */
+.mg-round-banner__primary {
+  min-block-size: var(--target-touch);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  background-color: var(--banner-tone);
+  border-color: var(--banner-tone);
+  color: var(--banner-ink);
+}
+
+@media (hover: hover) {
+  .mg-round-banner__primary:hover {
+    background-color: var(--banner-tone);
+    border-color: var(--banner-tone);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   3. The drag preview chip
+   A readout, not an overlay: it sits in the board surface's grid under the board,
+   so it cannot intercept a pointer that is painting, and it never covers a cell.
+   It is always present, because the first thing a player needs to learn about a
+   drag is that there is a place its cost is shown.
+   -------------------------------------------------------------------------- */
+.mg-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  /* Centred, not flush end: the board above it is centred, and a live
+     "3 cells - 1 risk" line pinned to the far corner reads as a different
+     component from the thing it is describing. In flow, never absolute, so it
+     can never intercept the pointer that is still painting. */
+  justify-content: center;
+  gap: var(--sp-1) var(--sp-2);
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.mg-preview[data-live='true'] {
+  color: var(--ink-2);
+}
+
+/* This drag ends the round. The banner is the token built for exactly this: a
+   solid accent chip, in the app's own "a wrong mark" hue. */
+.mg-preview[data-ends='true'] .mg-preview__badge {
+  padding: 0 var(--sp-1);
+  background-color: var(--badge-bg-preview);
+  color: var(--accent-ink);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  line-height: var(--lh-pill);
+}
+
+.mg-preview__text {
+  /* The sentence is a localised string, so the digits inside it cannot be styled
+     on their own. Tabular figures are the way to stop the chip twitching as the
+     count climbs from one cell to thirty. */
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.mg-preview__cap {
+  color: var(--unknown);
+}
+
+/* -----------------------------------------------------------------------------
+   4. The failure report
+   An assertive live region, so it appears already complete. The remedies are
+   numbered by a counter rather than by a list marker, because base.css removed
+   the markers to style them here.
+   -------------------------------------------------------------------------- */
+.mg-failure {
+  --tone: var(--rule);
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  background-color: var(--surface-1);
+  border: var(--rule-w) solid var(--rule);
+  border-inline-start: var(--rule-w-heavy) solid var(--tone);
+  border-start-start-radius: var(--radius-panel);
+  border-end-start-radius: var(--radius-panel);
+}
+
+.mg-failure[data-kind='deterministic'] {
+  --tone: var(--accent);
+}
+
+.mg-failure[data-kind='retryable'] {
+  --tone: var(--unknown);
+}
+
+.mg-failure[data-kind='neutral'] {
+  --tone: var(--ink-2);
+}
+
+.mg-failure__headline {
+  font-family: var(--font-display);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+  color: var(--ink);
+}
+
+.mg-failure__explanation {
+  color: var(--ink-2);
+}
+
+.mg-failure__remedies {
+  display: grid;
+  gap: var(--sp-1);
+  counter-reset: mg-remedy;
+}
+
+.mg-failure__remedy {
+  display: grid;
+  grid-template-columns: var(--badge-size) minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: center;
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  counter-increment: mg-remedy;
+}
+
+/* The number is a badge, not a bullet: it is a step in a procedure, and it is
+   printed in the tone so a remedy list can be scanned without reading it. */
+.mg-failure__remedy::before {
+  content: counter(mg-remedy) '.';
+  display: grid;
+  place-items: center;
+  inline-size: var(--badge-size);
+  block-size: var(--badge-size);
+  border-radius: var(--radius-pill);
+  background-color: var(--tone);
+  color: var(--surface-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+
+.mg-failure__report {
+  background-color: var(--surface-2);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-sharp);
+}
+
+.mg-failure__report-summary {
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Open, the summary is the table's header rule, not a card of its own. */
+.mg-failure__report[open] .mg-failure__report-summary {
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+  border-block-end: none;
+}
+
+.mg-failure__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.mg-failure__copied {
+  align-self: center;
+  color: var(--confirm);
+  font-size: var(--fs-micro);
+}
+
+/* -----------------------------------------------------------------------------
+   5. The report table — a diagnostic dump, so mono, small and ruled
+   -------------------------------------------------------------------------- */
+.mg-report {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+}
+
+.mg-report__caption {
+  padding-block: var(--sp-2);
+  color: var(--ink-3);
+  text-align: start;
+}
+
+.mg-report__row {
+  border-block-start: var(--rule-w) solid var(--rule);
+}
+
+.mg-report__label {
+  padding-block: var(--sp-1);
+  padding-inline-end: var(--sp-3);
+  color: var(--ink-3);
+  font-weight: normal;
+  text-align: start;
+  white-space: nowrap;
+}
+
+.mg-report__value {
+  padding-block: var(--sp-1);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* -----------------------------------------------------------------------------
+   6. The help dialog
+   A native modal dialog, so the top layer and the focus trap are the platform's
+   job. What is left is a sheet wide enough for a four-column table and no wider.
+   -------------------------------------------------------------------------- */
+.mg-help {
+  /* No token is a dialog measure; 44rem is the widest a four-column action table
+     stays readable, and the calc keeps it inside a narrow phone. */
+  max-inline-size: min(calc(100% - var(--sp-5)), 44rem);
+  padding: var(--sp-5);
+  background-color: var(--surface-2);
+  color: var(--ink);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-dialog);
+  /* A no-op for `showModal()` (the top layer outranks every z-index) and the
+     correct answer for `show()`, which does not use the top layer. */
+  z-index: var(--z-dialog);
+}
+
+.mg-help::backdrop {
+  /* tokens.css has no scrim, and a scrim is a colour at a percentage — so it is
+     composed from the page colour the same way the washes are. */
+  background-color: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+
+.mg-help__title {
+  padding-block-end: var(--sp-3);
+  font-family: var(--font-display);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+  color: var(--ink);
+}
+
+.mg-help__section {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.mg-help__section:not(:first-of-type) {
+  margin-block-start: var(--sp-4);
+  padding-block-start: var(--sp-3);
+  border-block-start: var(--rule-w) solid var(--rule);
+}
+
+.mg-help__section-title {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.mg-help__body {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+.mg-help__caption {
+  padding-block-end: var(--sp-2);
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+}
+
+.mg-help__table {
+  inline-size: 100%;
+  /* `separate` plus a vertical `border-spacing` is the only way to give cells
+     vertical rhythm without a rule that names a cell element. */
+  border-collapse: separate;
+  border-spacing: 0 var(--sp-2);
+  margin-block: var(--sp-2);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+.mg-help__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-block-start: var(--sp-4);
+  padding-block-start: var(--sp-3);
+  border-block-start: var(--rule-w) solid var(--rule);
+}
+
+/* -----------------------------------------------------------------------------
+   7. The legend
+   Twelve swatches, each rendered with the board's own selector, so the list
+   cannot drift from the stylesheet. The swatch has to supply the two things the
+   board gets from its own surroundings: `--cell` (set inline on the stage, and
+   the legend is not inside a stage) and the tape's orientation.
+   -------------------------------------------------------------------------- */
+.mg-legend__lead {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+.mg-legend__list {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.mg-legend__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0 var(--sp-2);
+}
+
+.mg-legend__name {
+  grid-column: 2;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.mg-legend__cue {
+  grid-column: 2;
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+}
+
+.mg-legend__swatch {
+  /* `--cell` here is not decoration: board.css derives the hatch pitch from it, so
+     a swatch without it would resolve the hatch to its initial value and the two
+     wrong-mark entries would show a blank square. The board gets it inline; this
+     is the one place that has to supply it by hand. */
+  --cell: var(--cell-s);
+  position: relative; /* the tape inside is absolutely positioned */
+  display: grid;
+  place-items: center;
+  inline-size: var(--cell-s);
+  block-size: var(--cell-s);
+}
+
+/* The bare swatch — the tape container, and the default entry — is a cell with
+   nothing on it, so it is drawn as one. `:not()` is what keeps the board's own
+   cells out of this rule: they bring their own surface and their own border. */
+.mg-legend__swatch:not(.mg-cell):not(.mg-rail-cell) {
+  background-color: var(--surface-3);
+  border: var(--rule-w) solid var(--rule-cell);
+  border-radius: var(--radius-sharp);
+}
+
+/* The rail swatches have no `data-line`, so clues.css's two orientation rules —
+   the ones that spend `--clue-edge` on the correct side — cannot match. A square
+   has no sides to be wrong about, so one rule spends it. */
+.mg-legend__swatch.mg-rail-cell {
+  border-inline-end: var(--clue-edge);
+}
+
+/* The revealed entry teaches the tint and the edge that board.css draws across a
+   whole row. A single swatch cannot inherit from a row that is not there. */
+.mg-legend__swatch[data-revealed='true'] {
+  background-color: var(--line-reveal-wash);
+  box-shadow: inset var(--line-edge-width) 0 0 var(--line-edge-color);
+}
+
+/* Same reason: the legend's tapes carry no `data-orientation`, so board.css's
+   two orientation rules cannot match and the swatch would print nothing at all. */
+.mg-legend__swatch .mg-run-tape {
+  inset-block-end: 0;
+  inset-inline: 0;
+  border-block-end: var(--clue-run-underline);
+}
+
+.mg-legend__swatch .mg-run-tape[data-run='complete'] {
+  border-block-end: var(--clue-run-underline-complete);
+}
+
+/* -----------------------------------------------------------------------------
+   8. The header's readouts — the chip row and the score
+   The banner's frame is layout.css; these are the two things inside it that
+   change, so they are styled here, next to every other thing that reports state.
+   -------------------------------------------------------------------------- */
+.mg-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1);
+  min-inline-size: 0;
+}
+
+.mg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  background-color: var(--surface-2);
+  color: var(--ink-2);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-pill);
+  line-height: var(--lh-pill);
+  transition:
+    color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
+}
+
+.mg-chip[data-chip='round'] {
+  /* The round is the fact the whole screen is about, so it is the one chip at
+     full ink, and its number is tabular so a two-digit round does not shift the
+     chip's neighbours as it ticks over. */
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mg-chip[data-chip='next-round'] {
+  /* Provisional: no fill, muted ink. The round being played is already filled. */
+  background-color: transparent;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.mg-chip[data-chip='read-only'] {
+  background-color: transparent;
+  color: var(--ink-3);
+}
+
+.mg-chip[data-chip='generating'] {
+  color: var(--unknown);
+  border-color: var(--unknown);
+}
+
+/* The same blink as the status caret and the rail badges, from the same
+   keyframes, so "still working" is one motion in three places. */
+.mg-chip[data-busy='true'] {
+  animation: mg-blink var(--caret-duration) var(--caret-steps) infinite;
+}
+
+.mg-chip[data-difficulty='absent'] {
+  color: var(--ink-3);
+}
+
+.mg-chip[data-difficulty='unknown'] {
+  color: var(--unknown);
+}
+
+.mg-chip[data-difficulty='known'] {
+  /* A band the engine actually proved. It is the only chip that may claim weight. */
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.mg-score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-inline-size: 0;
+}
+
+.mg-score__label {
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  letter-spacing: var(--track-micro);
+  text-transform: uppercase;
+}
+
+/* The numeral is the signal; the pips only reinforce it, which is why the numeral
+   is a step larger and the pips are a step smaller. */
+.mg-score__value {
+  color: var(--ink);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.mg-score__pips {
+  display: inline-flex;
+  gap: var(--sp-1);
+}
+
+.mg-score__pip {
+  inline-size: var(--sp-3);
+  block-size: var(--sp-1);
+  background-color: var(--confirm);
+  border: var(--rule-w) solid var(--confirm);
+  border-radius: var(--radius-pill);
+}
+
+.mg-score__pip[data-spent] {
+  background-color: var(--surface-1);
+  border-color: var(--rule);
+}
+
+.mg-score__spent {
+  color: var(--accent);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+}
+
+/* §7.3's 240ms. A pip that has just been spent flashes once in the hue of the
+   mistake that emptied it and then settles, so a cost that is otherwise silent
+   (the status line is a `polite` region and a dropped point is not an event it
+   announces) has one moment of its own. One-shot: the pip mounts spent, so the
+   animation runs exactly once per point lost and never repeats. */
+@keyframes mg-spend {
+  from {
+    background-color: var(--accent);
+  }
+
+  to {
+    background-color: var(--surface-1);
+  }
+}
+
+.mg-score__pip[data-spent] {
+  animation: mg-spend var(--dur-slow) var(--ease-out) both;
+}
+
+/* -----------------------------------------------------------------------------
+   9. Reduced motion, this file's own
+   The sweep is NOT neutralised here: board.css owns it, and it already satisfies
+   §7.3's requirement by stopping the animation, which leaves the painted
+   gradient exactly where the moving version started — a static dashed rule. A
+   second rule here would have to out-specify board.css to do the same thing.
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .mg-status__caret,
+  .mg-chip[data-busy='true'],
+  .mg-score__pip[data-spent] {
+    animation: none;
+  }
+
+  .mg-chip,
+  .mg-preview {
+    transition: none;
+  }
+}

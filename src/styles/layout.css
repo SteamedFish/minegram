@@ -1,0 +1,373 @@
+/* =============================================================================
+   Minegram — layout
+   The page as a grid: banner / left aside / main / right aside / footer, the
+   three surface levels of §1.1, the two responsive collapses, and the single
+   orchestrated load reveal.
+
+   Ownership notes (all three are decisions, not accidents):
+
+   * The region order is declared TWICE on purpose. `grid-template-areas` makes
+     the visual order explicit and lets a breakpoint re-flow the page without
+     touching the DOM, and the sibling count assertion is the cheap guard that
+     nobody later inserts a sixth region and quietly loses a track. The
+     assertion lives in the comment because the selector itself may not exist:
+     see `.mg-app > :nth-child(5)`.
+   * The left aside's responsive collapse is HYDRATION, not CSS. `App.tsx` owns
+     `settingsExpanded` and sets `inert` on the aside, and this file only
+     decides where the panel *sits* when it is open. That is the only split
+     that keeps one truth: at 32rem and at 1400px the same open panel is a full
+     row and a column respectively, with no `matchMedia` anywhere.
+   * The load reveal sets its own `--i` per region rather than taking an inline
+     style, so the stagger is readable in this file and React stays free of
+     presentation.
+
+   Every value below is a token from tokens.css. The two breakpoint literals
+   (48rem, 74rem) are the documented accepted cost of plain CSS: custom
+   properties cannot be used in a media query, and the comment in tokens.css
+   says so at the place a future reader will look.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   1. The page grid
+   -------------------------------------------------------------------------- */
+.mg-app {
+  display: grid;
+  grid-template-columns: minmax(0, 20rem) minmax(0, 1fr) minmax(0, 20rem);
+  grid-template-areas:
+    'banner banner banner'
+    'left   main   right'
+    'footer footer footer';
+  gap: var(--sp-5);
+  align-items: start;
+  min-block-size: 100vh;
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+}
+
+/* The guard: five regions, in this order. `:nth-child(5)` cannot match a sixth
+   region without also matching this rule, so the layout stops working loudly
+   rather than growing a sixth track nobody named. */
+.mg-app > :nth-child(5) {
+  grid-area: footer;
+}
+
+.mg-app > :nth-child(1) {
+  grid-area: banner;
+}
+
+.mg-app > :nth-child(2) {
+  grid-area: left;
+}
+
+.mg-app > :nth-child(3) {
+  grid-area: main;
+}
+
+.mg-app > :nth-child(4) {
+  grid-area: right;
+}
+
+.mg-main {
+  display: grid;
+  gap: var(--sp-3);
+  /* Grid and flex items default to `min-width: auto`, which would let a 30x30
+     board's intrinsic width push the whole page into a horizontal scrollbar.
+     The board scrolls inside its own container instead (§1.7). */
+  min-inline-size: 0;
+}
+
+/* -----------------------------------------------------------------------------
+   2. The banner — surface level 2, sticky
+   -------------------------------------------------------------------------- */
+.mg-banner {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-banner);
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  /* Opaque, not translucent: a sticky header over a scrolling board shows the
+     board through it if the panel is semi-transparent, and a 12%-alpha surface
+     would need a colour-mix token this layer does not own. An opaque sheet with
+     a hairline edge and the panel shadow is the honest version of "a sheet laid
+     on the paper". */
+  background-color: var(--surface-1);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+  /* The banner is sticky and the toolbar is not, so their edges must not share a
+     transition or the one that moves gets a trailing ghost. */
+}
+
+.mg-banner__wordmark {
+  display: grid;
+  gap: var(--sp-1);
+}
+
+.mg-banner__title {
+  /* The wordmark is the one display-size element on the page. Small caps rather
+     than a bolder weight: the stack has no heavy serif and `font-synthesis: none`
+     means a synthesised bold would look wrong. */
+  font-size: var(--fs-display);
+  font-variant-caps: small-caps;
+  letter-spacing: var(--track-display);
+  color: var(--ink);
+}
+
+.mg-banner__tagline {
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  letter-spacing: var(--track-micro);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.mg-banner__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  justify-content: space-between;
+}
+
+.mg-banner__settings {
+  flex: none;
+  padding: var(--sp-1) var(--sp-3);
+  font-family: var(--font-body);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-pill);
+  letter-spacing: var(--track-micro);
+  text-transform: uppercase;
+  color: var(--ink-2);
+  background-color: transparent;
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
+}
+
+/* The pill is a ghost until it is pressed, and pressed is a state the banner
+   cannot infer from its own layout — the panel it opens is in another grid area.
+   `aria-expanded` is the only signal there is, so it gets a filled look rather
+   than a colour shift nobody would notice at a glance. It is written AFTER the
+   hover block on purpose: both weigh the same, and a momentary hover must not
+   un-press a pill that is still open. */
+@media (hover: hover) {
+  .mg-banner__settings:hover {
+    color: var(--ink);
+    border-color: var(--rule-hc);
+  }
+}
+
+.mg-banner__settings[aria-expanded='true'] {
+  color: var(--accent-ink);
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* -----------------------------------------------------------------------------
+   3. Surfaces
+   -------------------------------------------------------------------------- */
+.mg-side {
+  display: grid;
+  gap: var(--sp-4);
+  align-content: start;
+  min-inline-size: 0;
+}
+
+/* One surface definition for both asides' panels. The legend is a panel — same
+   padding, same border, same shadow, same title — and a second copy of this rule
+   in the file that draws the legend's contents would be a second surface to keep
+   in step with the first. */
+.mg-panel,
+.mg-legend {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  background-color: var(--surface-2);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.mg-panel__title,
+.mg-legend__title {
+  font-size: var(--fs-lead);
+  color: var(--ink);
+}
+
+/* -----------------------------------------------------------------------------
+   4. The footer
+   -------------------------------------------------------------------------- */
+.mg-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-5);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  letter-spacing: var(--track-micro);
+  color: var(--ink-3);
+  background-color: var(--surface-1);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-panel);
+}
+
+.mg-footer__seed,
+.mg-footer__control {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.mg-footer__seed-label,
+.mg-footer__control-label {
+  text-transform: uppercase;
+  letter-spacing: var(--track-micro);
+  color: var(--ink-3);
+}
+
+/* An authored seed is a decision the player made and can retype; a derived one
+   is the app's own choice. Same string, different claim on it. */
+.mg-footer__seed-value {
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+}
+
+.mg-footer__seed[data-seed='authored'] .mg-footer__seed-value {
+  color: var(--ink-2);
+}
+
+/* -----------------------------------------------------------------------------
+   5. The load reveal — §7.3's one orchestrated moment
+   Six regions, 60ms apart, 480ms each. `--i` is the per-region index and the
+   delay is derived from it, so there is exactly one number to change if the
+   choreography needs retuning, and the regions are staggered by a token rather
+   than by six hand-written delays.
+   -------------------------------------------------------------------------- */
+@keyframes mg-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--sp-2));
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Six regions, and only six: the header, the settings rail, the status line, the
+   board, the legend, the footer. `main` itself is deliberately NOT animated — it
+   is a container, and animating it would double every animation inside it, so
+   the two rules below name its two stable children instead. The board arrives
+   after the status line that explains it, which is the whole point of a stagger:
+   the eye is told what it is looking at before it is asked to look at it.
+
+   `.mg-round-banner` and `.mg-failure` are absent from both lists on purpose.
+   They are conditional regions, they appear at the exact moment the player is
+   reading something else, and §7.3's budget of six is spent. */
+.mg-banner,
+.mg-side--left,
+.mg-side--right,
+.mg-footer {
+  animation: mg-rise var(--dur-reveal) var(--ease-standard) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+}
+
+.mg-main > .mg-status,
+.mg-main > .mg-board-surface {
+  animation: mg-rise var(--dur-reveal) var(--ease-standard) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+}
+
+.mg-banner {
+  --i: 0;
+}
+
+.mg-side--left {
+  --i: 1;
+}
+
+.mg-main > .mg-status {
+  --i: 2;
+}
+
+.mg-main > .mg-board-surface {
+  --i: 3;
+}
+
+.mg-side--right {
+  --i: 4;
+}
+
+.mg-footer {
+  --i: 5;
+}
+
+/* -----------------------------------------------------------------------------
+   6. The two collapses
+   -------------------------------------------------------------------------- */
+@media (width < 74rem) {
+  /* Under 74rem the right aside moves below the board as a two-up grid, and the
+     left aside becomes a top sheet. The board therefore always gets the full
+     width of `main`, which is the whole reason the sidebars collapse here and
+     not at the smaller breakpoint. */
+  .mg-app {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      'banner banner'
+      'left   left'
+      'main   main'
+      'right  right'
+      'footer footer';
+  }
+
+  .mg-side--right {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+    gap: var(--sp-4);
+  }
+}
+
+@media (width < 48rem) {
+  /* One column. Everything else about the page is unchanged, because the board
+     is the only element that must never be squeezed below `--cell-min` and it
+     owns its own scroller. */
+  .mg-app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'banner'
+      'left'
+      'main'
+      'right'
+      'footer';
+    gap: var(--sp-3);
+    padding: var(--sp-2) var(--sp-2) var(--sp-4);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   7. Reduced motion, this file's own
+   base.css already neutralises every duration in the document with
+   `!important`; this block exists so the reveal does not even hold the first
+   frame while its delay runs. A page that arrives invisible and then has to
+   wait out a 300ms delay is worse than a page that never animated.
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .mg-banner,
+  .mg-side--left,
+  .mg-side--right,
+  .mg-footer,
+  .mg-main > .mg-status,
+  .mg-main > .mg-board-surface {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .mg-banner__settings {
+    transition: none;
+  }
+}

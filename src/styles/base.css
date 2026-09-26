@@ -1,0 +1,430 @@
+/* =============================================================================
+   Minegram — base layer
+   The reset, the page's own surface, default typography, focus, selection, the
+   board scroller, and the three preference blocks (reduced motion, more
+   contrast, forced colours) plus the coarse-pointer target floor.
+
+   Scope discipline (§7.2): this file owns the document, and it reaches a
+   component class in exactly three places — the `:focus-visible` cell rule,
+   the board scroller, and the forced-colours rules — because those cannot be
+   written by the component's own stylesheet without losing to a later rule or
+   duplicating a decision. Everything else about the board, the rails, the forms
+   and the overlays belongs to layout.css, board.css, clues.css, forms.css and
+   overlays.css. No ID selectors anywhere, and no descendant chain deeper than
+   two levels.
+
+   LOAD ORDER: tokens.css first, then this file, then the component sheets.
+   The `:root` remap in `prefers-contrast: more` is written as `html:root` so it
+   survives either order, but `prefers-reduced-motion` genuinely has to come
+   last, so the aggregator must not import anything after this file that sets a
+   duration.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   1. Reset — small on purpose. A CSS reset earns its place by removing
+      something the design actually uses; everything here is a decision.
+   -------------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Pinning text-size-adjust stops iOS from inflating the numerals in the rails,
+     which would break the cell grid. The resize handle for a 30x30 board is
+     browser zoom: 200% takes a 24px cell to 48px, and panning is what the board
+     is for. Both are named in the README rather than hidden in a gesture. */
+  min-block-size: 100%;
+  -webkit-text-size-adjust: 100%; /* no iOS inflation of the numerals */
+  text-size-adjust: 100%;
+}
+
+body,
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+blockquote,
+dl,
+dd,
+ol,
+ul {
+  margin: 0;
+}
+
+ol[class],
+ul[class] {
+  padding: 0;
+  list-style: none;
+}
+
+body {
+  min-inline-size: 320px; /* the narrowest phone in portrait */
+  min-block-size: 100%;
+  background-color: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-synthesis: none; /* never fake a weight or a slope the stack lacks */
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-wrap: break-word; /* a German clue run must break, not overflow */
+}
+
+/* The page's own surface: one generated layer for the weave, one for the corner
+   falloff. `z-index: -1` puts both above the root canvas and below every
+   element, which is why no component has to create a stacking anchor for it.
+   Fixed, so the paper does not swim under a scrolled board. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(
+      var(--grain-angle),
+      var(--grain-line-a) 0 1px,
+      transparent 1px var(--grain-gap)
+    ),
+    repeating-linear-gradient(
+      var(--grain-angle-2),
+      var(--grain-line-b) 0 1px,
+      transparent 1px var(--grain-gap-2)
+    ),
+    radial-gradient(120% 90% at 50% 0%, transparent 55%, var(--grain-vignette) 100%);
+  mix-blend-mode: var(--grain-blend);
+  opacity: var(--grain-opacity);
+}
+
+/* -----------------------------------------------------------------------------
+   2. Default typography
+   Only the things the design fixes for every element. Sizes live in tokens, so
+   a component that needs a heading reads --fs-lead and gets it.
+   -------------------------------------------------------------------------- */
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: var(--lh-lead);
+  letter-spacing: var(--track-display);
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+strong,
+b {
+  font-weight: 650; /* between 600 and 700: present at 400, 500 and 700 */
+}
+
+small {
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+
+/* Every number in this app is a tabulation: rail counts, score, dimensions,
+   seed, the status strip. Monospace with tabular figures so digits do not
+   jitter as they change. */
+.num,
+output,
+time,
+kbd {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+svg {
+  display: block;
+  flex: none;
+}
+
+img,
+picture,
+video,
+canvas {
+  display: block;
+  max-inline-size: 100%;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+button {
+  text-transform: none;
+}
+
+fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0; /* a flex fieldset must not refuse to shrink */
+}
+
+table {
+  border-collapse: collapse;
+}
+
+/* -----------------------------------------------------------------------------
+   3. Focus
+   Two channels, so the ring survives a borderless element: a 2px offset
+   outline in the focus hue, plus a 1px halo in the page colour under it, which
+   is what keeps a ring legible on a panel whose own border is the same hue as
+   the ring. The offset is 2px rather than 4px so a ring on the 24px rail cell
+   still leaves 8px of the cell's content visible beside it.
+   -------------------------------------------------------------------------- */
+:focus-visible {
+  outline: var(--rule-w-heavy) solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--bg);
+}
+
+/* The roving index lands on cells, where an offset outline would land on the
+   neighbour it is describing. Inset, with the same halo, plus `outline-offset:
+   0` so the ring cannot be clipped by the board's `overflow: hidden`. */
+.mg-cell:focus-visible {
+  outline: var(--rule-w-heavy) solid var(--focus);
+  outline-offset: 0;
+  box-shadow: 0 0 0 1px var(--bg);
+}
+
+/* -----------------------------------------------------------------------------
+   4. Selection and the board scroller
+   -------------------------------------------------------------------------- */
+::selection {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* The board scroller, the one scroll container in the app. The default
+   scrollbar is a floating overlay on some platforms and a 15px inset on
+   others; `scrollbar-gutter: stable` reserves the track so the board does not
+   shift 15px when a 30x30 board becomes scrollable. */
+.mg-board-scroll {
+  overflow: auto;
+  overscroll-behavior-x: contain; /* a 30x30 swipe must not chain to the page */
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--rule-cell) var(--surface-1);
+  scrollbar-width: thin;
+}
+
+.mg-board-scroll::-webkit-scrollbar {
+  inline-size: 12px;
+  block-size: 12px;
+}
+
+.mg-board-scroll::-webkit-scrollbar-track {
+  background: var(--surface-1);
+  border: var(--rule-w) solid var(--rule);
+}
+
+.mg-board-scroll::-webkit-scrollbar-thumb {
+  background: var(--rule-cell);
+  border: 3px solid var(--surface-1); /* a keyline that keeps the thumb legible
+                                         against a 12px track */
+  border-radius: var(--radius-pill);
+}
+
+.mg-board-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
+}
+
+/* -----------------------------------------------------------------------------
+   5. Reduced motion — the one block that neutralises the document, per §7.3.
+   It comes last on purpose: identical selectors, so source order wins, and no
+   other rule in the app may follow it and re-enable a duration. Later
+   stylesheets must not re-introduce animation without re-checking this block.
+   The `!important`s are the documented exception: a component's own shorthand
+   would otherwise win on specificity and silently defeat the preference.
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* The caret and the travelling dashed border cannot be a motion channel when
+     motion is off, so the words carry the state instead. */
+  .mg-generating,
+  .mg-revealed-line {
+    animation: none !important;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   6. More contrast — `prefers-contrast: more`
+   The default hairline is deliberately quiet — 1.74:1 against a cell in light,
+   1.47:1 in dark — which is a print convention and a real risk for anyone who
+   needs the grid to read as a grid. So the remap is on the *tokens*, not on the
+   states: every rule in the app that asks for "a hairline" gets a hairline that
+   is 3:1, and every rule that asks for "a strong rule" gets more, with no
+   specificity fight against the state bindings in tokens.css. `html:root` rather
+   than `:root` only so this remap wins over tokens.css whatever the import order.
+     --rule-cell-hc  3.01:1 on a cell, in both palettes
+     --rule-hc       3.04:1 light, 3.01:1 dark
+   No `--focus-hc`: the focus hue is already 6.56:1 in light and 5.95:1 in dark,
+   so there is no contrast left to win — the ring gets thicker here, not louder.
+   The wrong mark loses nothing here, and nothing is relying on the hatch: a
+   wrong cell is already a hollow glyph *and* a dashed border, and the hatch is
+   the third channel, not the first.
+   -------------------------------------------------------------------------- */
+@media (prefers-contrast: more) {
+  html:root {
+    --rule: var(--rule-hc);
+    --rule-cell: var(--rule-cell-hc);
+    --rule-w: 1.5px; /* every resting hairline thickens, not just the cells */
+    --rule-w-strong: 2px; /* …and the wrong mark thickens with it */
+    --rule-w-heavy: 2.5px; /* the preview outline keeps its lead over the grid */
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   7. Forced colours — `@media (forced-colors: active)`
+   The UA forces the author values of `color`, `fill`, `border-color`,
+   `outline-color`, `background-color` and `column-rule-color` to its own
+   palette, and drops `box-shadow` entirely, so this block is not about picking
+   different colours. It is about which meaning survives when the author colour
+   of a hairline, a glyph and a wash all collapse to one value. Two escapes carry
+   the whole block: a `system-color` keyword is honoured as authored, and every
+   property outside the forced list is left exactly as written. Three jobs:
+     1. give every cell a boundary whose width and offset the author picks, so
+        the flat forced `Canvas` background cannot swallow it and two adjacent
+        cells cannot merge into a single 1px line: a 1px outline inset by 1px,
+        which scales with the thickened `--rule-w` under `prefers-contrast: more`.
+        It is an outline rather than a border because the revealed state has no
+        border at all, and a uniform boundary is the one thing every state can
+        rely on.
+     2. name the system colour each glyph, hatch and preview should take, since
+        a system colour is honoured: Highlight for a mine, a stamp and a
+        confirmed preview; LinkText for a wrong mark and a risky preview; GrayText
+        for a hatch and for revealed's boundary. Left to itself the UA would use
+        CanvasText for all of them, which flattens a locked mine, a wrong mark
+        and a risky preview into one another.
+     3. drop the paper grain. A texture is the first thing this mode exists to
+        remove, and `mix-blend-mode` is not on the forced list, so it would
+        survive the OS's palette decision and tint the colours the user chose.
+   `forced-color-adjust: none` is deliberately never used. `opacity` and
+   `background-image` are not forced, so the preview glyph's 45% alpha and the
+   washes both survive as authored, and the wash is the redundant channel — so
+   there is nothing to rescue by opting out of the user's own palette.
+   -------------------------------------------------------------------------- */
+@media (forced-colors: active) {
+  body::before {
+    display: none;
+  }
+
+  .mg-cell {
+    outline: var(--rule-w) solid CanvasText;
+    outline-offset: calc(var(--rule-w) * -1);
+  }
+
+  .mg-cell[data-state='mine'],
+  .mg-cell[data-state='mine-locked'] {
+    --cell-glyph-color: Highlight; /* a mine is "selected"/"active" here */
+    --cell-stamp-color: Highlight;
+  }
+
+  .mg-cell[data-state='blank'],
+  .mg-cell[data-state='blank-locked'] {
+    --cell-glyph-color: CanvasText;
+  }
+
+  /* LinkText and GrayText are the two system colours a forced palette always
+     has, and they are the ones a user is least likely to have overridden to
+     match the background. */
+  .mg-cell[data-state='wrong-mine'],
+  .mg-cell[data-state='wrong-blank'] {
+    --cell-glyph-color: LinkText;
+    --cell-texture-color: GrayText;
+  }
+
+  /* Revealed spends its channel on "no border", so the boundary from job 1
+     would make it identical to an unmarked cell. Dotted against unmarked's
+     solid is the shape difference that survives. */
+  .mg-cell[data-state='revealed'] {
+    outline-style: dotted;
+    outline-color: GrayText;
+  }
+
+  .mg-cell[data-preview='hit'] {
+    --cell-outline-color: Highlight;
+  }
+
+  .mg-cell[data-preview='risk'] {
+    --cell-outline-color: LinkText;
+    --cell-texture-color: GrayText;
+  }
+
+  /* The scroller keeps a visible frame: a scrollbar in this mode is usually the
+     only cue that a 30x30 board scrolls at all. */
+  .mg-board-scroll {
+    border: var(--rule-w) solid CanvasText;
+  }
+
+  :focus-visible {
+    outline: var(--rule-w-heavy) solid Highlight;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   8. Coarse pointers — WCAG 2.5.8, target size 24x24 CSS px minimum.
+   A class whitelist cannot guarantee it: an icon button is 32px because someone
+   wrote 32px, and a chip is a chip. So this is an element-and-role safety net
+   at zero specificity (`:where()` contributes nothing), which any component rule
+   outranks simply by being a real selector.
+   It deliberately does *not* touch `.mg-cell`. The fit formula clamps `--cell` to
+   `--cell-min` (24px), so a cell is never smaller than the floor in CSS px; what
+   a 30x30 board gives up instead is width — 804px at S, 984px at M, 1224px at L —
+   so a 360px phone scrolls the board horizontally rather than showing 11px
+   cells. That is the correct trade for a grid that has to be read cell by cell,
+   and the compensation is the zoom control's S/M/L steps (each one a larger
+   `--cell`, a wider board) plus browser zoom, which at 200% takes a 32px cell
+   past 44px and clears the floor with room to spare.
+   -------------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  :where(button, a, input, select, textarea, summary, [role='button'], [role='switch'], [role='tab'], [tabindex]) {
+    min-block-size: var(--target-min);
+    min-inline-size: var(--target-min);
+  }
+
+  /* A checkbox or a radio at 24px has its hit area at 24px, which is the floor
+     itself, so its control gets the space rather than the box. */
+  :where(input[type='checkbox'], input[type='radio']) {
+    inline-size: var(--target-min);
+    block-size: var(--target-min);
+    margin: 0;
+  }
+
+  /* Text inputs keep a 44px line: they are the one target where the floor is
+     not a floor but a starting point, and a phone keyboard is 44px tall. */
+  :where(input[type='text'], input[type='number'], input[type='search'], select) {
+    min-block-size: 44px;
+  }
+}

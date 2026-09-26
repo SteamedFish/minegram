@@ -1,0 +1,623 @@
+/* =============================================================================
+   Minegram — forms and controls
+   The settings form, its fields, the segmented control, the board toolbar, the
+   footer controls, and the one button box every other file reuses.
+
+   Division of labour: layout.css draws the settings PANEL's surface and the
+   footer's box; this file draws everything inside them, plus every control in
+   the app — because §7.1 puts "buttons" and "min-target sizes" here, and a
+   control whose box lives in one file and whose size lives in another is a
+   control that will be half-styled the first time someone edits the wrong one.
+
+   Five decisions worth stating:
+
+   * §3.5's target sizes are THREE NUMBERS (24 / 32 / 44) and tokens.css has only
+     one of them (`--target-min: 24px`, which base.css spends on the coarse-pointer
+     net). So the two that are missing are declared once, here, in the place that
+     spends them, instead of being scattered as bare literals through every rule
+     that needs a hit area. If a later tokens pass adopts them, these two lines
+     are the only thing to delete.
+   * The control box is ONE rule with a three-name selector list, not three rules.
+     The primary, selected, and disabled states are then unambiguously later in
+     this same file at the same specificity, so "which of my four rules wins"
+     never comes up between a button and a mode toggle.
+   * The form's actions are a two-column grid with the primary spanning both. The
+     panel has exactly one primary action and the layout says so before any colour
+     does; the two utilities share a row underneath it.
+   * The finger-marking switch stays NATIVE. It is a real checkbox with
+     `role="switch"`, given `accent-color` and a 44px label to press. Hand-rolling
+     a track-and-knob switch would cost twenty lines, break in forced colours, and
+     gain nothing: the label already names the setting, and the OS control already
+     announces its state. §5.2's "shape before colour" is a rule about puzzles,
+     not an argument for a bespoke switch.
+   * Hover lives inside `@media (hover: hover)`. A hover that survives a tap on a
+     phone is a control that looks selected until you tap somewhere else.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   1. §3.5's target sizes
+   -------------------------------------------------------------------------- */
+:root {
+  /* §3.5: 24px is the floor the coarse-pointer net in base.css already enforces;
+     these two are the levels above it. 32px on a fine pointer, 44px on a coarse
+     one, which is §3.5's rule for every control, and 44px everywhere for a form
+     field and a dialog control. */
+  --target-sm: 24px;
+  --target-fine: 32px;
+  --target-touch: 44px;
+}
+
+/* -----------------------------------------------------------------------------
+   2. The control box
+   One box for every button in the app: the form's three actions, the toolbar's
+   mode and zoom toggles, the round banner's call to action. A button that is not
+   this box is not a button, and a stylesheet with two button boxes is a
+   stylesheet that has already lost an argument with itself.
+   -------------------------------------------------------------------------- */
+.mg-button,
+.mg-toolbar__mode,
+.mg-toolbar__zoom,
+.mg-help__open, .mg-round-banner__primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  box-sizing: border-box;
+  min-block-size: var(--target-fine);
+  min-inline-size: var(--target-fine);
+  padding: var(--sp-1) var(--sp-3);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-sharp);
+  background-color: var(--surface-1);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .mg-button:hover,
+  .mg-toolbar__mode:hover,
+  .mg-toolbar__zoom:hover,
+  .mg-help__open:hover,
+  .mg-round-banner__primary:hover {
+    background-color: var(--surface-2);
+    border-color: var(--rule-hc);
+  }
+}
+
+/* Pressed: a change of weight, not a change of position. Nothing in this app
+   moves a box on click — §7.3's rule about cells generalises to every control,
+   because a 1px jump is a repaint the eye can catch and a colour shift is not. */
+.mg-button:active,
+.mg-toolbar__mode:active,
+.mg-toolbar__zoom:active,
+.mg-help__open, .mg-round-banner__primary:active {
+  background-color: var(--wash-accent-soft);
+  border-color: var(--rule-hc);
+}
+
+.mg-button--primary {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+@media (hover: hover) {
+  .mg-button--primary:hover {
+    background-color: var(--accent);
+    border-color: var(--accent);
+  }
+}
+
+.mg-button:disabled,
+.mg-toolbar__mode:disabled,
+.mg-toolbar__zoom:disabled,
+.mg-help__open, .mg-round-banner__primary:disabled {
+  background-color: var(--surface-1);
+  border-color: var(--rule);
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
+/* -----------------------------------------------------------------------------
+   3. The settings form
+   -------------------------------------------------------------------------- */
+.mg-form {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.mg-form__actions {
+  display: grid;
+  /* The primary takes the whole row; the two utilities share the next one. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+
+.mg-form__actions > .mg-button--primary {
+  grid-column: 1 / -1;
+}
+
+/* The "new seed" action is a utility, not a second primary: the panel has one
+   primary button and it is Apply. It wears no fill and no border, so the row of
+   three actions reads as one commitment and two conveniences. */
+.mg-form__new-seed {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--ink-2);
+}
+
+@media (hover: hover) {
+  .mg-form__new-seed:hover {
+    background-color: var(--surface-1);
+    border-color: var(--rule);
+  }
+}
+
+/* The generator's own words (a thrown validation message). A leading rule in the
+   `--unknown` hue and no fill: it is the app's "look here" hue, and a notice
+   that has to compete with a form full of controls is a notice nobody reads. */
+.mg-form__warning {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border-inline-start: var(--rule-w-heavy) solid var(--unknown);
+}
+
+.mg-form__warning-label {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.mg-form__warning-detail {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+/* -----------------------------------------------------------------------------
+   4. Fields
+   -------------------------------------------------------------------------- */
+.mg-field {
+  display: grid;
+  gap: var(--sp-1);
+}
+
+.mg-field__label {
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  letter-spacing: var(--track-micro);
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.mg-field__control {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.mg-field__input,
+.mg-field__select {
+  inline-size: 100%;
+  box-sizing: border-box;
+  /* §3.5: a form field is 44px tall on every pointer, not only a coarse one —
+     it is the one control the whole form is read through. */
+  min-block-size: var(--target-touch);
+  padding: var(--sp-2) var(--sp-3);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-sharp);
+  background-color: var(--surface-1);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard);
+}
+
+.mg-field__input {
+  /* A seed is typed, and a seed is hexadecimal. Mono, so a transcription error
+     is visible as a shape rather than having to be caught by eye. */
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+}
+
+/* The number fields are two digits at most; tabular keeps a `1` from shifting a
+   `10` sideways while you drag the stepper. */
+.mg-field__input[type='number'] {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (hover: hover) {
+  .mg-field__input:hover,
+  .mg-field__select:hover {
+    border-color: var(--rule-hc);
+  }
+}
+
+/* An invalid field is a wrong claim, and `--accent` is the hue this app has
+   already given that meaning. The hint turns with it, so the message and the
+   control that caused it are one red object. */
+.mg-field[data-invalid='true'] .mg-field__input {
+  border-color: var(--accent);
+}
+
+.mg-field[data-invalid='true'] .mg-field__hint {
+  color: var(--accent);
+}
+
+.mg-field__suffix,
+.mg-field__hint,
+.mg-field__note {
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+}
+
+.mg-field__note {
+  /* The non-starter band's note, and the only text in the panel that explains
+     a consequence rather than a control. It gets an indent so it reads as a note
+     on the field above it and not as another field. */
+  padding-inline-start: var(--sp-2);
+  border-inline-start: var(--rule-w) solid var(--rule);
+}
+
+.mg-field__range {
+  inline-size: 100%;
+  min-block-size: var(--target-touch);
+  accent-color: var(--accent);
+}
+
+.mg-field__echo {
+  min-inline-size: var(--target-fine);
+  padding-inline: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-numeral);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  color: var(--ink);
+}
+
+/* A range is a two-line control: the track, then the echo underneath it. The
+   shared `.mg-field__control` cannot simply be given `flex-wrap` — a number
+   field uses the same span and would push its unit suffix onto a second line —
+   so the wrap is gated on the child that makes it two lines, and the echo then
+   claims the row: `flex: 0 0 100%` before the track so it never competes, a
+   full width to align against, `nowrap` so "60 · mines: 135" is one line and not
+   a three-line rag. The echo's own type drops to the small size it reads at;
+   `--fs-numeral` is 14.08px there and that was a third of the wrap. */
+.mg-field__control:has(> .mg-field__range) {
+  flex-wrap: wrap;
+}
+
+.mg-field__control:has(> .mg-field__echo) .mg-field__echo {
+  flex: 0 0 100%;
+  inline-size: 100%;
+  padding-inline: 0;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  white-space: nowrap;
+}
+
+/* The four band names, defined in prose. Each row gets a leading rule whose
+   length is the band, so the order reads without reading: one, two, three
+   weights and the last row at full ink. The labels are localised, so the meter
+   is the only channel that works in every locale.
+
+   The rows are addressed by `[data-band]` and never by `li`: the list items carry
+   no class (§7.2 bans the element selector that would otherwise reach them), and
+   `data-band` appears nowhere else in the app, so the attribute is the row's only
+   name. */
+.mg-field__glossary {
+  display: grid;
+  gap: var(--sp-1);
+  margin-block-start: var(--sp-1);
+}
+
+.mg-field__glossary > [data-band] {
+  display: grid;
+  grid-template-columns: var(--rule-w-heavy) minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: baseline;
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  color: var(--ink-3);
+}
+
+.mg-field__glossary > [data-band]::before {
+  content: '';
+  inline-size: var(--rule-w);
+  block-size: var(--rule-w);
+  margin-block-start: calc((var(--lh-micro) - var(--rule-w)) / 2);
+  background-color: var(--rule-hc);
+}
+
+.mg-field__glossary > [data-band='steady']::before {
+  inline-size: var(--rule-w-strong);
+}
+
+.mg-field__glossary > [data-band='challenging']::before {
+  inline-size: var(--rule-w-heavy);
+}
+
+.mg-field__glossary > [data-band='expert'] {
+  color: var(--ink);
+}
+
+.mg-field__glossary > [data-band='expert']::before {
+  inline-size: var(--rule-w-heavy);
+  background-color: var(--ink);
+}
+
+/* A toggle row: the label is the target, the box stays the OS's own size. */
+.mg-field--toggle {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.mg-field--toggle > .mg-field__label {
+  text-transform: none;
+  letter-spacing: normal;
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--ink);
+}
+
+.mg-field--toggle > .mg-field__hint {
+  grid-column: 2;
+}
+
+.mg-field__checkbox {
+  accent-color: var(--accent);
+}
+
+/* -----------------------------------------------------------------------------
+   5. The segmented control
+   Three separate pills with a gap between them, not one box with dividers: an
+   inset border on a clipped container eats the focus ring, and a corner-surgery
+   version needs a rule per corner per state. Pills cost one extra gap and cannot
+   clip anything.
+   -------------------------------------------------------------------------- */
+.mg-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+.mg-seg__item {
+  display: contents;
+}
+
+/* The radio itself is not drawn; it is kept focusable and clipped to 1px so the
+   label beside it can carry the whole look, and so the platform still owns the
+   control's semantics and its forced-colours behaviour. */
+.mg-seg__input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.mg-seg__label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-block-size: var(--target-fine);
+  min-inline-size: var(--target-fine);
+  padding: var(--sp-1) var(--sp-3);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-pill);
+  background-color: var(--surface-1);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .mg-seg__label:hover {
+    border-color: var(--rule-hc);
+    color: var(--ink);
+  }
+}
+
+/* Selected: a border and a wash, so it is a SHAPE change (a filled pill among
+   outlined ones) and not only a colour change. */
+.mg-seg__input:checked + .mg-seg__label {
+  background-color: var(--wash-accent-soft);
+  border-color: var(--accent);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The focus ring is drawn by the label, because the control that has focus is
+   the clipped radio. Offset by one space step so the ring clears the border
+   instead of sitting on it. */
+.mg-seg__input:focus-visible + .mg-seg__label {
+  outline: var(--rule-w-heavy) solid var(--focus);
+  outline-offset: var(--sp-1);
+}
+
+/* -----------------------------------------------------------------------------
+   6. The board toolbar
+   A recessed strip one surface level back from the board plate it sits on, so
+   the controls are visibly outside the puzzle and never read as part of it.
+   -------------------------------------------------------------------------- */
+.mg-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
+  background-color: var(--surface-1);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-sharp);
+}
+
+.mg-toolbar__group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+.mg-toolbar__mode[aria-checked='true'],
+.mg-toolbar__zoom[aria-checked='true'] {
+  background-color: var(--wash-accent-soft);
+  border-color: var(--accent);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The finger-marking switch. The label is the target, which is why it gets the
+   44px in §8; the checkbox keeps the size base.css gives it on a coarse pointer
+   so the two switches in the app are the same object at the same size. */
+.mg-toolbar__finger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-block-size: var(--target-fine);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  cursor: pointer;
+}
+
+.mg-toolbar__finger-label {
+  user-select: none;
+}
+
+.mg-toolbar__waiting {
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--track-micro);
+  text-transform: uppercase;
+}
+
+/* -----------------------------------------------------------------------------
+   7. The footer's contents
+   layout.css owns the footer's box and its uppercase labels; the two things that
+   carry data — the seed and the two selects — are styled here.
+   -------------------------------------------------------------------------- */
+.mg-footer__seed-value {
+  font-family: var(--font-mono);
+  /* One step up from the footer's own 11px: a seed is a value to read, not a
+     label. */
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  letter-spacing: normal;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.mg-footer__select {
+  min-block-size: var(--target-fine);
+  padding: 0 var(--sp-2);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-sharp);
+  background-color: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--fs-micro);
+  letter-spacing: normal;
+  cursor: pointer;
+}
+
+.mg-footer__source {
+  margin-inline-start: auto;
+  color: var(--ink-2);
+  text-decoration-thickness: var(--rule-w);
+  text-underline-offset: var(--sp-1);
+}
+
+@media (hover: hover) {
+  .mg-footer__source:hover {
+    color: var(--ink);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   8. Pointer-size targets
+   One block, one decision. Everything above targets a fine pointer by default
+   and everything here raises it for a coarse one, so the desktop design is never
+   a coarse design that got smaller.
+   -------------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  .mg-button,
+  .mg-toolbar__mode,
+  .mg-toolbar__zoom,
+  .mg-help__open, .mg-round-banner__primary {
+    min-block-size: var(--target-touch);
+    min-inline-size: var(--target-touch);
+  }
+
+  .mg-seg__label {
+    min-block-size: var(--target-touch);
+    min-inline-size: var(--target-touch);
+  }
+
+  /* The label wraps the control, so making the label 44px is what makes the
+     checkbox a 44px target without a 44px checkbox. */
+  .mg-toolbar__finger,
+  .mg-field--toggle {
+    min-block-size: var(--target-touch);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   9. A class the component uses and no other file defines
+   `mg-visually-hidden` is a utility, and utilities live with controls: it exists
+   so a switch can carry a real `aria-describedby` hint without a second
+   sentence of visible text next to it. The clip is on the box, not on a wrapper,
+   so the element stays in the accessibility tree and keeps its dimensions for
+   focus.
+   -------------------------------------------------------------------------- */
+.mg-visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* -----------------------------------------------------------------------------
+   10. Reduced motion, this file's own
+   Nothing here animates a shape, so the neutralisation is total and exact: the
+   controls still change colour on hover and on press, they just arrive.
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .mg-button,
+  .mg-toolbar__mode,
+  .mg-toolbar__zoom,
+  .mg-help__open, .mg-round-banner__primary,
+  .mg-seg__label,
+  .mg-field__input,
+  .mg-field__select {
+    transition: none;
+  }
+}

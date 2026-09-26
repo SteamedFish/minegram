@@ -1,0 +1,438 @@
+/* =============================================================================
+   Minegram — board
+   The board plate, the scroll container's height, the stage grid, the sticky
+   rails, the cell's geometry, the corner stamp, the run tape, and the generation
+   sweep.
+
+   Division of labour with tokens.css: tokens.css owns the CHANNELS (which colour,
+   which line style, which glyph character) and binds them to `data-state` and
+   `data-preview`. This file owns the GEOMETRY (how big, where, how the stamp is
+   cut, how a tape segment joins its neighbour) and the boxes themselves. Nothing
+   here re-declares a colour a state already chose.
+
+   Four decisions worth stating:
+
+   * The floor lives in the track, not in the cell. `minmax(var(--cell-min),
+     var(--cell))` in one template, repeated verbatim in the rail row and every
+     board row, is what makes §1.7's "minimum target size is guaranteed
+     structurally" true. A 30x30 board is 1200px wide and scrolls; it is never
+     squeezed, because a grid track cannot be squeezed below its own min.
+   * `--cell`, `--cols`, `--rows` and `--rail-col` are set inline on the STAGE by
+     the host, so the stage is the only place that reads them, and the rows read
+     them by inheritance. There is no per-cell exception to keep in sync.
+   * The revealed line is drawn from the rail cell, not from a cell attribute.
+     §5.4 wants a tint and an edge on a whole line, and the component reports a
+     line's state in exactly one place: its rail cell's `data-line-state`. A row
+     is reachable with `:has()`; a COLUMN is not, because nothing in the DOM says
+     which index a column's rail cell is. See the note at the row edge below.
+   * The sweep crosses from the status strip to the board plate through a custom
+     property on a SIBLING combinator, because the alternative is a two-level
+     descendant chain and this file does not have one.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   1. The board surface — surface level 2, the plate the cells sit on
+   -------------------------------------------------------------------------- */
+.mg-board-surface {
+  position: relative; /* the generation sweep's containing block */
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background-color: var(--surface-2);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.mg-board-scroll {
+  /* One scroll container in the whole app (§1.7); `overflow` itself is declared
+     in base.css, which loads first, and nothing here overrides it.
+     `contain: layout paint` is what keeps the board's intrinsic max-content width
+     from ever giving the DOCUMENT a horizontal scrollbar.
+
+     NO CAP, and that is a decision rather than an omission. Three facts settle
+     it, and the first two are why the obvious one-line answer is wrong:
+
+       1. §1.7's Fit is WIDTH-only. `BoardSurface.tsx` solves `--cell` from
+          `clientWidth` and never reads the height, so the board's height is not
+          a function of the viewport. A fraction therefore cannot be right for
+          more than one board size: `min(70vh, 46rem)` (the cap this replaces)
+          bound at 630px and cut a 642px stage through the middle of its last row
+          at 1440x900, while every fraction loose enough to clear a 15x15 board
+          still amputates a 30x30 one.
+       2. The board's own variables CANNOT be used here. `--cell`, `--rows` and
+          `--cols` are written INLINE ON THE STAGE, which is this box's CHILD, so
+          a cap written in them is invalid at computed-value time and silently
+          drops to `none` (measured, in `.tmp/capdump.mjs`). A fallback is worse
+          than the invalid declaration: `var(--rows, 0)` would resolve here
+          against the 32px root default and cap the pane at 88px.
+       3. So the cap that cannot amputate a cell is no cap. The pane's height is
+          its content's height, a board is never cut by it, and the vertical axis
+          belongs to the DOCUMENT, where the reader scrolls at a boundary they
+          chose and the browser's own scrollbar says so. `overflow: auto` still
+          earns its place: a board WIDER than the pane — 15x15 at 100% zoom, 30x30
+          at any zoom — pans horizontally here, which is what keeps the
+          DOCUMENT free of a horizontal scrollbar.
+     `justify-content: safe center` below is the other half of that. */
+  max-block-size: none;
+  contain: layout paint;
+  /* The stage is `inline-grid` and `max-content`, so it sits at the start of
+     this block and leaves a wide empty band on its right whenever the board is
+     smaller than the plate. Making this a grid and centring the one item fixes
+     that. `safe` is the load-bearing word: a board WIDER than the cap (15x15 at
+     100% zoom, 30x30 at any zoom) must overflow to the LEFT edge and scroll,
+     and plain `center` would push the first column out of the scroll range where
+     no amount of scrolling can bring it back. */
+  display: grid;
+  justify-content: safe center;
+}
+
+/* -----------------------------------------------------------------------------
+   2. The stage — the grid, and the only element the host writes custom
+      properties onto
+   -------------------------------------------------------------------------- */
+.mg-board-stage {
+  display: inline-grid;
+  /* A DEFINITE track, not `minmax()`. `minmax(var(--cell-min), var(--cell))`
+     only reaches `--cell` while the container is being sized by its content
+     (`inline-size: max-content` below). A board row is not sized that way — it
+     is a grid item stretched to the stage's tracks — and a non-flexible
+     `minmax()` track absorbs no free space, so every row collapsed to the
+     24px floor and the rows overlapped each other. `var(--cell)` is the same
+     number the stage resolves, by construction, with no growth phase. */
+  grid-template-columns: var(--rail-col) repeat(var(--cols), var(--cell));
+  inline-size: max-content;
+  margin-inline: auto; /* centres a narrow board; resolves to 0 when it overflows */
+  background-color: var(--surface-2);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-sharp);
+  /* Re-bound, not inherited: a custom property resolves its own `var(--cell)`
+     where it is DECLARED, so `--fs-numeral` leaves tokens.css `:root` already
+     substituted with the ROOT's 32px default
+     (`clamp(13px, 32px * 0.44, 18px)` = 14.08px) and arrives here blind to the
+     zoom the host set inline on this element. The same formula re-declared here
+     sees `--cell: 44px` and gives 18px, so the clue numerals and the cell glyph
+     (`0.46em` of this) actually scale with the board. */
+  --fs-numeral: clamp(13px, var(--cell) * 0.44, 18px);
+  font-size: var(--fs-numeral);
+  /* The same re-binding, for the rail's rhythm. tokens.css builds `--rail-num`,
+     `--rail-gap`, `--rail-step` and `--rail-band` from `--cell` on `:root`, where
+     `--cell` is still the 32px default, so inherited they arrive frozen at the
+     9px numeral of a 32px board and a 40px board's rail would be laid out for a
+     size it is not. Each formula is repeated here, verbatim, to see the cell size
+     the host actually set. `--rail-lh`, `--rail-badge` and `--rail-slots` do not
+     mention `--cell`, so they are inherited and need nothing. */
+  --rail-num: clamp(9px, calc(var(--cell) * 0.25), 11px);
+  --rail-gap: max(1px, calc(var(--cell) * 0.05));
+  --rail-step: calc(var(--rail-num) * var(--rail-lh) + var(--rule-w));
+  --rail-band: calc(var(--rail-badge) + var(--rail-step) * var(--rail-slots) + 4px);
+  /* A drag paints with the crosshair: declared here, on the ancestor, because
+     `--cell-cursor` is inherited and the cells must not need a rule of their own
+     for a state that lives on the stage. */
+  cursor: var(--cell-cursor);
+}
+
+.mg-board-stage[data-dragging='true'] {
+  --cell-cursor: crosshair;
+}
+
+.mg-board-row {
+  display: grid;
+  /* Verbatim copy of the stage's template. This duplication is the price of
+     §1.7's "each board row is its own element": it is what keeps `role="row"`
+     real in the accessibility tree, and it is why rail alignment is exact by
+     construction rather than by measurement. */
+  grid-template-columns: var(--rail-col) repeat(var(--cols), var(--cell));
+  /* The stage lays its rows out as an auto-placement grid, so without this a row
+     is placed in the FIRST column only (the row rail) and the column tracks
+     beside it stay empty. One line, and every row spans the full board. */
+  grid-column: 1 / -1;
+  /* One cell tall, exactly, so the grid cannot drift: a clue too tall for the
+     rail is clipped by the rail cell (§5.1) rather than by growing its row and
+     pushing every cell below it out of alignment. */
+  block-size: var(--cell);
+}
+
+/* -----------------------------------------------------------------------------
+   3. The rails
+   -------------------------------------------------------------------------- */
+.mg-board-row--rails {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--z-rail-row);
+  /* The one row whose height is not `--cell`. The rails buy legibility with their
+     free axis: a column rail is `--cell` wide and `--rail-band` tall, which is
+     the room a six-run clue needs plus the state glyph's strip and the ellipsis.
+     The band is a token, not a pixel count, so the whole thing still tracks
+     `--cell` — drop to 24px on a phone and the band narrows with it. */
+  block-size: var(--rail-band);
+  /* Opaque, and opaque in the SAME colour the row rails use, or a cell scrolling
+     under the column rail would show through it and the sticky header would
+     look like frosted glass. */
+  background-color: var(--surface-1);
+  border-block-end: var(--rule-w) solid var(--rail-edge, var(--rule));
+}
+
+.mg-board-row--rails[data-focus-within='true'] {
+  /* Keyboard focus is inside the scroller: the rail's own edge is the only
+     thing that changes, and it changes to the hairline token that was built to
+     clear 3:1 on this surface. One declaration, and every rail cell in the row
+     inherits it. */
+  --rail-edge: var(--rule-hc);
+}
+
+.mg-rail-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  min-inline-size: 0;
+  /* 1px, not `--sp-1`. The row rail is one cell TALL and its width is the host's
+     `--rail-col`, so every pixel of padding here comes out of the two runs a line
+     has to hold; 4px of it was the difference between two runs fitting and one. */
+  padding: 1px;
+  background-color: var(--surface-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-pill);
+  line-height: var(--lh-pill);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  /* A size container, so clues.css can read how much room this particular rail
+     actually got instead of guessing from `--cell`. `size` containment is safe
+     here because every rail cell's box is DEFINITE — a grid track for the
+     inline axis, `block-size: var(--cell)` or `--rail-band` for the block axis,
+     and `var(--cell-s)` square in the legend — so nothing is ever measured by
+     its content. */
+  container: rail / size;
+  /* The rail is a summary, and a summary that is silently cut in half is a lie:
+     a long line is TRUNCATED with an ellipsis (clues.css), never overlapped and
+     never left half-drawn. The full text stays in the cell's `aria-label` and in
+     the help dialog. */
+  overflow: hidden;
+}
+
+.mg-rail-cell[data-line='row'] {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: var(--z-row-rail);
+  /* No border here: the inline-end edge of a rail cell IS its line state's border
+     (at rest a hairline, dashed on a contradiction, dotted on an unknown), and
+     clues.css is the file that owns that vocabulary. Declaring a competing edge
+     here would win on source order and flatten all four states to one line. */
+}
+
+.mg-rail-cell--corner {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: var(--z-rail-corner);
+  border-inline-end: var(--rule-w) solid var(--rule);
+  font-family: var(--font-body);
+  /* Scaled off `--cell` and capped at the same 11px micro size every other label
+     uses, because the host sets `--cell` inline and the corner is exactly as wide
+     as the row rail. It is a bare text node — there is no element to restyle and
+     no `::before` to put a mark in — so the label itself has to be the thing
+     that fits: 65px of room at Fit takes "ROWS / AND / COLUMNS" at 11px on three
+     centred lines, and at the 24px floor the clamp drops it to 6.7px, which is
+     small but complete, square to the box, and not overlapping the first column
+     clue the way an 11px overflow was. */
+  font-size: clamp(6.5px, calc(var(--cell) * 0.28), var(--fs-micro));
+  line-height: var(--lh-micro);
+  text-align: center;
+  letter-spacing: var(--track-micro);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* -----------------------------------------------------------------------------
+   4. The cell — geometry only
+   -------------------------------------------------------------------------- */
+.mg-cell {
+  position: relative; /* the corner stamp and the tape are both out of flow */
+  display: grid;
+  place-items: center;
+  min-inline-size: var(--cell-min);
+  min-block-size: var(--cell-min);
+  /* The hatch pitch tracks the cell, so a 24px cell does not get a 5px
+     pinstripe that reads as a texture swatch and a 44px cell does not get one
+     sparse line. tokens.css builds the gradient from these three; this file
+     only says how big the weave is. */
+  --hatch-gap: max(var(--sp-1), calc(var(--cell) * 0.22));
+}
+
+.mg-cell::before {
+  /* The glyph is a text character, so it needs a line box it can sit in. */
+  line-height: 1;
+  user-select: none;
+}
+
+/* The corner stamp: the locked mine's notch. A right triangle cut from the top
+   inline-end corner, drawn entirely from the two geometry tokens, so
+   `--cell-stamp-size: 0px` genuinely removes it rather than hiding it behind a
+   transparent fill. */
+.mg-cell::after {
+  content: '';
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  inline-size: 0;
+  block-size: 0;
+  border-block-start: var(--cell-stamp-size) solid var(--cell-stamp-color);
+  border-inline-end: var(--cell-stamp-size) solid transparent;
+  pointer-events: none;
+}
+
+/* The component also renders an empty `mg-cell__mark` span as a hook. The glyph
+   channel is the `::before` above — a real character, so it scales and so
+   assistive tech reads the cell's own `aria-label` instead of a stray node.
+   This span is `aria-hidden` and has no content, so it is taken out of flow
+   entirely: it must never claim a grid track of its own. */
+.mg-cell__mark {
+  display: none;
+}
+
+/* -----------------------------------------------------------------------------
+   5. The run tape — §5.2's "the position is forced" underline
+   Consecutive cells each render a segment and the segments join, so a run's tape
+   is continuous with no measured overlay. `data-cap` says where the ends are,
+   which is the only thing a segment cannot know by itself.
+   -------------------------------------------------------------------------- */
+.mg-run-tape {
+  position: absolute;
+  pointer-events: none;
+}
+
+.mg-run-tape[data-orientation='row'] {
+  inset-block-end: 0;
+  inset-inline: 0;
+  border-block-end: var(--clue-run-underline);
+}
+
+.mg-run-tape[data-orientation='column'] {
+  inset-inline-end: 0;
+  inset-block: 0;
+  border-inline-end: var(--clue-run-underline);
+}
+
+/* A complete run's tape is 2px and solid in the confirm hue: the shape and the
+   weight change together, so "closed" survives greyscale and forced colours. */
+.mg-run-tape[data-run='complete'][data-orientation='row'] {
+  border-block-end: var(--clue-run-underline-complete);
+}
+
+.mg-run-tape[data-run='complete'][data-orientation='column'] {
+  border-inline-end: var(--clue-run-underline-complete);
+}
+
+/* Rounded only where the tape actually ends. A middle segment is square on both
+   sides so the join with its neighbour is invisible. */
+.mg-run-tape:is([data-cap='start'], [data-cap='only'])[data-orientation='row'] {
+  border-end-start-radius: var(--radius-pill);
+}
+
+.mg-run-tape:is([data-cap='end'], [data-cap='only'])[data-orientation='row'] {
+  border-end-end-radius: var(--radius-pill);
+}
+
+.mg-run-tape:is([data-cap='start'], [data-cap='only'])[data-orientation='column'] {
+  border-start-end-radius: var(--radius-pill);
+}
+
+.mg-run-tape:is([data-cap='end'], [data-cap='only'])[data-orientation='column'] {
+  border-end-end-radius: var(--radius-pill);
+}
+
+/* -----------------------------------------------------------------------------
+   6. The revealed line — §5.4's tint and edge
+   The rail cell of a complete line is the only element that knows the line is
+   complete, so it is what declares the treatment and the cells inherit it.
+
+   A ROW is one `:has()` away, and both of its edges are drawable: the left edge
+   is the first cell, the right edge is the last, and a cell is neither a header
+   nor a tape. A COLUMN is not drawable from here: the top rail cell is its only
+   state carrier, and no attribute anywhere says which board index it sits at, so
+   a column's edge would need an inline custom property the components do not
+   set. The tint is drawn for rows; the column edge is reported as the one piece
+   of §5.4 with no DOM hook rather than faked with a `:nth-child` guess.
+   -------------------------------------------------------------------------- */
+.mg-board-row:has(> .mg-rail-cell[data-line-state='complete']) > .mg-cell {
+  /* §5.4 / §7.3: the reveal fades in over 180ms and then stays. It is the one
+     place a transition belongs on a cell, because the edge is the difference
+     between "this line is finished" and "this line is finished and you just did
+     it" — and a grid repaint is not otherwise an event the eye can catch. */
+  background-color: var(--line-reveal-wash);
+  transition:
+    background-color var(--dur-mid) var(--ease-standard),
+    box-shadow var(--dur-mid) var(--ease-standard);
+}
+
+/* Positional, not `:first-of-type`: every child of a board row is a `div`, so
+   `:first-of-type` would name the RAIL cell and never a cell at all. The rail is
+   the first child, so the first cell is the second. */
+.mg-board-row:has(> .mg-rail-cell[data-line-state='complete']) > .mg-cell:nth-child(2) {
+  /* `--shadow-cell` is repeated in front of the new ring on purpose: a
+     `box-shadow` declaration REPLACES the list, so without it the two end cells
+     of a revealed line would lose the 1px top inset that every other cell keeps,
+     and the row would show a hairline seam exactly where the edge was added. */
+  box-shadow: var(--shadow-cell), inset var(--rule-w-heavy) 0 0 var(--line-edge-color);
+}
+
+.mg-board-row:has(> .mg-rail-cell[data-line-state='complete']) > .mg-cell:last-child {
+  box-shadow:
+    var(--shadow-cell),
+    inset calc(var(--rule-w-heavy) * -1) 0 0 var(--line-edge-color);
+}
+
+/* -----------------------------------------------------------------------------
+   7. The generation sweep
+   A 2px dashed border marching along the top and bottom edges of the plate, so
+   "printing" is visible on the board itself and not only in the status strip.
+   `--gen-edge` is declared by overlays.css on a sibling selector; when it is
+   absent the pseudo-element is not generated at all, which is why the gate is a
+   `content` value rather than an opacity.
+   -------------------------------------------------------------------------- */
+@keyframes mg-sweep {
+  to {
+    background-position: var(--sp-5) 0;
+  }
+}
+
+.mg-board-stage::after {
+  content: var(--gen-edge, none);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--unknown) 0 var(--sp-3),
+    transparent var(--sp-3) var(--sp-5)
+  );
+  background-repeat: repeat-x;
+  /* Two mask layers, one per edge: the gradient paints a band, the mask keeps
+     it to the top and bottom rules. No extra element, no border-image, and the
+     animation animates only `background-position`, so nothing reflows. */
+  mask-image: linear-gradient(#000, #000), linear-gradient(#000, #000);
+  mask-size: 100% var(--rule-w-heavy), 100% var(--rule-w-heavy);
+  mask-position: 0 0, 0 100%;
+  mask-repeat: no-repeat;
+  animation: mg-sweep var(--dur-slow) var(--ease-linear) infinite;
+}
+
+/* -----------------------------------------------------------------------------
+   8. Reduced motion, this file's own
+   The sweep stops dead and the plate's edge becomes a static dashed rule: the
+   state is still visible, it just no longer moves. §7.3 asks for exactly this,
+   and it lives here rather than in overlays.css because a rule can only be
+   neutralised in the file that declares it without an `!important` war.
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .mg-board-stage::after {
+    /* With no animation the background stays at position 0, which is already the
+       static dashed rule the moving version resolves to. Nothing else to undo. */
+    animation: none;
+  }
+
+  .mg-board-row > .mg-cell {
+    /* The reveal still happens, it just arrives without a fade. */
+    transition: none;
+  }
+}

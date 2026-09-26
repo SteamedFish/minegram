@@ -1,0 +1,734 @@
+/* =============================================================================
+   Minegram — design tokens
+   The field-telegraph vocabulary: printed paper and ink by day, slate and chalk
+   by night, one vermilion/amber signal accent, monospaced numerals.
+
+   HOW TO USE A TOKEN
+   `var(--sp-4)` for spacing, `var(--ink-2)` for secondary text, and so on. Never
+   type a value inline: a literal that is not a token here cannot be retuned, and a
+   palette change that misses a literal is a bug the palette cannot fix.
+
+   THE LIGHT / DARK / AUTO CONTRACT
+   Three cases, no JavaScript required (the footer select only *sets* the
+   attribute, so the page is already correct if the script never runs):
+     1. `:root`            light values. Also the value of every `color-scheme`.
+     2. `@media (prefers-color-scheme: dark)` + `:root:not([data-theme='light'])`
+                           dark values, so Auto tracks the OS. The `:not()` is what
+                           lets an explicit Light choice win under a dark OS.
+     3. `html[data-theme='dark']`  dark values again, so an explicit Dark choice
+                           wins whatever the OS says.
+     4. `html[data-theme='light']` light values again, for the same reason.
+     With no attribute — or with the literal `auto` — the media query governs.
+   `color-scheme` lives on `:root` (light) and inside both dark blocks, so native
+   form controls, scrollbars and the UA's own canvas follow the chosen palette.
+   It is never set on a wrapper: only the root can change the used colour scheme.
+
+   WHY EVERY ROLE IS DECLARED AS A `--light-*` / `--dark-*` PAIR
+   Cases 2–4 above have to re-point the same roles at different values, and a
+   copied block is a block that eventually disagrees with itself (a role added to
+   `:root` and forgotten in `data-theme='dark'` is the classic silent bug). So
+   each palette-dependent role carries its two values side by side once, and the
+   wiring blocks below only choose between them. If you add a palette-dependent
+   role: add the pair here, and add ONE line to each of the three wiring blocks.
+   If you add a palette-independent token (spacing, type, motion, sizes), declare
+   it in the matching section of `:root` only — no wiring needed.
+
+   THE ONE RULE THIS FILE ENFORCES
+   No colour literal may appear outside `tokens.css`. Every other stylesheet —
+   including the `prefers-contrast` and `forced-colors` blocks in `base.css`,
+   which need *different* colours — remaps a token, never writes a value. That is
+   why the high-contrast and forced-colours variants are tokens (`--rule-cell-hc`,
+   `--confirm-hc`, …) rather than literals in those media queries.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   Breakpoints — a comment, not a custom property: `@media` cannot read one, so
+   the two literals are repeated in every media query that needs them (§7.2).
+     48rem  narrow  the asides fall below the board; the panel becomes a sheet
+     74rem  wide    the left panel is a static sidebar, the right aside a column
+   -----------------------------------------------------------------------------
+   Sizing constants
+   --target-min  24px   WCAG 2.5.8 minimum target size, in CSS px.
+   -----------------------------------------------------------------------------
+   Data attributes this file binds (the contract for every component lane):
+     data-mark        'unknown' | 'mine' | 'blank'      — the raw mark
+     data-locked      'true' | 'false'                   — the raw lock flag
+     data-correct     'true' | 'false' | absent          — the raw verdict
+     data-state       the composite look, see the vocabulary at the bottom:
+                      'unmarked' | 'mine' | 'mine-locked' | 'blank' |
+                      'blank-locked' | 'wrong-mine' | 'wrong-blank' | 'revealed'
+     data-preview     'hit' | 'risk' | 'none' | 'none-while-inert'
+     data-revealed    'true' | 'false'                   — the auto-reveal band
+     data-inert       'true'                            — board is not playable
+     data-finger-marking  'on' | 'off'                  — the §3.3 touch toggle
+   `data-state` is what the cell rules bind, so the cascade never has to re-derive
+   a look out of a combination of attributes, and source order alone decides
+   precedence between the state bindings.
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* ===========================================================================
+     1. Palette
+     Every value is paired; the resolved name is declared after the pairs.
+     ======================================================================== */
+
+  /* Surfaces, in the order the layers stack: --bg is the page, --surface-1 is a
+     panel or a rail, --surface-2 the board plate the cells sit on, --surface-3
+     one cell at rest. Panels are separated by background, never by shadow (§1.1). */
+  --light-bg: #efe9dc; /* page: paper, slightly warm */
+  --dark-bg: #14161a; /* page: deep slate */
+  --light-surface-1: #f7f3ea; /* panels, rails, sticky strips */
+  --dark-surface-1: #1b1e24;
+  --light-surface-2: #fbf8f2; /* the board plate the cells sit on */
+  --dark-surface-2: #20242b;
+  --light-surface-3: #f2ece0; /* one cell at rest */
+  --dark-surface-3: #262b33;
+
+  /* Ink. Three levels of text and nothing else uses them: primary prose,
+     secondary (rail digits, labels), muted (hints, disabled, the clue tape). */
+  --light-ink: #1c1a16;
+  --dark-ink: #e8e3d8; /* chalk */
+  --light-ink-2: #4b463d;
+  --dark-ink-2: #b3ad9f;
+  --light-ink-3: #726a5c; /* #7a7264 darkened to clear 4.5:1 on --surface-3 */
+  --dark-ink-3: #979184; /* #837d70 lightened to clear 4.5:1 on --surface-3 */
+
+  /* Rules. Deliberately quiet in the default palette — the grid is a printed
+     hairline on paper, not a table — which is why `--rule-cell-hc` and
+     `--rule-hc` exist for `prefers-contrast: more` and forced colours. */
+  --light-rule: #cdc3b0; /* hairline panel border */
+  --dark-rule: #333a44;
+  --light-rule-cell: #bfb4a0; /* cell border */
+  --dark-rule-cell: #3d4550;
+  --light-rule-hc: #958b78; /* 3.04:1 on --surface-1 */
+  --dark-rule-hc: #626973; /* 3.01:1 on --surface-1 */
+  --light-rule-cell-hc: #928773; /* 3.01:1 on --surface-3 */
+  --dark-rule-cell-hc: #6c747f; /* 3.01:1 on --surface-3 */
+
+  /* The three semantic colours, and the only hues that carry meaning.
+     --accent is danger or a mine, never decoration; --confirm means the
+     application layer has locked this fact; --unknown is a third state that
+     must never be confused with either. */
+  --light-accent: #b23a1b; /* vermilion: MINE, a wrong mark, a loss */
+  --dark-accent: #e2622f; /* amber-vermilion: the same role, lit for slate */
+  --light-accent-ink: #ffffff; /* glyph on an --accent fill */
+  --dark-accent-ink: #1a1208;
+  --light-confirm: #1f5d4c; /* deep green: locked, line complete */
+  --dark-confirm: #59b391; /* phosphor green */
+  --light-unknown: #886b1d; /* ochre: enumeration hit its budget (#8a6d1f) */
+  --dark-unknown: #d0a33c;
+  --light-focus: #1b4f9c; /* a separate hue on purpose: a focus ring is never
+                             mistaken for a wrong mark */
+  --dark-focus: #74a8ff;
+
+  /* Shadows. Three levels, each one pair: none, hairline, and a dropped panel.
+     Dark shadows are black and deeper because a light shadow on slate reads as
+     a smudge. */
+  --light-shadow-panel: 0 1px 0 rgb(28 26 22 / 0.06), 0 8px 24px -18px rgb(28 26 22 / 0.5);
+  --dark-shadow-panel: 0 1px 0 rgb(0 0 0 / 0.4), 0 10px 28px -20px rgb(0 0 0 / 0.9);
+  --light-shadow-cell: inset 0 1px 0 rgb(28 26 22 / 0.05); /* the pressable top
+                                                             highlight of a cell */
+  --dark-shadow-cell: inset 0 1px 0 rgb(0 0 0 / 0.35);
+  --light-shadow-dialog: 0 2px 0 rgb(28 26 22 / 0.05), 0 24px 48px -24px rgb(28 26 22 / 0.55);
+  --dark-shadow-dialog: 0 2px 0 rgb(0 0 0 / 0.4), 0 28px 56px -24px rgb(0 0 0 / 0.95);
+
+  /* Paper grain. The geometry is fixed; only the ink and the blend change,
+     because multiplying warm ink into paper and screening chalk into slate are
+     different operations. */
+  --light-grain-line-a: rgb(28 26 22 / 0.006); /* 0.6% — the fine weave */
+  --dark-grain-line-a: rgb(232 227 216 / 0.012);
+  --light-grain-line-b: rgb(28 26 22 / 0.015); /* 1.5% — the coarse streak */
+  --dark-grain-line-b: rgb(232 227 216 / 0.03);
+  --light-grain-vignette: rgb(28 26 22 / 0.05); /* the radial corner falloff */
+  --dark-grain-vignette: rgb(0 0 0 / 0.4);
+  --light-grain-blend: multiply; /* ink into paper */
+  --dark-grain-blend: screen; /* chalk into slate */
+  --light-grain-opacity: 0.5;
+  --dark-grain-opacity: 0.35;
+
+  /* How much a non-playable board recedes. Dark needs less: the slate surfaces
+     are already low, and a heavy dim swallows the cells' own borders. */
+  --light-cell-dim: 0.62;
+  --dark-cell-dim: 0.5;
+
+  /* ---- the resolved roles: the light palette is the default, and the three
+         wiring blocks after section 9 only re-point these 25 names ---- */
+  color-scheme: light;
+  --bg: var(--light-bg);
+  --surface-1: var(--light-surface-1);
+  --surface-2: var(--light-surface-2);
+  --surface-3: var(--light-surface-3);
+  --ink: var(--light-ink);
+  --ink-2: var(--light-ink-2);
+  --ink-3: var(--light-ink-3);
+  --rule: var(--light-rule);
+  --rule-cell: var(--light-rule-cell);
+  --rule-hc: var(--light-rule-hc);
+  --rule-cell-hc: var(--light-rule-cell-hc);
+  --accent: var(--light-accent);
+  --accent-ink: var(--light-accent-ink);
+  --confirm: var(--light-confirm);
+  --unknown: var(--light-unknown);
+  --focus: var(--light-focus);
+  --shadow-panel: var(--light-shadow-panel);
+  --shadow-cell: var(--light-shadow-cell);
+  --shadow-dialog: var(--light-shadow-dialog);
+  --grain-line-a: var(--light-grain-line-a);
+  --grain-line-b: var(--light-grain-line-b);
+  --grain-vignette: var(--light-grain-vignette);
+  --grain-blend: var(--light-grain-blend);
+  --grain-opacity: var(--light-grain-opacity);
+  --cell-dim: var(--light-cell-dim);
+
+  /* ===========================================================================
+     2. Type
+     System stacks only: a webfont would mean a network request on a page that
+     must work offline on GitHub Pages, and `font-display: swap` would reflow the
+     board rails mid-paint. The display face is an old-style serif stack because
+     the wordmark should look pressed, not rendered.
+     ======================================================================== */
+  --font-display: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  --font-body: ui-sans-serif, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  --fs-micro: 11px; /* eyebrow labels, field hints */
+  --lh-micro: 14px;
+  --track-micro: 0.09em; /* always paired with `text-transform: uppercase` */
+  --fs-small: 13px; /* help body, legend */
+  --lh-small: 20px;
+  --fs-body: 15px; /* form labels, status strip */
+  --lh-body: 24px;
+  --fs-lead: 18px; /* the round banner headline */
+  --lh-lead: 26px;
+  --fs-display: clamp(28px, 4vw, 40px); /* the wordmark */
+  --lh-display: 1.05;
+  --track-display: -0.01em;
+  --fs-numeral: clamp(13px, var(--cell) * 0.44, 18px); /* tracks the cell size */
+  --lh-numeral: 1;
+  --fs-pill: 12px; /* status chips */
+  --lh-pill: 16px;
+
+  /* ===========================================================================
+     3. Spacing — 4px base, seven steps, no exceptions (§1.2)
+     ======================================================================== */
+  --sp-1: 4px; /* cell inner padding, chip gap */
+  --sp-2: 8px; /* field gap, chip padding */
+  --sp-3: 12px; /* compact panel padding, rail gap */
+  --sp-4: 16px; /* default panel padding */
+  --sp-5: 24px; /* section separation, main gutters */
+  --sp-6: 32px; /* main block separation */
+  --sp-7: 48px; /* banner padding, desktop only */
+
+  /* ===========================================================================
+     4. Radii and rule weights
+     Three radii, no others. Cells are 2px because a cell is a printed mark, a
+     panel is 3px, and only a status chip is a pill.
+     ======================================================================== */
+  --radius-sharp: 2px;
+  --radius-panel: 3px;
+  --radius-pill: 999px;
+  --rule-w: 1px; /* resting hairline: panel and cell borders */
+  --rule-w-strong: 1.5px; /* the wrong mark's dashed border */
+  --rule-w-heavy: 2px; /* the preview's dotted outline, the revealed line edge */
+
+  /* ===========================================================================
+     5. Board sizing — 1x1 through 30x30
+     `--cell` and `--rail-col` are the two live values; §7.2 allows exactly
+     these two plus `--cols`/`--rows` to be set inline from the board
+     dimensions, and nothing else is ever set inline.
+     ======================================================================== */
+  --cell-min: 24px; /* the floor: a cell is never smaller than a target */
+  --cell-max: 44px; /* the ceiling, so a 1x1 board reads as one stamp */
+  --cell-s: 26px; /* zoom step S */
+  --cell-m: 32px; /* zoom step M, the default */
+  --cell-l: 40px; /* zoom step L */
+  --cell: var(--cell-m); /* the live cell size (set inline by the host) */
+  --rail-col: 24px; /* the live rail column width; also the minimum */
+  --target-min: 24px; /* WCAG 2.5.8, for every interactive element */
+
+  /* The rail's clue rhythm, and the band it spends to be readable.
+     A rail cell keeps ONE axis at exactly `--cell` — the column rail is `--cell`
+     wide, the row rail is `--cell` tall — because the host sets the stage's
+     grid template inline and the board's cell centres have to keep matching
+     the rail's. Everything else the clue needs is bought with the other axis:
+     the column rail is `--rail-band` tall (above the board), the row rail stays
+     `--rail-col` wide (beside it) and packs more runs per line instead.
+
+     `--rail-step` is one clue line, gutter included. The run underline is drawn
+     with an inset shadow rather than a border precisely so that this step does
+     not change between an open run (1px) and a complete one (2px): a border
+     would make one line taller than the other and the column rail's bottom edge
+     would no longer be a straight line of baselines. */
+  --rail-num: clamp(9px, calc(var(--cell) * 0.25), 11px);
+  --rail-lh: 0.95;
+  --rail-gap: max(1px, calc(var(--cell) * 0.05));
+  --rail-step: calc(var(--rail-num) * var(--rail-lh) + var(--rule-w));
+  --rail-badge: 10px; /* the line-state glyph's strip, one step tall at the floor */
+  --rail-slots: 7; /* six runs plus the ellipsis that stands in for the rest */
+  --rail-band: calc(var(--rail-badge) + var(--rail-step) * var(--rail-slots) + 4px);
+
+  /* The size formula, and why the arithmetic below is allowed to overflow.
+       fit  = clamp(--cell-min, floor((scrollerInline - --rail-col) / cols), --cell-max)
+       s/m/l= --cell-s / --cell-m / --cell-l
+     The clamp floor is what keeps 30x30 legal: on a 360px-wide phone the fit
+     value would be floor((360 - 24) / 30) = 11px, which is refused, so the
+     board becomes 30 * 24 + 24 = 744px wide and `.mg-board-scroll` scrolls
+     horizontally instead. That is the intended trade (a scrolled board beats an
+     11px grid), and 1x1 hits the ceiling: 1 * 44 + 24 = 68px, centred.
+     Arithmetic at 30x30: S 780 + 24 = 804px, M 960 + 24 = 984px,
+     L 1200 + 24 = 1224px. A 15x15 default at M is 480 + 24 = 504px. */
+
+  /* ===========================================================================
+     6. Motion — one budget, no bounce, nothing that moves a cell's box (§7.3)
+     ======================================================================== */
+  --dur-instant: 0ms; /* previews appear with no transition at all: a laggy
+                         preview reads as lag, so `--dur-instant` is the value
+                         they must use */
+  --dur-fast: 120ms; /* the wrong-mark hatch fading in */
+  --dur-mid: 180ms; /* the revealed line edge */
+  --dur-slow: 240ms; /* the score pips collapsing */
+  --dur-reveal: 480ms; /* the one orchestrated load reveal */
+  --dur-caret: 1050ms; /* the generating caret, `steps(2)` */
+  --stagger: 60ms; /* the load reveal's per-region delay */
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1); /* rise, settle */
+  --ease-in: cubic-bezier(0.4, 0, 0.7, 0.2);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-linear: linear;
+
+  /* ===========================================================================
+     7. Grain geometry (the ink itself is in the palette section)
+     ======================================================================== */
+  --grain-angle: 45deg;
+  --grain-angle-2: 135deg; /* the second weave runs the other way */
+  --grain-gap: 3px; /* the fine weave's pitch */
+  --grain-gap-2: 7px; /* the coarse streak's pitch */
+
+  /* ===========================================================================
+     8. Stacking — the rails must be able to cross the rows they overlap (§1.7)
+     ======================================================================== */
+  --z-row-rail: 1; /* the sticky row rail, left */
+  --z-rail-row: 2; /* the sticky rail row, top */
+  --z-rail-corner: 3; /* sticky on both axes */
+  --z-banner: 10; /* the sticky masthead */
+  --z-toolbar: 11; /* the sticky-bottom zoom toolbar, above the banner on mobile */
+  --z-dialog: 100;
+
+  /* ===========================================================================
+     9. Cell vocabulary — the raw channels every look is assembled from.
+     The *defaults* live here, on `:root`, and the `.mg-cell` rule at the bottom
+     of this file only reads them. That is deliberate: a custom property
+     declared on an ancestor is inherited and therefore loses to one declared on
+     the cell, so `--cell-opacity`, `--cell-touch-action` and `--cell-cursor`
+     must have no cell-level default. That is what lets `[data-inert='true']` on
+     the board dim every cell, and `[data-finger-marking='on']` on the stage
+     switch `touch-action` for every cell, with one attribute and no descendant
+     chain (§7.2). A look, by contrast, only ever re-points the *appearance*
+     channels, and it does that on the cell itself, where specificity decides.
+     ======================================================================== */
+  --cell-glyph: ''; /* `content` for the cell's ::before */
+  --cell-glyph-size: 0.46em; /* the diamond, in `em` of the cell's own font-size
+                                (board.css sets that to --fs-numeral) */
+  --cell-glyph-weight: 400; /* a filled glyph is also the heavier one */
+  --cell-glyph-color: var(--ink-2);
+  --cell-glyph-alpha: 1; /* previews drop the glyph to 45% */
+  --cell-glyph-rotate: 0deg; /* 45deg turns a square into a diamond */
+  --cell-fill: var(--surface-3);
+  --cell-border-color: var(--rule-cell);
+  --cell-border-style: solid;
+  --cell-border-width: var(--rule-w);
+  --cell-inset: var(--shadow-cell); /* the pressable top highlight */
+  --cell-stamp-size: 0px; /* the locked-mine corner notch, 0 when absent */
+  --cell-stamp-color: var(--confirm);
+  --cell-outline-color: transparent; /* the preview's inset outline */
+  --cell-outline-style: none;
+  --cell-outline-width: 0px;
+  --cell-outline-offset: calc(var(--rule-w-heavy) * -1);
+  --cell-texture: none; /* the diagonal hatch; a background-image */
+  --cell-texture-color: transparent; /* always set with --cell-texture */
+  --cell-opacity: 1; /* the dimmed board multiplies this; ancestor-only */
+  --cell-touch-action: auto; /* §3.3: the default stays scrollable; ancestor-only */
+  --cell-cursor: pointer; /* ancestor-only, so a drag can switch it once */
+
+  /* Hatch geometry: 45 degrees, a 1px stripe every 5px. Two states use it and
+     both are reinforced by a dashed border, so it is never the only channel. */
+  --hatch-angle: 45deg;
+  --hatch-line: 1px;
+  --hatch-gap: 5px;
+
+  /* Washes, mixed from the palette so there is no eighth colour to maintain. */
+  --wash-accent: color-mix(in srgb, var(--accent) 8%, transparent); /* a wrong claim */
+  --wash-accent-soft: color-mix(in srgb, var(--accent) 4%, transparent); /* …under a preview */
+  --wash-confirm: color-mix(in srgb, var(--confirm) 30%, transparent); /* the locked-blank ring */
+  --wash-reveal: color-mix(in srgb, var(--ink-3) 8%, transparent); /* an auto-revealed line */
+}
+
+/* =============================================================================
+   The dark palette, twice. Case 2 is Auto (follow the OS), case 3 is an
+   explicit Dark choice; they must stay in step, which is why both read the
+   same `--dark-*` pairs. Add new palette roles to all three wiring blocks.
+   ============================================================================= */
+
+/* Case 2 — Auto under a dark OS. `:not([data-theme='light'])` is what makes an
+   explicit Light choice win; an absent attribute, or the literal `auto`, still
+   matches, so Auto keeps tracking the OS. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: var(--dark-bg);
+    --surface-1: var(--dark-surface-1);
+    --surface-2: var(--dark-surface-2);
+    --surface-3: var(--dark-surface-3);
+    --ink: var(--dark-ink);
+    --ink-2: var(--dark-ink-2);
+    --ink-3: var(--dark-ink-3);
+    --rule: var(--dark-rule);
+    --rule-cell: var(--dark-rule-cell);
+    --rule-hc: var(--dark-rule-hc);
+    --rule-cell-hc: var(--dark-rule-cell-hc);
+    --accent: var(--dark-accent);
+    --accent-ink: var(--dark-accent-ink);
+    --confirm: var(--dark-confirm);
+    --unknown: var(--dark-unknown);
+    --focus: var(--dark-focus);
+    --shadow-panel: var(--dark-shadow-panel);
+    --shadow-cell: var(--dark-shadow-cell);
+    --shadow-dialog: var(--dark-shadow-dialog);
+    --grain-line-a: var(--dark-grain-line-a);
+    --grain-line-b: var(--dark-grain-line-b);
+    --grain-vignette: var(--dark-grain-vignette);
+    --grain-blend: var(--dark-grain-blend);
+    --grain-opacity: var(--dark-grain-opacity);
+    --cell-dim: var(--dark-cell-dim);
+  }
+}
+
+/* Case 3 — an explicit Dark choice, whatever the OS says. */
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: var(--dark-bg);
+  --surface-1: var(--dark-surface-1);
+  --surface-2: var(--dark-surface-2);
+  --surface-3: var(--dark-surface-3);
+  --ink: var(--dark-ink);
+  --ink-2: var(--dark-ink-2);
+  --ink-3: var(--dark-ink-3);
+  --rule: var(--dark-rule);
+  --rule-cell: var(--dark-rule-cell);
+  --rule-hc: var(--dark-rule-hc);
+  --rule-cell-hc: var(--dark-rule-cell-hc);
+  --accent: var(--dark-accent);
+  --accent-ink: var(--dark-accent-ink);
+  --confirm: var(--dark-confirm);
+  --unknown: var(--dark-unknown);
+  --focus: var(--dark-focus);
+  --shadow-panel: var(--dark-shadow-panel);
+  --shadow-cell: var(--dark-shadow-cell);
+  --shadow-dialog: var(--dark-shadow-dialog);
+  --grain-line-a: var(--dark-grain-line-a);
+  --grain-line-b: var(--dark-grain-line-b);
+  --grain-vignette: var(--dark-grain-vignette);
+  --grain-blend: var(--dark-grain-blend);
+  --grain-opacity: var(--dark-grain-opacity);
+  --cell-dim: var(--dark-cell-dim);
+}
+
+/* Case 4 — an explicit Light choice, which has to restate the light values
+   because the case-2 block above would otherwise win them back. */
+html[data-theme='light'] {
+  color-scheme: light;
+  --bg: var(--light-bg);
+  --surface-1: var(--light-surface-1);
+  --surface-2: var(--light-surface-2);
+  --surface-3: var(--light-surface-3);
+  --ink: var(--light-ink);
+  --ink-2: var(--light-ink-2);
+  --ink-3: var(--light-ink-3);
+  --rule: var(--light-rule);
+  --rule-cell: var(--light-rule-cell);
+  --rule-hc: var(--light-rule-hc);
+  --rule-cell-hc: var(--light-rule-cell-hc);
+  --accent: var(--light-accent);
+  --accent-ink: var(--light-accent-ink);
+  --confirm: var(--light-confirm);
+  --unknown: var(--light-unknown);
+  --focus: var(--light-focus);
+  --shadow-panel: var(--light-shadow-panel);
+  --shadow-cell: var(--light-shadow-cell);
+  --shadow-dialog: var(--light-shadow-dialog);
+  --grain-line-a: var(--light-grain-line-a);
+  --grain-line-b: var(--light-grain-line-b);
+  --grain-vignette: var(--light-grain-vignette);
+  --grain-blend: var(--light-grain-blend);
+  --grain-opacity: var(--light-grain-opacity);
+  --cell-dim: var(--light-cell-dim);
+}
+
+/* =============================================================================
+   The looks (§1.5 and §1.6), bound to data attributes in cascade order.
+   Every rule below is one attribute, so precedence is source order alone:
+     1. the resting looks
+     2. the orthogonal modifiers (revealed band, dimmed board, touch toggle)
+     3. the preview looks, last, because a preview *modifies* a resting look
+   Every look differs from its neighbours in at least one channel that survives
+   greyscale, colour-blindness and forced colours:
+     unmarked      no glyph · solid hairline · no texture
+     mine          filled diamond (rotated square) · heavier weight
+     mine-locked   filled diamond · corner stamp (a shape, not a colour)
+     blank         centred dot
+     blank-locked  centred dot · pressed-in inner ring
+     wrong-mine    hollow diamond · 1.5px DASHED border · hatch
+     wrong-blank   hollow ring · 1.5px DASHED border · hatch
+     revealed      no border at all (absence) · no press highlight
+     preview-hit   2px DOTTED inset outline · glyph at 45%
+     preview-risk  2px DOTTED inset outline · wrong glyph at 45% · faint hatch
+     preview-none  deliberately nothing, so "no change here" reads as absence
+   Solid, dashed and dotted are each used for one meaning only, which is what
+   makes the board readable with no colour perception at all.
+   ============================================================================= */
+
+/* The glyph is a real text character so it scales with --cell-glyph-size and
+   is announced by assistive tech that reads the cell. The independent `rotate`
+   property rather than `transform`, so board.css keeps `transform` free for a
+   pressed cell's own translate. */
+.mg-cell::before {
+  content: var(--cell-glyph);
+  color: var(--cell-glyph-color);
+  opacity: var(--cell-glyph-alpha);
+  font-size: var(--cell-glyph-size);
+  font-weight: var(--cell-glyph-weight);
+  rotate: var(--cell-glyph-rotate);
+}
+
+.mg-cell {
+  background: var(--cell-fill);
+  border: var(--cell-border-width) var(--cell-border-style) var(--cell-border-color);
+  box-shadow: var(--cell-inset);
+  outline: var(--cell-outline-width) var(--cell-outline-style) var(--cell-outline-color);
+  outline-offset: var(--cell-outline-offset);
+  opacity: var(--cell-opacity);
+  touch-action: var(--cell-touch-action);
+  cursor: var(--cell-cursor);
+}
+
+.mg-cell[data-texture] {
+  background-image: var(--cell-texture);
+}
+
+/* ---- 1. the resting looks ---- */
+
+/* Unmarked: the default a cell already has. Declared only so the contract is
+   visible in one place; it is also the fallback for an unknown data-state. */
+.mg-cell[data-state='unmarked'] {
+  --cell-glyph: '';
+  --cell-fill: var(--surface-3);
+  --cell-border-style: solid;
+  --cell-border-width: var(--rule-w);
+  --cell-border-color: var(--rule-cell);
+  --cell-inset: var(--shadow-cell);
+}
+
+/* Mine asserted, not yet confirmed: a filled diamond. Rendered identically to
+   the locked look on purpose — the correct-but-unlocked state exists for one
+   frame, and a separate look for it would be a flicker. */
+.mg-cell[data-state='mine'],
+.mg-cell[data-state='mine-locked'] {
+  --cell-glyph: '\25C6'; /* ◆ */
+  --cell-glyph-size: 0.46em;
+  --cell-glyph-weight: 700; /* filled is also heavier */
+  --cell-glyph-color: var(--confirm);
+  --cell-glyph-rotate: 45deg; /* a rotated square, not a rotated glyph */
+  --cell-fill: transparent;
+  --cell-border-style: solid;
+  --cell-border-width: var(--rule-w);
+  --cell-border-color: var(--rule-cell);
+  --cell-inset: none;
+}
+
+/* Locked mine: the machine stamped it, so it gets a corner notch. This is the
+   shape redundancy that separates a locked mine from a locked blank without
+   relying on either fill. */
+.mg-cell[data-state='mine-locked'] {
+  --cell-stamp-size: 4px; /* the ::after triangle's leg */
+  --cell-stamp-color: var(--confirm);
+}
+
+/* Blank asserted: a centred dot. */
+.mg-cell[data-state='blank'],
+.mg-cell[data-state='blank-locked'] {
+  --cell-glyph: '\00B7'; /* · */
+  --cell-glyph-size: 2px;
+  --cell-glyph-weight: 700;
+  --cell-glyph-color: var(--confirm);
+  --cell-glyph-rotate: 0deg;
+  --cell-fill: var(--surface-3);
+  --cell-border-style: solid;
+  --cell-border-width: var(--rule-w);
+  --cell-border-color: var(--rule-cell);
+  --cell-inset: none;
+}
+
+/* Locked blank: the dot pressed into the paper — a 1px inner ring. */
+.mg-cell[data-state='blank-locked'] {
+  --cell-inset: inset 0 0 0 var(--rule-w) var(--wash-confirm);
+}
+
+/* A wrong mine: the claim failed. A hollow diamond, a 1.5px dashed border and
+   a 45-degree hatch — three channels, so removing the colour removes none of
+   the meaning. */
+.mg-cell[data-state='wrong-mine'] {
+  --cell-glyph: '\25C7'; /* ◇ */
+  --cell-glyph-size: 0.5em;
+  --cell-glyph-weight: 400;
+  --cell-glyph-color: var(--accent);
+  --cell-glyph-rotate: 45deg;
+  --cell-fill: var(--wash-accent);
+  --cell-border-style: dashed;
+  --cell-border-width: var(--rule-w-strong);
+  --cell-border-color: var(--accent);
+  --cell-inset: none;
+  --cell-texture-color: var(--wash-accent);
+  --cell-texture: repeating-linear-gradient(
+    var(--hatch-angle),
+    var(--cell-texture-color) 0 var(--hatch-line),
+    transparent var(--hatch-line) var(--hatch-gap)
+  );
+}
+
+/* A wrong blank: identical treatment with a ring, because a ring reads as
+   "claimed empty" where a diamond reads as "claimed mine". */
+.mg-cell[data-state='wrong-blank'] {
+  --cell-glyph: '\25CB'; /* ○ */
+  --cell-glyph-size: 0.44em;
+  --cell-glyph-weight: 400;
+  --cell-glyph-color: var(--accent);
+  --cell-glyph-rotate: 0deg;
+  --cell-fill: var(--wash-accent);
+  --cell-border-style: dashed;
+  --cell-border-width: var(--rule-w-strong);
+  --cell-border-color: var(--accent);
+  --cell-inset: none;
+  --cell-texture-color: var(--wash-accent);
+  --cell-texture: repeating-linear-gradient(
+    var(--hatch-angle),
+    var(--cell-texture-color) 0 var(--hatch-line),
+    transparent var(--hatch-line) var(--hatch-gap)
+  );
+}
+
+/* Auto-revealed: the game filled this cell in because its line closed. The
+   channel is absence — no border and no press highlight — and the line's own
+   edge hairline (below) is what makes the band readable. */
+.mg-cell[data-state='revealed'] {
+  --cell-glyph: '';
+  --cell-fill: var(--surface-3);
+  --cell-border-style: solid;
+  --cell-border-width: 0px; /* absence is the shape here */
+  --cell-border-color: transparent;
+  --cell-inset: none;
+}
+
+/* ---- 2. orthogonal modifiers ---- */
+
+/* The revealed band's own tint, for the row/column container. The wash itself
+   is a plain token below, in the rail vocabulary; only the edge belongs to the
+   attribute, because only this state has an edge. */
+[data-revealed='true'] {
+  --line-reveal-edge: inset 0 0 0 var(--rule-w-heavy) var(--confirm);
+  --line-reveal-edge-color: color-mix(in srgb, var(--confirm) 35%, transparent);
+}
+
+/* A board that is not playable recedes. The primary channel is the status
+   strip's text, not this dim — §7.3's rule is that the state is carried by
+   words — so nothing here is load-bearing on its own. */
+[data-inert='true'] {
+  --cell-opacity: var(--cell-dim);
+  --line-opacity: var(--cell-dim);
+}
+
+/* Finger marking (§3.3): the toggle is bound here and consumed by board.css as
+   `touch-action: var(--cell-touch-action)`. Scoped to the cells on purpose —
+   the rails and the page must stay pannable, and a phone player scrolls by
+   default because the toggle ships off. */
+[data-finger-marking='on'] {
+  --cell-touch-action: none;
+}
+
+/* ---- 3. the preview looks, last so they modify a resting look ---- */
+
+/* Will be applied, cost 0: a dotted inset outline and the glyph at 45%. No
+   transition token here — a preview that fades in reads as lag. */
+.mg-cell[data-preview='hit'] {
+  --cell-glyph-alpha: 0.45;
+  --cell-outline-style: dotted;
+  --cell-outline-width: var(--rule-w-heavy);
+  --cell-outline-color: var(--focus);
+  --cell-outline-offset: calc(var(--rule-w-heavy) * -1);
+}
+
+/* Will be applied, cost 1: the same dotted outline in the accent hue, the wrong
+   glyph at 45%, and the hatch at half strength. The `!` badge that warns the
+   score reaches zero is a corner element board.css renders from
+   `--cell-badge-*` below. */
+.mg-cell[data-preview='risk'] {
+  --cell-glyph-alpha: 0.45;
+  --cell-outline-style: dotted;
+  --cell-outline-width: var(--rule-w-heavy);
+  --cell-outline-color: var(--accent);
+  --cell-outline-offset: calc(var(--rule-w-heavy) * -1);
+  --cell-texture-color: var(--wash-accent-soft);
+  --cell-texture: repeating-linear-gradient(
+    var(--hatch-angle),
+    var(--cell-texture-color) 0 var(--hatch-line),
+    transparent var(--hatch-line) var(--hatch-gap)
+  );
+}
+
+/* 'none' and 'none-while-inert' bind nothing on purpose: an identical mark, a
+   locked cell, and a board that has stopped being playable must all look
+   untouched, so "nothing happens here" reads as an absence of change. */
+
+/* =============================================================================
+   Rail and clue vocabulary (§1.6) — values only.
+   These are deliberately NOT bound to a selector here: the clue components do
+   not exist yet, so the data-attribute names belong to the lane that writes
+   them. board.css and clues.css bind these values to whatever attributes they
+   render. The same rule applies to every badge below.
+   ======================================================================== */
+:root {
+  /* Clue run states. A complete run gets a 2px solid underline; an invariant
+     but incomplete run gets a 1px dotted "tape" in the muted ink. */
+  --clue-run-underline: 1px dotted var(--ink-3);
+  --clue-run-underline-complete: var(--rule-w-heavy) solid var(--confirm);
+  --clue-chip-bg: transparent;
+  --clue-chip-bg-complete: color-mix(in srgb, var(--confirm) 12%, transparent);
+
+  /* Clue line states, one border treatment each so the rail is readable in
+     greyscale: solid at rest, dashed for a contradiction, dotted for unknown. */
+  --clue-line-border: var(--rule-w) solid var(--rule);
+  --clue-line-border-complete: var(--rule-w) solid var(--confirm);
+  --clue-line-border-contradiction: var(--rule-w-strong) dashed var(--accent);
+  --clue-line-border-unknown: var(--rule-w) dotted var(--unknown);
+
+  /* Badges: the ✓ / ✕ / ? that sit on a chip or a rail cell, and the `!` that
+     warns a preview would take the score to zero. */
+  --badge-size: 14px;
+  --badge-complete: '\2713'; /* ✓ */
+  --badge-contradiction: '\2715'; /* ✕ */
+  --badge-unknown: '?';
+  --badge-preview: '!';
+  --badge-color-complete: var(--confirm);
+  --badge-color-contradiction: var(--accent);
+  --badge-color-unknown: var(--unknown);
+  --badge-color-preview: var(--accent);
+  --badge-bg-preview: var(--accent);
+
+  /* A fully-labelled line's edge, and the faint tint inside it. */
+  --line-edge-width: var(--rule-w-heavy);
+  --line-edge-color: color-mix(in srgb, var(--confirm) 35%, transparent);
+  --line-reveal-wash: var(--wash-reveal);
+
+  /* The status strip's generating caret and the travelling dashed border. Both
+     are disabled under reduced motion, where the text alone carries the state. */
+  --caret-duration: var(--dur-caret);
+  --caret-steps: steps(2);
+}

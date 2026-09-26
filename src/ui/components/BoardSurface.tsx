@@ -1,0 +1,865 @@
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from 'react'
+import { describeCell, describeLine, interpolate, type Copy } from '../copy'
+import {
+  DragController,
+  ERASE_CAP,
+  type DragPorts,
+  type DragPoint,
+  type PointerEndInput,
+  type PointerDownInput,
+  type PointerMoveInput,
+  type PreviewVerdict,
+} from '../dragController'
+import type { LineProgress, OrderedRunProgress } from '../../application/lineProgress'
+import type {
+  BoardView,
+  CellView,
+  MarkingMode,
+  PreviewView,
+  UiSnapshot,
+  ZoomStep,
+} from '../viewModel'
+import type { GameStore } from '../gameStore'
+
+/**
+ * The board surface: one scroll container, one grid, and every gesture that can
+ * become a game action.
+ *
+ * ─── Why the host owns no dispatch ───────────────────────────────────────────────────
+ * `dragController.ts` is the only place a pointer sequence becomes a mark, a clear
+ * or a focus. This file renders and forwards; the single exception is the port table
+ * below, which *is* the wiring the controller documents. There is deliberately no
+ * second path, so the preview the player sees and the batch that commits cannot be
+ * produced by two different pieces of arithmetic.
+ *
+ * ─── Why nothing is measured for alignment ───────────────────────────────────────────
+ * The stage and every row declare the identical `grid-template-columns`
+ * (`--rail-col`, then `--cols` × `--cell`), so cell *i* sits in the same column of
+ * every row by arithmetic alone. `display: contents` would have been the shorter way
+ * to make a row of cells, but it strips `role="row"` out of the accessibility tree,
+ * so the rows stay real elements and each one repeats the template.
+ *
+ * The only measurement in the file is the Fit cell size, which §1.7 explicitly
+ * sanctions: a `ResizeObserver` on the scroller, floored at 24px and capped at 44px.
+ */
+export interface BoardSurfaceProps {
+  readonly t: Copy
+  readonly snapshot: UiSnapshot
+  readonly board: BoardView | null
+  readonly mode: MarkingMode
+  readonly zoom: ZoomStep
+  readonly fingerMarking: boolean
+  readonly store: GameStore
+  readonly onMode: (mode: MarkingMode) => void
+  readonly onZoom: (zoom: ZoomStep) => void
+  readonly onFingerMarking: (enabled: boolean) => void
+  readonly onGenerate: () => void
+  readonly onCancel: () => void
+}
+
+const ZOOM_CELL: Readonly<Record<Exclude<ZoomStep, 'fit'>, string>> = {
+  s: '26px',
+  m: '32px',
+  l: '40px',
+}
+const FIT_FLOOR_PX = 24
+const FIT_CEILING_PX = 44
+
+export function BoardSurface(props: BoardSurfaceProps) {
+  const { t, snapshot, board, store } = props
+  const interactive = snapshot.status.interactive
+  const scroll = useRef<HTMLDivElement | null>(null)
+  const stage = useRef<HTMLDivElement | null>(null)
+  const rail = useRef<HTMLDivElement | null>(null)
+  const captured = useRef<number | null>(null)
+  const cells = useRef<(HTMLDivElement | null)[]>([])
+  const live = useRef({ interactive })
+  const [roving, setRoving] = useState(0)
+  const [focusInside, setFocusInside] = useState(false)
+  const [fitCell, setFitCell] = useState(32)
+  const round = snapshot.status.round
+  const columns = board?.columns ?? 0
+  const rows = board?.rows ?? 0
+  const grid = useMemo(() => groupRows(board), [board])
+
+  // The ports read live values through a ref, so the controller is built once and
+  // never rebuilt when a snapshot arrives.
+  useEffect(() => {
+    live.current = { interactive }
+  }, [interactive])
+
+  // Stable for the store's lifetime: it reads a ref and touches the DOM, and neither
+  // is a reason to rebuild the port table when a snapshot arrives.
+  const focusCell = useCallback((index: number) => {
+    const node = cells.current[index]
+    if (node === undefined || node === null) {
+      return
+    }
+    node.focus({ preventScroll: true })
+    if (typeof node.scrollIntoView === 'function') {
+      node.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    }
+  }, [])
+
+  const ports = useMemo<DragPorts>(
+    () => ({
+      interactive: () => live.current.interactive,
+      cellIndexAt: (x, y) => {
+        const found = document.elementFromPoint(x, y)
+        const node = found?.closest('[data-cell-index]')
+        if (node === null || node === undefined || stage.current?.contains(node) !== true) {
+          return null
+        }
+        const index = Number(node.getAttribute('data-cell-index'))
+        return Number.isInteger(index) ? index : null
+      },
+      preview: (batch) => store.preview(batch),
+      previewOf: (index, assertion) => store.previewOf(index, assertion),
+      commit: (batch) => {
+        store.actions.mark(batch)
+      },
+      clear: (index) => {
+        store.actions.clear(index)
+      },
+      focus: (index) => {
+        setRoving(index)
+        focusCell(index)
+      },
+      setCaptured: (pointerId) => {
+        const node = stage.current
+        if (node === null) {
+          return
+        }
+        if (pointerId !== null) {
+          captured.current = pointerId
+          if (typeof node.setPointerCapture === 'function') {
+            node.setPointerCapture(pointerId)
+          }
+          return
+        }
+        const held = captured.current
+        captured.current = null
+        if (held !== null && typeof node.releasePointerCapture === 'function') {
+          node.releasePointerCapture(held)
+        }
+      },
+    }),
+    [store, focusCell],
+  )
+
+  const controller = useRef<DragController | null>(null)
+  if (controller.current === null) {
+    controller.current = new DragController(ports)
+  }
+  const drag = controller.current
+  // `getSnapshot`/`subscribe` are prototype methods, and `useSyncExternalStore` calls
+  // them with no receiver, so they are wrapped rather than passed by reference.
+  const subscribeDrag = useCallback(
+    (listener: () => void) => drag.subscribe(listener),
+    [drag],
+  )
+  const getDragSnapshot = useCallback(() => drag.getSnapshot(), [drag])
+  const dragState = useSyncExternalStore(subscribeDrag, getDragSnapshot, getDragSnapshot)
+
+  useEffect(() => {
+    drag.setMarkingMode(props.mode)
+  }, [drag, props.mode])
+
+  useEffect(() => {
+    drag.setFingerMarking(props.fingerMarking)
+  }, [drag, props.fingerMarking])
+
+  // A new round invalidates every cell element and the roving index (§3.4).
+  useEffect(() => {
+    cells.current = []
+    setRoving(0)
+  }, [round])
+
+  // §3.6: on a fresh round, move focus to the first cell ONLY if the player was
+  // already inside the board. Never steal focus from the settings panel.
+  const previousStatus = useRef(snapshot.status.status)
+  useEffect(() => {
+    const before = previousStatus.current
+    previousStatus.current = snapshot.status.status
+    if (before !== 'generating' || snapshot.status.status !== 'playing') {
+      return
+    }
+    const active = document.activeElement
+    if (active !== null && active.closest('.mg-board-scroll') !== null) {
+      focusCell(0)
+    }
+  }, [snapshot.status.status, focusCell])
+
+  useEffect(() => {
+    const node = scroll.current
+    if (node === null || typeof ResizeObserver === 'undefined' || columns === 0) {
+      return
+    }
+    const measure = (): void => {
+      const allowance = rail.current?.offsetWidth ?? 0
+      const next = Math.floor((node.clientWidth - allowance) / columns)
+      setFitCell(Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, next)))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(node)
+    return () => {
+      observer.disconnect()
+    }
+  }, [columns])
+
+  function moveTo(next: number): void {
+    const bounded = Math.max(0, Math.min(columns * rows - 1, next))
+    // A move first aborts any live drag, so an arrow key can never commit a batch.
+    drag.onKeyboard('move', roving)
+    setRoving(bounded)
+    focusCell(bounded)
+  }
+
+  function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    const cellNode = (event.target as HTMLElement | null)?.closest('[data-cell-index]') ?? null
+    const raw = cellNode === null ? roving : Number(cellNode.getAttribute('data-cell-index'))
+    const index = Number.isInteger(raw) ? raw : roving
+    const rowStart = Math.floor(index / columns) * columns
+    const rowEnd = Math.min(rowStart + columns - 1, columns * rows - 1)
+    let prevent = true
+    switch (event.key) {
+      case 'ArrowRight':
+        moveTo(Math.min(index + 1, rowEnd))
+        break
+      case 'ArrowLeft':
+        moveTo(Math.max(index - 1, rowStart))
+        break
+      case 'ArrowDown':
+        moveTo(Math.min(index + columns, columns * rows - 1))
+        break
+      case 'ArrowUp':
+        moveTo(Math.max(index - columns, rowStart))
+        break
+      case 'Home':
+        moveTo(event.ctrlKey ? 0 : rowStart)
+        break
+      case 'End':
+        moveTo(event.ctrlKey ? columns * rows - 1 : rowEnd)
+        break
+      case 'm':
+      case 'M':
+        prevent = drag.onKeyboard('mark-mine', index).preventDefault
+        break
+      case 'b':
+      case 'B':
+        prevent = drag.onKeyboard('mark-blank', index).preventDefault
+        break
+      case 'Backspace':
+      case 'Delete':
+        prevent = drag.onKeyboard('clear', index).preventDefault
+        break
+      case 'Escape':
+        prevent = drag.onEscape().preventDefault
+        break
+      default:
+        return
+    }
+    if (prevent) {
+      event.preventDefault()
+    }
+  }
+
+  const cellSize = props.zoom === 'fit' ? `${fitCell}px` : ZOOM_CELL[props.zoom]
+
+  return (
+    <div className="mg-board-surface">
+      <BoardToolbar {...props} />
+      <div
+        className="mg-board-scroll"
+        ref={scroll}
+        data-testid="board-scroll"
+        onFocus={() => {
+          setFocusInside(true)
+        }}
+        onBlur={(event) => {
+          const next = event.relatedTarget
+          if (next === null || scroll.current?.contains(next) !== true) {
+            setFocusInside(false)
+          }
+        }}
+      >
+        <div
+          className="mg-board-stage"
+          ref={stage}
+          role="grid"
+          aria-rowcount={rows + 1}
+          aria-colcount={columns + 1}
+          aria-label={interpolate(t.board.label, { rows, columns })}
+          aria-readonly={interactive ? undefined : true}
+          data-testid="board-stage"
+          data-dragging={dragState.phase === 'idle' ? undefined : 'true'}
+          data-finger-marking={props.fingerMarking ? 'on' : 'off'}
+          data-inert={interactive ? undefined : 'true'}
+          style={
+            {
+              '--cols': String(columns),
+              '--rows': String(rows),
+              '--cell': cellSize,
+              '--rail-col': 'max(4.5ch, calc(var(--cell) * 1.7))',
+            } as CSSProperties
+          }
+          onPointerDown={(event) => {
+            const input = pointerDownInput(event)
+            if (drag.onPointerDown(input).preventDefault) {
+              event.preventDefault()
+            }
+          }}
+          onPointerMove={(event) => {
+            const input = pointerMoveInput(event)
+            if (drag.onPointerMove(input).preventDefault) {
+              event.preventDefault()
+            }
+          }}
+          onPointerUp={(event) => {
+            const input = pointerEndInput(event)
+            if (drag.onPointerUp(input).preventDefault) {
+              event.preventDefault()
+            }
+          }}
+          onPointerCancel={(event) => {
+            const input = pointerEndInput(event)
+            if (drag.onPointerCancel(input).preventDefault) {
+              event.preventDefault()
+            }
+          }}
+          onLostPointerCapture={(event) => {
+            const input = pointerEndInput(event)
+            if (drag.onLostPointerCapture(input).preventDefault) {
+              event.preventDefault()
+            }
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault()
+          }}
+          onKeyDown={onKeyDown}
+        >
+          {board === null ? null : (
+            <>
+              <ColumnClueRail t={t} board={board} focusWithin={focusInside} railRef={rail} />
+              {grid.map((rowCells) => (
+                <BoardRow
+                  key={rowCells[0]?.index ?? 0}
+                  t={t}
+                  row={rowCells[0]?.row ?? 0}
+                  cells={rowCells}
+                  board={board}
+                  drag={drag}
+                  roving={roving}
+                  registerCell={(index, node) => {
+                    cells.current[index] = node
+                  }}
+                />
+              ))}
+            </>
+          )}
+        </div>
+      </div>
+      <DragPreviewChip
+        t={t}
+        preview={dragState.preview}
+        score={snapshot.status.score.current}
+        capReached={dragState.capReached}
+      />
+    </div>
+  )
+}
+
+function groupRows(board: BoardView | null): readonly (readonly CellView[])[] {
+  if (board === null) {
+    return []
+  }
+  const grouped: CellView[][] = Array.from({ length: board.rows }, () => [])
+  for (const cell of board.cells) {
+    grouped[cell.row]?.push(cell)
+  }
+  return grouped
+}
+
+function pointerDownInput(event: ReactPointerEvent<HTMLDivElement>): PointerDownInput {
+  return {
+    clientX: event.clientX,
+    clientY: event.clientY,
+    pointerId: event.pointerId,
+    button: event.button,
+    isPrimary: event.isPrimary,
+    shiftKey: event.shiftKey,
+  }
+}
+
+function pointerMoveInput(event: ReactPointerEvent<HTMLDivElement>): PointerMoveInput {
+  const native = event.nativeEvent as Event & {
+    getCoalescedEvents?: () => readonly DragPoint[]
+  }
+  return {
+    clientX: event.clientX,
+    clientY: event.clientY,
+    pointerId: event.pointerId,
+    isPrimary: event.isPrimary,
+    getCoalescedEvents: () =>
+      typeof native.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : [],
+  }
+}
+
+function pointerEndInput(event: ReactPointerEvent<HTMLDivElement>): PointerEndInput {
+  return { clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId }
+}
+
+// ---- toolbar -------------------------------------------------------------------
+
+export type BoardToolbarProps = BoardSurfaceProps
+
+export function BoardToolbar(props: BoardToolbarProps) {
+  const { t, snapshot, mode, zoom, fingerMarking } = props
+  return (
+    <div className="mg-toolbar" data-testid="board-toolbar">
+      <ModeControl t={t} mode={mode} disabled={!snapshot.status.interactive} onMode={props.onMode} />
+      <ZoomControl t={t} zoom={zoom} onZoom={props.onZoom} />
+      <FingerMarkingControl t={t} enabled={fingerMarking} onChange={props.onFingerMarking} />
+      {snapshot.status.isGenerating ? (
+        /* §8.9: Cancel is hidden whenever a board exists, because cancelling would
+           discard a round the player can still finish; "Keep waiting" is the whole
+           affordance in that case. */
+        snapshot.status.hasRound ? (
+          <span className="mg-toolbar__waiting">{t.toolbar.keepWaiting}</span>
+        ) : (
+          <button className="mg-button" type="button" onClick={props.onCancel}>
+            {t.toolbar.cancel}
+          </button>
+        )
+      ) : (
+        <button className="mg-button mg-button--primary" type="button" onClick={props.onGenerate}>
+          {t.toolbar.generate}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ModeControl({
+  t,
+  mode,
+  disabled,
+  onMode,
+}: {
+  readonly t: Copy
+  readonly mode: MarkingMode
+  readonly disabled: boolean
+  readonly onMode: (mode: MarkingMode) => void
+}) {
+  const modes: readonly MarkingMode[] = ['mine', 'blank', 'erase']
+  return (
+    <div className="mg-toolbar__group" role="radiogroup" aria-label={t.toolbar.mode}>
+      {modes.map((candidate) => (
+        <button
+          key={candidate}
+          className="mg-toolbar__mode"
+          type="button"
+          role="radio"
+          aria-checked={mode === candidate}
+          data-mode={candidate}
+          disabled={disabled}
+          onClick={() => {
+            onMode(candidate)
+          }}
+        >
+          {t.toolbar.modes[candidate]}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function ZoomControl({
+  t,
+  zoom,
+  onZoom,
+}: {
+  readonly t: Copy
+  readonly zoom: ZoomStep
+  readonly onZoom: (zoom: ZoomStep) => void
+}) {
+  const steps: readonly ZoomStep[] = ['fit', 's', 'm', 'l']
+  return (
+    <div className="mg-toolbar__group" role="radiogroup" aria-label={t.toolbar.zoom}>
+      {steps.map((candidate) => (
+        <button
+          key={candidate}
+          className="mg-toolbar__zoom"
+          type="button"
+          role="radio"
+          aria-checked={zoom === candidate}
+          data-zoom={candidate}
+          onClick={() => {
+            onZoom(candidate)
+          }}
+        >
+          {t.toolbar.zooms[candidate]}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function FingerMarkingControl({
+  t,
+  enabled,
+  onChange,
+}: {
+  readonly t: Copy
+  readonly enabled: boolean
+  readonly onChange: (enabled: boolean) => void
+}) {
+  return (
+    <label className="mg-toolbar__finger">
+      <input
+        type="checkbox"
+        role="switch"
+        checked={enabled}
+        aria-describedby="mg-finger-marking-hint"
+        onChange={(event) => {
+          onChange(event.currentTarget.checked)
+        }}
+      />
+      <span className="mg-toolbar__finger-label">{t.toolbar.fingerMarking}</span>
+      <span className="mg-visually-hidden" id="mg-finger-marking-hint">
+        {t.toolbar.fingerMarkingHint}
+      </span>
+    </label>
+  )
+}
+
+/**
+ * The drag preview, stated in the score it will spend. It is not a live region:
+ * §6.2 allows exactly three, and a chip that re-announced on every pointer sample
+ * would make the board unusable with a screen reader.
+ */
+export function DragPreviewChip({
+  t,
+  preview,
+  score,
+  capReached,
+}: {
+  readonly t: Copy
+  readonly preview: PreviewView | null
+  readonly score: number
+  readonly capReached: boolean
+}) {
+  const values = { cells: preview?.affectedCount ?? 0, from: score, to: preview?.projectedScore ?? score }
+  const text =
+    preview === null
+      ? t.toolbar.preview.idle
+      : preview.reachesZero
+        ? interpolate(t.toolbar.preview.endsRound, values)
+        : interpolate(t.toolbar.preview.score, values)
+  return (
+    <p
+      className="mg-preview"
+      aria-live="off"
+      data-live={preview === null ? 'false' : 'true'}
+      data-ends={preview?.reachesZero === true ? 'true' : 'false'}
+    >
+      <span className="mg-preview__text">{text}</span>
+      {preview?.reachesZero === true ? (
+        <span className="mg-preview__badge">{t.toolbar.preview.badge}</span>
+      ) : null}
+      {capReached ? (
+        <span className="mg-preview__cap">{interpolate(t.toolbar.capReached, { max: ERASE_CAP })}</span>
+      ) : null}
+    </p>
+  )
+}
+
+// ---- stage ---------------------------------------------------------------------
+
+export function ColumnClueRail({
+  t,
+  board,
+  focusWithin,
+  railRef,
+}: {
+  readonly t: Copy
+  readonly board: BoardView
+  readonly focusWithin: boolean
+  readonly railRef: RefObject<HTMLDivElement | null>
+}) {
+  return (
+    <div
+      className="mg-board-row mg-board-row--rails"
+      role="row"
+      data-focus-within={focusWithin ? 'true' : 'false'}
+    >
+      <div className="mg-rail-cell mg-rail-cell--corner" role="presentation" aria-hidden="true" ref={railRef}>
+        {t.board.corner}
+      </div>
+      {board.columnProgress.map((line) => (
+        <ClueCell key={line.index} t={t} line={line} orientation="column" />
+      ))}
+    </div>
+  )
+}
+
+export function BoardRow({
+  t,
+  row,
+  cells,
+  board,
+  drag,
+  roving,
+  registerCell,
+}: {
+  readonly t: Copy
+  readonly row: number
+  readonly cells: readonly CellView[]
+  readonly board: BoardView
+  readonly drag: DragController
+  readonly roving: number
+  readonly registerCell: (index: number, node: HTMLDivElement | null) => void
+}) {
+  const rowLine = board.rowProgress[row]
+  if (rowLine === undefined) {
+    return null
+  }
+  return (
+    <div className="mg-board-row" role="row">
+      <ClueCell t={t} line={rowLine} orientation="row" />
+      {cells.map((cell) => {
+        const columnLine = board.columnProgress[cell.column]
+        return (
+          <BoardCell
+            key={cell.index}
+            t={t}
+            cell={cell}
+            rowLine={rowLine}
+            columnLine={columnLine}
+            revealed={rowLine.complete || columnLine?.complete === true}
+            preview={drag.previewVerdictOf(cell.index)}
+            tabIndex={cell.index === roving ? 0 : -1}
+            registerCell={registerCell}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * One cell. `data-state` is the single value the stylesheet binds, and the raw
+ * `data-mark`/`data-locked`/`data-correct` attributes stay too, so a test can assert
+ * what the projection said and not only the state it resolved to.
+ *
+ * §8.5: an unmarked cell carries no truth-derived attribute at all — `data-correct`
+ * is `unknown` for a cell the player has not claimed, never `true`.
+ */
+export function BoardCell({
+  t,
+  cell,
+  rowLine,
+  columnLine,
+  revealed,
+  preview,
+  tabIndex,
+  registerCell,
+}: {
+  readonly t: Copy
+  readonly cell: CellView
+  readonly rowLine: LineProgress
+  readonly columnLine: LineProgress | undefined
+  readonly revealed: boolean
+  readonly preview: PreviewVerdict
+  readonly tabIndex: number
+  readonly registerCell: (index: number, node: HTMLDivElement | null) => void
+}) {
+  const state = cellState(cell, revealed)
+  return (
+    <div
+      className="mg-cell"
+      role="gridcell"
+      ref={(node) => {
+        registerCell(cell.index, node)
+      }}
+      tabIndex={tabIndex}
+      aria-selected="false"
+      aria-label={describeCell(t, cell)}
+      data-testid={`cell-${cell.index}`}
+      data-cell-index={cell.index}
+      data-state={state}
+      data-mark={cell.mark}
+      data-locked={cell.locked ? 'true' : 'false'}
+      data-correct={cell.correct === null ? 'unknown' : cell.correct ? 'true' : 'false'}
+      data-preview={preview === 'hit' || preview === 'risk' ? preview : undefined}
+      /* The wrong-* states set `--cell-texture` and the background-image that paints
+         it is bound to `[data-texture]`, so a hatched cell needs both. */
+      data-texture={state === 'wrong-mine' || state === 'wrong-blank' ? 'hatch' : undefined}
+    >
+      {cell.mark === 'unknown' ? null : <span className="mg-cell__mark" aria-hidden="true" />}
+      <RunGuides run={runCovering(rowLine.runs, cell.column)} cap={capOf(rowLine.runs, cell.column)} />
+      <RunGuides
+        run={runCovering(columnLine?.runs ?? [], cell.row)}
+        cap={capOf(columnLine?.runs ?? [], cell.row)}
+        orientation="column"
+      />
+    </div>
+  )
+}
+
+/** The eight values the style lane binds. Anything else is an unmapped state. */
+function cellState(cell: CellView, revealed: boolean): string {
+  if (cell.mark === 'unknown') {
+    return revealed ? 'revealed' : 'unmarked'
+  }
+  if (cell.correct === false) {
+    return cell.mark === 'mine' ? 'wrong-mine' : 'wrong-blank'
+  }
+  if (cell.locked) {
+    return cell.mark === 'mine' ? 'mine-locked' : 'blank-locked'
+  }
+  return cell.mark === 'mine' ? 'mine' : 'blank'
+}
+
+type Cap = 'only' | 'start' | 'middle' | 'end'
+
+function runCovering(runs: readonly OrderedRunProgress[], offset: number): OrderedRunProgress | null {
+  for (const run of runs) {
+    if (run.start === null || run.end === null) {
+      continue
+    }
+    if (offset >= run.start && offset <= run.end) {
+      return run
+    }
+  }
+  return null
+}
+
+function capOf(runs: readonly OrderedRunProgress[], offset: number): Cap {
+  for (const run of runs) {
+    if (run.start === null || run.end === null) {
+      continue
+    }
+    if (offset < run.start || offset > run.end) {
+      continue
+    }
+    if (run.start === run.end) {
+      return 'only'
+    }
+    if (offset === run.start) {
+      return 'start'
+    }
+    return offset === run.end ? 'end' : 'middle'
+  }
+  return 'only'
+}
+
+/**
+ * The run tape. It renders inside the cells a run covers rather than as one measured
+ * overlay, so it needs no geometry: consecutive segments join into a continuous
+ * underline and `data-cap` tells the stylesheet where the ends are.
+ *
+ * §5.6: only an INVARIANT run gets a tape. `mineIndices` is a deduction and is
+ * deliberately not rendered — it must never read as a solution overlay.
+ */
+export function RunGuides({
+  run,
+  cap,
+  orientation = 'row',
+}: {
+  readonly run: OrderedRunProgress | null
+  readonly cap: Cap
+  readonly orientation?: 'row' | 'column'
+}) {
+  if (run === null || !run.invariant) {
+    return null
+  }
+  return (
+    <span
+      className="mg-run-tape"
+      data-run={run.complete ? 'complete' : 'tape'}
+      data-cap={cap}
+      data-orientation={orientation}
+      aria-hidden="true"
+    />
+  )
+}
+
+/**
+ * A rail cell. It is never focusable and never clickable: the only claim a rail
+ * makes is what the line already knows, and the `aria-label` carries the whole
+ * sentence so the visual glyphs can be hidden from assistive technology.
+ */
+export function ClueCell({
+  t,
+  line,
+  orientation,
+}: {
+  readonly t: Copy
+  readonly line: LineProgress
+  readonly orientation: 'row' | 'column'
+}) {
+  const state = lineState(line)
+  return (
+    <div
+      className={state === 'complete' ? 'mg-rail-cell mg-revealed-line' : 'mg-rail-cell'}
+      role={orientation === 'row' ? 'rowheader' : 'columnheader'}
+      aria-label={describeLine(t, line)}
+      data-testid={`${orientation}-clue-${line.index}`}
+      data-line={orientation}
+      data-line-state={state}
+      data-revealed={state === 'complete' ? 'true' : undefined}
+    >
+      <span className="mg-rail-cell__glyph" aria-hidden="true">
+        {state === 'contradiction' ? '✕' : state === 'unknown' ? '?' : state === 'complete' ? '✓' : ''}
+      </span>
+      <span className="mg-rail-cell__clue" aria-hidden="true">
+        {line.clue.length === 0 ? (
+          <span className="mg-rail-cell__empty">—</span>
+        ) : (
+          line.clue.map((length, runIndex) => (
+            <span className="mg-rail-cell__run" key={runIndex}>
+              {runIndex > 0 ? (
+                <span className="mg-rail-cell__separator" data-separator="gap">
+                  │
+                </span>
+              ) : null}
+              {line.clue.length > 1 ? (
+                <span
+                  className="mg-rail-cell__run-chip"
+                  data-run-chip={line.runs[runIndex]?.complete === true ? 'filled' : 'open'}
+                >
+                  {line.runs[runIndex]?.complete === true ? '▪' : '□'}
+                </span>
+              ) : null}
+              <span className="mg-rail-cell__numeral">{length}</span>
+            </span>
+          ))
+        )}
+      </span>
+    </div>
+  )
+}
+
+/** §5's priority: contradiction, then unknown, then complete, then neutral. */
+function lineState(line: LineProgress): 'contradiction' | 'unknown' | 'complete' | 'neutral' {
+  if (line.contradiction) {
+    return 'contradiction'
+  }
+  if (line.status === 'unknown') {
+    return 'unknown'
+  }
+  return line.complete ? 'complete' : 'neutral'
+}

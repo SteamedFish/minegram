@@ -1,16 +1,485 @@
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
-import App from './App'
+import { act, type ReactNode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { App } from './App'
+import {
+  createInitialGameState,
+  gameReducer,
+  type GeneratedRound,
+  type GameState,
+} from './application/gameReducer'
+import { derivePuzzleClues } from './domain/puzzle'
+import type { BinaryMineBoard } from './domain/board'
+import { normalizeGenerationSettings } from './engine/generator/settings'
+import {
+  createGameStore,
+  disposeGameStore,
+  setGameStore,
+  type GameStore,
+  type GameStoreOptions,
+} from './ui/gameStore'
+import type { GenerationWorkerFactory, GenerationWorkerHandlers } from './application/generationClient'
 
-afterEach(() => {
-  cleanup()
+/**
+ * The app suite.
+ *
+ * `@testing-library/react` is deliberately not used. Every assertion here is about the
+ * rendered *contract* — landmark roles, `data-state` values, the three live regions,
+ * the absence of a solution board and of a derived seed — and those are plain DOM
+ * reads. The suite therefore mounts through `createRoot` inside `act`, which also
+ * proves the app itself needs nothing from a test library to be driven.
+ *
+ * Each test installs its own store through `setGameStore` and disposes it, so no test
+ * can inherit another's generation, locale or worker.
+ */
+
+const FIXTURE_SEED = 'fixture-seed'
+const FIXTURE_SETTINGS = normalizeGenerationSettings({
+  rows: 2,
+  columns: 2,
+  densityPercent: 50,
+  seed: FIXTURE_SEED,
+  difficulty: 'starter',
+  maxAttempts: 3,
 })
 
-describe('App', () => {
-  it('renders the Phase 0 foundation shell', () => {
-    render(<App phaseLabel="Phase 0" />)
+const CELL_STATES = new Set([
+  'unmarked',
+  'mine',
+  'mine-locked',
+  'blank',
+  'blank-locked',
+  'wrong-mine',
+  'wrong-blank',
+  'revealed',
+])
 
-    expect(screen.getByRole('heading', { name: 'Minegram' })).toBeDefined()
-    expect(screen.getByText('Project foundation is ready.')).toBeDefined()
+let container: HTMLElement
+let unmount: (() => void) | null = null
+
+function render(node: ReactNode): void {
+  const root = createRoot(container)
+  act(() => {
+    root.render(node)
+  })
+  unmount = () => {
+    act(() => {
+      root.unmount()
+    })
+  }
+}
+
+function install(state: GameState, options: GameStoreOptions = {}): GameStore {
+  const store = createGameStore({ initialState: state, ...options })
+  setGameStore(store)
+  return store
+}
+
+/**
+ * A worker that answers every request with a round built for the settings it was
+ * asked for.
+ *
+ * jsdom has no `Worker`, so without this a generation ends in `worker-unavailable` and
+ * the reducer reverts the settings — which is correct behaviour, but it would hide
+ * whether a *successful* new seed reaches the panel. Echoing the requested settings
+ * back matters: the reducer rejects a round whose settings are not the ones it asked
+ * for, so a fixed round would fail for the wrong reason. The reply is deferred by one
+ * microtask so the client has finished its own bookkeeping first, as a real worker would.
+ */
+function succeedingWorker(): GenerationWorkerFactory {
+  return () => {
+    let handlers: GenerationWorkerHandlers | null = null
+    return {
+      postMessage(message) {
+        if (message.type !== 'generation/request') {
+          return
+        }
+        const { generationId, requestId, settings } = message
+        const dimensions = { rows: settings.rows, columns: settings.columns }
+        const board = Array.from({ length: settings.rows * settings.columns }, (_, i) =>
+          i % 2 === 0 ? 1 : 0,
+        ) as BinaryMineBoard
+        queueMicrotask(() => {
+          handlers?.message({
+            data: {
+              type: 'generation/succeeded',
+              requestId,
+              generationId,
+              round: { settings, board, puzzle: { dimensions, clues: derivePuzzleClues(board, dimensions) } },
+            },
+          } as MessageEvent<unknown>)
+        })
+      },
+      terminate() {
+        handlers = null
+      },
+      setHandlers(next) {
+        handlers = next
+      },
+    }
+  }
+}
+
+function all(selector: string): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(selector))
+}
+
+function one(selector: string): HTMLElement {
+  const found = container.querySelector<HTMLElement>(selector)
+  if (found === null) {
+    throw new Error(`expected one ${selector}, found none`)
+  }
+  return found
+}
+
+function click(target: Element | null): void {
+  if (target === null) {
+    throw new Error('click: no target')
+  }
+  act(() => {
+    ;(target as HTMLElement).click()
+  })
+}
+
+function selectValue(target: Element | null, value: string): void {
+  if (target === null) {
+    throw new Error('selectValue: no target')
+  }
+  const node = target as HTMLSelectElement
+  act(() => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
+    setter?.call(node, value)
+    node.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+}
+
+/**
+ * The *live* value of a controlled input. `getAttribute('value')` only sees what
+ * React wrote at mount, so a field re-rendered by a state update has to be read as a
+ * property or the test would keep asserting the pre-update text.
+ */
+function fieldValue(selector: string): string {
+  const node = one(selector) as HTMLInputElement
+  const getter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.get
+  return getter?.call(node) ?? node.value
+}
+
+/** `idle → generating → playing`, driven through the real reducer. */
+function playingState(): GameState {
+  const start = gameReducer(baseState(), { type: 'generation/start' })
+  if (start.type !== 'transition') {
+    throw new Error(`fixture: expected a transition, got ${start.type}`)
+  }
+  const succeeded = gameReducer(start.state, {
+    type: 'generation/succeeded',
+    generationId: start.state.generationId,
+    round: fixtureRound(),
+  })
+  if (succeeded.type !== 'transition') {
+    throw new Error(`fixture: expected a transition, got ${succeeded.type}`)
+  }
+  return succeeded.state
+}
+
+function failedState(reason: string, from: GameState): GameState {
+  const start = gameReducer(from, { type: 'generation/start' })
+  if (start.type !== 'transition') {
+    throw new Error(`fixture: expected a transition, got ${start.type}`)
+  }
+  const failed = gameReducer(start.state, {
+    type: 'generation/failed',
+    generationId: start.state.generationId,
+    failure: { reason, message: 'the generator could not prove a unique solution', details: {} },
+  })
+  if (failed.type !== 'transition') {
+    throw new Error(`fixture: expected a transition, got ${failed.type}`)
+  }
+  return failed.state
+}
+
+function baseState(): GameState {
+  return createInitialGameState({ settings: FIXTURE_SETTINGS, initialScore: 5 })
+}
+
+function fixtureRound(): GeneratedRound {
+  const board = [1, 0, 0, 1] as const
+  const dimensions = { rows: 2, columns: 2 } as const
+  return {
+    settings: FIXTURE_SETTINGS,
+    board,
+    puzzle: { dimensions, clues: derivePuzzleClues(board, dimensions) },
+  }
+}
+
+beforeEach(() => {
+  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+  window.localStorage.clear()
+  document.documentElement.removeAttribute('data-theme')
+  document.documentElement.removeAttribute('lang')
+  container = document.createElement('div')
+  document.body.append(container)
+})
+
+afterEach(() => {
+  unmount?.()
+  unmount = null
+  container.remove()
+  disposeGameStore()
+  window.localStorage.clear()
+  document.documentElement.removeAttribute('data-theme')
+  document.documentElement.removeAttribute('lang')
+})
+
+describe('App landmarks and live regions', () => {
+  it('renders the wordmark as the page’s only h1 and drops the Phase 0 shell', () => {
+    install(baseState())
+    render(<App />)
+
+    expect(all('h1')).toHaveLength(1)
+    expect(one('h1').textContent).toBe('MINEGRAM')
+    expect(container.querySelector('.app-shell')).toBeNull()
+    expect(container.textContent).not.toContain('Project foundation is ready')
+  })
+
+  it('lays the four regions out in reading order', () => {
+    install(baseState())
+    render(<App />)
+
+    const regions = Array.from(one('.mg-app').children)
+    expect(regions.map((node) => node.tagName.toLowerCase())).toEqual([
+      'header',
+      'aside',
+      'main',
+      'aside',
+      'footer',
+    ])
+  })
+
+  it('exposes exactly one polite status region and no alert while idle', () => {
+    install(baseState())
+    render(<App />)
+
+    const polite = all('[role="status"]')
+    expect(polite).toHaveLength(1)
+    expect(polite[0].getAttribute('aria-live')).toBe('polite')
+    expect(polite[0].getAttribute('aria-atomic')).toBe('true')
+    expect(all('[role="alert"]')).toHaveLength(0)
+    expect(all('[aria-live="polite"]')).toHaveLength(1)
+  })
+
+  it('never puts aria-live on the board', () => {
+    install(playingState())
+    render(<App />)
+
+    const grid = one('[role="grid"]')
+    expect(grid.closest('[aria-live]')).toBeNull()
+    expect(grid.closest('[role="status"]')).toBeNull()
+  })
+})
+
+describe('App board contract', () => {
+  it('renders one grid whose rails and cells carry the specified roles', () => {
+    install(playingState())
+    render(<App />)
+
+    const grid = one('[role="grid"]')
+    // The rail and the corner are part of the grid, so both counts are one higher
+    // than the puzzle dimensions.
+    expect(grid.getAttribute('aria-rowcount')).toBe('3')
+    expect(grid.getAttribute('aria-colcount')).toBe('3')
+    // `aria-readonly` is omitted while the round is playable; ARIA's default is false.
+    expect(grid.getAttribute('aria-readonly')).toBeNull()
+
+    const corner = one('.mg-board-stage [role="presentation"]')
+    expect(corner.getAttribute('aria-hidden')).toBe('true')
+
+    expect(all('[role="rowheader"]').length).toBeGreaterThan(0)
+    expect(all('[role="columnheader"]').length).toBeGreaterThan(0)
+    for (const rail of all('[role="rowheader"], [role="columnheader"]')) {
+      expect(rail.getAttribute('tabindex')).toBeNull()
+      expect(rail.getAttribute('aria-label')).not.toBe('')
+    }
+
+    const cells = all('[role="gridcell"]')
+    expect(cells).toHaveLength(4)
+    for (const cell of cells) {
+      expect(cell.getAttribute('aria-label')).not.toBe('')
+      expect(cell.getAttribute('aria-selected')).toBe('false')
+    }
+  })
+
+  it('gives every cell one of the eight contract states and no unknown preview value', () => {
+    install(playingState())
+    render(<App />)
+
+    for (const cell of all('.mg-cell')) {
+      const state = cell.getAttribute('data-state')
+      expect(state).not.toBeNull()
+      expect(CELL_STATES.has(state as string)).toBe(true)
+      const preview = cell.getAttribute('data-preview')
+      if (preview !== null) {
+        expect(['hit', 'risk']).toContain(preview)
+      }
+      // §8.5: an unmarked cell's attributes must not leak a truth-derived value.
+      if (cell.getAttribute('data-mark') === 'unknown') {
+        expect(cell.getAttribute('data-correct')).toBe('unknown')
+      }
+    }
+  })
+
+  it('keeps exactly one cell in the tab order', () => {
+    install(playingState())
+    render(<App />)
+
+    const tabbable = all('.mg-cell[tabindex="0"]')
+    expect(tabbable).toHaveLength(1)
+    expect(all('.mg-cell[tabindex="-1"]')).toHaveLength(3)
+  })
+
+  it('marks the board read-only and inert when the round is not playing', () => {
+    install(failedState('infeasible', playingState()))
+    render(<App />)
+
+    const stage = one('.mg-board-stage')
+    expect(stage.getAttribute('aria-readonly')).toBe('true')
+    expect(stage.getAttribute('data-inert')).toBe('true')
+    expect(stage.getAttribute('data-finger-marking')).toMatch(/^(on|off)$/)
+  })
+
+  it('never puts the solution board or a derived seed into the DOM', () => {
+    const store = install(playingState())
+    render(<App />)
+    act(() => {
+      store.actions.nextRound()
+    })
+    const html = container.innerHTML
+    // The fixture board is [1,0,0,1]; a leaked board would show as a row of booleans
+    // or as the boolean 1/0 pair anywhere in the markup.
+    expect(html).not.toMatch(/\[(?:1|0)(?:,(?:1|0))+\]/)
+    expect(container.textContent).not.toContain('round:')
+  })
+})
+
+describe('App failure surface', () => {
+  it('shows the alert and a resume offer only when the failure kept a board', () => {
+    install(failedState('worker-error', playingState()))
+    render(<App />)
+
+    const alert = all('[role="alert"]')
+    expect(alert).toHaveLength(1)
+    expect(alert[0].getAttribute('aria-atomic')).toBe('true')
+    expect(one('.mg-round-banner').getAttribute('data-round-state')).toBe('resume')
+  })
+
+  it('offers no resume when the failure had no board to keep', () => {
+    install(failedState('worker-error', baseState()))
+    render(<App />)
+
+    expect(all('[role="alert"]')).toHaveLength(1)
+    expect(one('.mg-round-banner').getAttribute('data-round-state')).toBe('none')
+  })
+
+  it('gives a deterministic failure no retry action but keeps the seed change', () => {
+    install(failedState('infeasible', baseState()))
+    render(<App />)
+
+    const report = one('.mg-failure')
+    const labels = Array.from(report.querySelectorAll('button')).map((button) => button.textContent)
+    expect(labels).not.toContain('Retry the same settings')
+    expect(labels.some((label) => label !== null && label.includes('seed'))).toBe(true)
+  })
+})
+
+describe('App chrome', () => {
+  it('shows the authored seed and nothing else', () => {
+    install(playingState())
+    render(<App />)
+
+    const chip = one('.mg-footer__seed')
+    expect(chip.getAttribute('data-seed')).toBe('authored')
+    expect(chip.textContent).toContain(FIXTURE_SEED)
+  })
+
+  it('persists the theme and drives html[data-theme]', () => {
+    install(baseState())
+    render(<App />)
+
+    const selects = all('.mg-footer__select')
+    selectValue(selects[1] ?? null, 'dark')
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+    expect(window.localStorage.getItem('minegram.theme')).toBe('dark')
+
+    selectValue(selects[1] ?? null, 'auto')
+    expect(document.documentElement.hasAttribute('data-theme')).toBe(false)
+  })
+
+  it('switches the whole page to Simplified Chinese', () => {
+    install(baseState())
+    render(<App />)
+
+    selectValue(all('.mg-footer__select')[0] ?? null, 'zh-CN')
+    expect(document.documentElement.getAttribute('lang')).toBe('zh-CN')
+    expect(window.localStorage.getItem('minegram.lang')).toBe('zh-CN')
+    expect(container.textContent).toContain('就绪')
+    expect(container.textContent).not.toContain('Printing round')
+  })
+
+  it('opens the settings panel from the banner toggle and closes it again', () => {
+    install(baseState())
+    render(<App />)
+
+    const aside = one('.mg-side--left')
+    const toggle = one('.mg-banner button[aria-expanded]')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(aside.getAttribute('data-expanded')).toBe('true')
+
+    click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(aside.getAttribute('data-expanded')).toBe('false')
+  })
+
+  it('seeds the settings panel from the settings actually running', () => {
+    install(playingState())
+    render(<App />)
+
+    expect(fieldValue('#mg-settings-rows')).toBe('2')
+    expect(fieldValue('#mg-settings-columns')).toBe('2')
+    expect(fieldValue('#mg-settings-seed')).toBe(FIXTURE_SEED)
+    expect(fieldValue('#mg-settings-max-attempts')).toBe('3')
+  })
+
+  it('renders the engine’s own infeasibility message verbatim', () => {
+    install(baseState())
+    render(<App />)
+
+    const seed = one('#mg-settings-seed')
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(seed, '')
+      seed.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => {
+      one('.mg-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+
+    const warning = one('.mg-form__warning')
+    expect(warning.textContent).toContain('nonempty string')
+  })
+
+  it('routes the panel’s “New seed” through the store so the draft adopts the derived seed', async () => {
+    const store = install(playingState(), { workerFactory: succeedingWorker() })
+    render(<App />)
+
+    await act(async () => {
+      one('.mg-form__new-seed').dispatchEvent(new Event('click', { bubbles: true }))
+    })
+
+    // The store derived a new seed; the panel shows it and the footer agrees with it.
+    const adopted = fieldValue('#mg-settings-seed')
+    expect(adopted).not.toBe('')
+    expect(adopted).not.toBe(FIXTURE_SEED)
+    expect(one('.mg-footer__seed').getAttribute('data-seed')).toBe('authored')
+    expect(one('.mg-footer__seed').textContent).toContain(adopted)
+    expect(store.getSnapshot().status.dimensions?.authoredSeed).toBe(adopted)
   })
 })
