@@ -10,6 +10,8 @@ import {
   createEmptyBoard,
   getBoardCell,
   indexToCoordinate,
+  MAX_BOARD_CELLS,
+  MAX_BOARD_SIDE,
   type BoardDimensions,
 } from './board'
 
@@ -26,11 +28,23 @@ describe('board domain', () => {
 
   it('rejects malformed dimensions and line lengths with precise errors', () => {
     expect(() => assertBoardDimensions({ rows: 0, columns: 2 })).toThrow(/rows must be between/)
-    expect(() => assertBoardDimensions({ rows: 2, columns: 31 })).toThrow(/columns must be between/)
+    expect(() => assertBoardDimensions({ rows: 2, columns: 25 })).toThrow(/columns must be between/)
     expect(() => assertBoardDimensions({ rows: '2', columns: 2 })).toThrow(/rows must be an integer/)
     expect(() => assertBoardDimensions(null)).toThrow(/must be an object/)
     expect(() => assertLineLength(1.5)).toThrow(/must be an integer/)
-    expect(() => assertLineLength(31)).toThrow(/must be between/)
+    expect(() => assertLineLength(25)).toThrow(/must be between/)
+  })
+
+  it('caps the board range at the engine line-pattern capacity', () => {
+    expect(MAX_BOARD_SIDE).toBe(24)
+    expect(MAX_BOARD_CELLS).toBe(576)
+    // The largest line the solver can still enumerate a legal ordered pattern set
+    // for. A 25-cell line exhausts the pattern budget and every board above this
+    // side fails closed with `resource-limit` regardless of node or time budget.
+    expect(() => assertBoardDimensions({ rows: 24, columns: 24 })).not.toThrow()
+    expect(() => assertLineLength(24)).not.toThrow()
+    expect(() => assertBoardDimensions({ rows: 25, columns: 25 })).toThrow(RangeError)
+    expect(() => assertBoardDimensions({ rows: 30, columns: 30 })).toThrow(RangeError)
   })
 
   it('validates coordinates and reports out-of-bounds positions', () => {

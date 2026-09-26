@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   countBoardMines,
   assertBoardHasMineInEveryLine,
+  MAX_BOARD_SIDE,
+  MIN_BOARD_SIDE,
   type BinaryMineBoard,
 } from '../../domain/board'
 import { validateSolutionBoard } from '../solver/constraintSolver'
@@ -50,10 +52,11 @@ describe('Minegram deterministic generator', () => {
     expect(calculateMineCount(1, 1, 100)).toBe(1)
     expect(calculateMineCount(2, 3, 0)).toBe(3)
     expect(calculateMineCount(2, 3, 100)).toBe(6)
-    expect(normalizeGenerationSettings({ rows: 30, columns: 30, densityPercent: 0 }).mineCount).toBe(30)
+    expect(normalizeGenerationSettings({ rows: 24, columns: 24, densityPercent: 0 }).mineCount).toBe(24)
     expect(Object.isFrozen(normalizeGenerationSettings({ seed: 'phase-2' }))).toBe(true)
     for (const invalid of [
       { rows: 0 },
+      { rows: 25 },
       { rows: 31 },
       { columns: 1.5 },
       { densityPercent: -1 },
@@ -63,6 +66,20 @@ describe('Minegram deterministic generator', () => {
       { seed: '' },
     ]) {
       expect(() => normalizeGenerationSettings(invalid)).toThrow()
+    }
+  })
+
+  it('rejects the old 25..30 upper bound with the new maximum named', () => {
+    for (const dimensions of [
+      { rows: 25, columns: 25 },
+      { rows: 30, columns: 30 },
+      { rows: 1, columns: 25 },
+      { rows: 25, columns: 1 },
+    ]) {
+      expect(() => normalizeGenerationSettings(dimensions)).toThrow(RangeError)
+      expect(() => normalizeGenerationSettings(dimensions)).toThrow(
+        new RegExp(`between ${MIN_BOARD_SIDE} and ${MAX_BOARD_SIDE}`),
+      )
     }
   })
 
@@ -237,9 +254,9 @@ describe('Minegram deterministic generator', () => {
     }
   }, 30_000)
 
-  it('fails closed with diagnostics on a bounded pathological 30x30 budget', () => {
+  it('fails closed with diagnostics on a bounded pathological 24x24 budget', () => {
     const result = generateMinegramPuzzle(
-      { rows: 30, columns: 30, densityPercent: 60, seed: 99, maxAttempts: 1 },
+      { rows: 24, columns: 24, densityPercent: 60, seed: 99, maxAttempts: 1 },
       { maxSolverNodes: 1_000 },
     )
     expect(result.status).toBe('failure')

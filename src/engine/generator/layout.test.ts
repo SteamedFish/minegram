@@ -68,7 +68,7 @@ describe('generator layouts', () => {
   })
 
   it('handles rectangular and one-cell edge dimensions', () => {
-    for (const [rows, columns, mineCount] of [[1, 1, 1], [1, 30, 30], [30, 1, 30], [2, 7, 7]] as const) {
+    for (const [rows, columns, mineCount] of [[1, 1, 1], [1, 24, 24], [24, 1, 24], [2, 7, 7]] as const) {
       const layout = createStructuredLayout(dimensions(rows, columns), mineCount, createSeededRandom(`${rows}x${columns}`))
       expect(countBoardMines(layout.board, dimensions(rows, columns))).toBe(mineCount)
       expect(() => assertBoardHasMineInEveryLine(layout.board, dimensions(rows, columns))).not.toThrow()

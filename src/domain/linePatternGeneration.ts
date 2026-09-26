@@ -5,7 +5,8 @@ import { assertOrderedLineClue } from './orderedClueValidation'
  * Fail-closed resource controls for materializing one ordered line's legal patterns.
  *
  * The defaults are intentionally far above normal 15×15/60% clues while bounding
- * pathological 30-cell clues. Reaching either limit is an error, never a reason
+ * pathological 24-cell clues (the longest line `MAX_BOARD_SIDE` allows). Reaching
+ * either limit is an error, never a reason
  * to return a partial domain.
  */
 export const DEFAULT_MAX_LINE_PATTERNS = 10_000

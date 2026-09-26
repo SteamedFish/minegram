@@ -94,7 +94,7 @@ describe('line pattern generation controls', () => {
           maxPatternCount: Number.MAX_SAFE_INTEGER,
           maxMaterializedCells: Number.MAX_SAFE_INTEGER,
         },
-        30,
+        24,
         [],
         Number.MAX_SAFE_INTEGER,
       ),

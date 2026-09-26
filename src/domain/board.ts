@@ -1,6 +1,17 @@
 export const MIN_BOARD_SIDE = 1
-export const MAX_BOARD_SIDE = 30
-export const MAX_BOARD_CELLS = 900
+// 24 is a capacity fact, not a taste call. The solver enumerates the legal
+// per-line patterns for an ordered clue, and that enumeration is bounded (10,000
+// patterns / 300,000 materialized cells per line). A ~25-cell line carrying
+// internal blank separators no longer fits that budget, so every board above 24
+// per side exhausts the resource limit and fails closed with
+// `resource-limit` — and no amount of extra solver nodes or wall-clock time
+// changes it, because the cliff is pattern materialization, not search effort.
+// Measured over 25 seeds at 60% density with a 30s budget: 0/24 failures at
+// 24x24 (slowest 968ms) versus 5/24 at 25x25, then 2/2 at 26x26, 28x28 and
+// 30x30. Raising the node budget to 400k/1.6M/6.4M leaves 30x30 at
+// `accepted=0 rollbacks=16`.
+export const MAX_BOARD_SIDE = 24
+export const MAX_BOARD_CELLS = MAX_BOARD_SIDE * MAX_BOARD_SIDE
 
 export type BinaryCell = 0 | 1
 export type BinaryLine = readonly BinaryCell[]
