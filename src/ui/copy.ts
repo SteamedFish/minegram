@@ -256,7 +256,7 @@ const en = {
     },
     hints: {
       label: 'Hints',
-      hint: 'The two rail annotations are off by default: a dashed box with a cross where your marks cannot fit the clue at all, and a dotted box with a question mark where the pattern search ran out of budget. Turn this on to see them. A run lights up and a finished line takes its tick whichever way this is set — that is not a hint, it is the answer to your marking. Turning it on mid-round costs nothing.',
+      hint: 'Three rail annotations are off by default. Contradiction — a dashed rail border with a cross — where your marks cannot fit the clue at all. Progress unresolved — a dotted rail border with a question mark — where the pattern search ran out of budget. Run position forced — a dotted underline — under any run the solution has already pinned, which is shown to you before you find it. Turn this on to see them. A finished run keeps its solid underline and a finished line keeps its tick whichever way this is set: that is not a hint, it is the answer to your marking. Turning it on mid-round costs nothing.',
     },
     units: {
       percent: '%',
@@ -899,7 +899,7 @@ export const zhCN: Partial<Copy> = {
     },
     hints: {
       label: '提示',
-      hint: '默认关闭。开启：显示两条提示——虚线框加叉号，表示你的标记与该线索完全矛盾；点线框加问号，表示模式搜索已达预算上限。关闭：这两条一律不显示。无论开关如何设置，某串地雷标完时数字都会高亮、整行或整列完成后都会打上对勾——那是对你操作的回应，不属于提示。游戏中随时切换不会扣分。',
+      hint: '默认关闭。开启：显示三条提示——矛盾（提示格虚线边框加叉号），表示你的标记与该线索完全矛盾；进度未解（提示格点线边框加问号），表示模式搜索已达预算上限；段落位置已定（该段下方有点线下划线），表示解已经定下了这一段的位置，这一条会先于你标出来。关闭：三条一律不显示。无论开关如何设置，段落标完后仍显示实线下划线、整行或整列完成后仍打上对勾——那是对你操作的回应，不属于提示。游戏中随时切换不会扣分。',
     },
     units: {
       percent: '%',
