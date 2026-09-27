@@ -25,6 +25,10 @@ never appears and no line is vacuous.
 - When **every mine in a row or column is marked** and that line holds no wrong mark, the
   game fills the rest of that line in for you, for free. You never pay for a cell the game
   filled.
+- When **every mine of a run is marked**, that run's number lights up immediately. You do
+  not have to mark the gaps around it first — the game fills those. So on a `7 2 2 1`
+  column, marking the `7` and both `2`s lights all three, while the unplaced `1` stays
+  plain.
 - The round is won when every cell carries a correct mark, and a new round starts
   automatically.
 
