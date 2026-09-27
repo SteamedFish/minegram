@@ -359,7 +359,21 @@
   background-color: var(--ink);
 }
 
-/* A toggle row: the label is the target, the box stays the OS's own size. */
+/* A toggle row. `primitives.tsx` renders the <input> and its <label htmlFor> as
+   SIBLINGS in the two columns below, so the comment that used to sit here — "the
+   label is the target, the box stays the OS's own size" — described an intent the
+   markup did not deliver: on a fine pointer the label is a row of type and the
+   box was 13x13, and 13 is what a finger or a stylus has to aim at. The grid
+   absorbs the change in the inline axis: the first track is `auto`, so the box
+   takes 24px of it and the label moves right — measured 66px to 77px.
+
+   It is NOT free in the block axis, and an earlier version of this comment here
+   claimed it was. Measured at 1280x900 on a fine pointer with 15x15 printed,
+   both numbers off one tree (the pre-round rules injected back over the new ones):
+   the one toggle row 270px -> 284px, the settings sheet 1354px -> 1368px, so the
+   24px floor costs the sheet 14px. The sheet's absolute height follows the
+   aside's width and so varies by viewport; the 14px delta does not. Nothing below
+   the row moved — the sheet grew by exactly the row's own growth. */
 .mg-field--toggle {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -381,6 +395,14 @@
 
 .mg-field__checkbox {
   accent-color: var(--accent);
+  /* `--target-min` on every pointer, not in §8's coarse block: a 24x24 control
+     has its hit area at 24x24, which is the floor itself, so the control gets
+     the space rather than the box — and on a fine pointer there is no block to
+     inherit it from. Both switches in the app (this one and the toolbar's) carry
+     this rule, so they are the same object at the same size on both pointers. */
+  inline-size: var(--target-min);
+  block-size: var(--target-min);
+  margin: 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -490,9 +512,14 @@
   font-weight: 600;
 }
 
-/* The finger-marking switch. The label is the target, which is why it gets the
-   44px in §8; the checkbox keeps the size base.css gives it on a coarse pointer
-   so the two switches in the app are the same object at the same size. */
+/* The finger-marking switch. The label WRAPS the control, so the label is the
+   target and it is 32px here and 44px in §8. The checkbox itself is
+   `--target-min` on every pointer: the claim this comment used to make — that
+   the checkbox "keeps the size base.css gives it on a coarse pointer so the two
+   switches in the app are the same object at the same size" — was true, and it
+   was only true on a coarse pointer, where a 13px checkbox was what a fine
+   pointer got too. Measured on a fine pointer before this rule: 13x13, the
+   smallest drawn control in the app. */
 .mg-toolbar__finger {
   display: inline-flex;
   align-items: center;
@@ -502,6 +529,12 @@
   font-size: var(--fs-small);
   line-height: var(--lh-small);
   cursor: pointer;
+}
+
+.mg-toolbar__finger input[type='checkbox'] {
+  inline-size: var(--target-min);
+  block-size: var(--target-min);
+  margin: 0;
 }
 
 .mg-toolbar__finger-label {
@@ -545,6 +578,17 @@
 }
 
 .mg-footer__source {
+  /* The one link the footer's own line holds, and at 14px tall it was the
+     smallest interactive target left in the app once the two checkboxes were
+     floored. Measured at 1280x900 on a fine pointer: 129x14 before, 129x24 after.
+     This one is a FINE-pointer gap only — §8 already raised the link to
+     `--target-touch` on a coarse pointer, and it still does, so the root
+     `min-block-size` here is what a mouse and a trackpad get. `inline-flex` plus
+     `align-items: center` centres the text in the 24px rather than stranding it
+     at the top of it. */
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--target-min);
   margin-inline-start: auto;
   color: var(--ink-2);
   text-decoration-thickness: var(--rule-w);
@@ -554,6 +598,30 @@
 @media (hover: hover) {
   .mg-footer__source:hover {
     color: var(--ink);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   8a. Short landscape on a touch device: the toolbar's own air
+   -----------------------------------------------------------------------------
+   The band's argument is layout.css section 6d; this is the one piece of it
+   that lands on a control strip rather than on the shell. The toolbar is the
+   third-largest thing above the board (measured 114px at 1280x800, after the
+   banner's 100 and the app's own padding), and it cannot give up a ROW: its
+   content is 837px of pills — the mode group, the six zoom steps, the finger
+   switch and Generate — against a 676px inner strip, so it wraps to two and
+   every step's `min-block-size` is 44px, which is the target itself, not air
+   above it. What is air is the frame and the gap between the two rows, and
+   that is what this trims: `--sp-2`/`--sp-3` of padding to `--sp-1`/`--sp-2`
+   and an 8px row gap to 4px, so the strip keeps a 1px border and two 44px
+   rows of control with a 4px frame around them and nothing else. Measured
+   114px -> 102px at 1280x800; see section 6d for what the band buys with it
+   and what it costs. */
+
+@media (pointer: coarse) and (width >= 74rem) and (height < 56rem) {
+  .mg-toolbar {
+    padding: var(--sp-1) var(--sp-2);
+    row-gap: var(--sp-1);
   }
 }
 

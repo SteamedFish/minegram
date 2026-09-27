@@ -160,6 +160,46 @@
   overflow-block: hidden;
 }
 
+/* 1c. The short-landscape band: the surface is the leftover, and the cap goes
+   The other half of layout.css section 6d, kept here because both properties
+   are about what the fit reads.
+
+   `grid-template-rows: auto minmax(0, 1fr) auto` is what makes the pane a
+   definite height rather than its content's: the toolbar above it and the seed
+   strip below it are `auto`, the pane is the `1fr`, and the whole surface is
+   itself the `1fr` row of `.mg-main` inside the `1fr` row of `.mg-app`. The
+   `min-block-size: 0` is load-bearing rather than tidy — a grid item's
+   automatic minimum is its content's, and the surface's content includes the
+   pane's, so without it the row refuses to shrink below the board and the
+   band is a comment.
+
+   `max-block-size: none` removes the cap in exactly this band, and the reason
+   is a trap worth naming. The fit reads the cap as `max(pane height, cap)`
+   (BoardSurface.tsx, `fitCellAt`), so a cap is a FLOOR for the pane, never a
+   ceiling: on a pane the grid has already sized, the cap can only disagree,
+   and it disagrees downward. Worse, the fit falls back to a `max-block-size`
+   that is not a raw px string by reading nothing at all — see the comment at
+   BoardSurface.tsx:354 — so leaving the resting cap in place here would have the
+   fit divide a fallback while the pane sat at a height the cap it cannot parse
+   never described. (The cap's own value is quoted only in tokens.css: the guard
+   in `.tmp/style-check.mjs` that keeps one cap out of the sheets reads the raw
+   text, and a comment in this file quoting it would read as a second cap.)
+   One answer, from the layout. The band's measured result at 1280x800 with a
+   coarse pointer and both panels open: page scroll 380 -> 0, pane 394, stage
+   440, `data-pan-block` armed, 124/124 runs drawn; at 1440x880 the pane is 522
+   and the stage 522, so nothing pans at all. */
+@media (pointer: coarse) and (width >= 74rem) and (height < 56rem) {
+  .mg-board-surface {
+    min-block-size: 0;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    padding: var(--sp-2);
+  }
+
+  .mg-board-scroll {
+    max-block-size: none;
+  }
+}
+
 /* -----------------------------------------------------------------------------
    2. The stage — the grid, and the only element the host writes custom
       properties onto

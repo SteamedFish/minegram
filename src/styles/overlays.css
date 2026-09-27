@@ -107,6 +107,18 @@
   line-height: var(--lh-small);
 }
 
+/* The short-landscape band, this file's one piece: the status row's own
+   padding. layout.css section 6d is the band's argument and board.css section
+   1c its other half; the rule lives here because this is where the padding is
+   declared, and the trim is worth 8px of the 402px the chrome spends above the
+   board at 1280x800 (measured the row 42px -> 34px). The text is a 15px line
+   either way: this is air around it, not type. */
+@media (pointer: coarse) and (width >= 74rem) and (height < 56rem) {
+  .mg-main > .mg-status {
+    padding: var(--sp-1) var(--sp-3);
+  }
+}
+
 /* The generation sweep is gated from here, not from board.css. The stage's
    pseudo-element reads `--gen-edge`, and a custom property is the only thing that
    can reach a SIBLING's pseudo-element without a two-level descendant chain.

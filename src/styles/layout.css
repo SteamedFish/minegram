@@ -575,6 +575,123 @@
 }
 
 /* -----------------------------------------------------------------------------
+   6d. Short landscape on a touch device is one screenful, not a document
+   -----------------------------------------------------------------------------
+   The problem this answers, measured at 1280x800 with both panels open and a
+   15x15 printed: the page was 1180px tall in an 800px window, so it scrolled
+   380px, and the pane's own bottom edge sat 227px BELOW the fold. The player
+   lands at scroll 0, sees the banner, the status row, the toolbar and the top
+   445px of a 672px pane, and has to scroll a page to reach the board's bottom
+   row. On a touch device that is a second surface under the game's own
+   gesture: the board is panned by dragging across it, and the page moves too.
+
+   The first answer — lower `--board-cap` so the board finishes above the fold
+   — was measured and it does not work, twice over. At the cap 527px the pane
+   became 515px (it is `max-block-size`, so a cap the content is shorter than
+   only shortens the pane as far as the content goes), the cell fell 39px to
+   29px, and the board's bottom was still 70px below the fold. At 455px the
+   cell fell to 25px and the board's bottom was still 10px below the fold. The
+   board cannot reach the fold at all here, and the reason is arithmetic, not
+   taste: a 15x15 at the 24px cell floor needs 440px of stage, and the app's
+   chrome at this window is 402px before the board has any room at all — 842
+   against 800. So the cap route buys 158px of the 227px deficit for a 26%
+   smaller board, and the fold it is aimed at is out of reach either way.
+
+   What is reachable is the whole app in one viewport. The grid is bound to
+   `100dvh` (`dvh` because a tablet in a browser has a chrome that comes and
+   goes), the middle row takes what is left, and the board's own pane — which
+   is already a scroller, and which the pan arms in BoardSurface.tsx already
+   measure — takes the rest. Measured at 1280x800: page scroll 380 -> 0, the
+   board's 440px stage in a 394px pane, `data-pan-block` armed, 124/124 runs
+   still drawn, and 117px of the pane's bottom edge above the fold. At
+   1440x880 it is better than a full fit: pane 518, stage 518, the cell 29px
+   and NO pan at all. The page scroll is not merely smaller, it is gone, so a
+   drag across the board can no longer move anything but the board.
+
+   The cost is the cell, and it is named rather than absorbed: 39px -> 24px at
+   1280x800, 44px -> 29px at 1440x880. That is the price of not asking a finger
+   to scroll a page, and it is the floor the fit already refuses to pass. A
+   player who wants a bigger board than that still has the zoom steps: `l` and
+   `xl` are 40px and 56px cells, and both arm both pan axes.
+
+   Three things this band deliberately does not do.
+
+   It is gated on `pointer: coarse`. A mouse user scrolling 380px costs them
+   nothing and gets 44px cells, which is the better side of that trade for
+   them; measured at 1440x880 with the gate lifted the cell fell 44 -> 29 for
+   no benefit a pointer can use. The rest of the app already splits its target
+   sizes the same way (forms.css section 8), so this is not a new idea in the
+   codebase, it is the same decision applied to the page's own height.
+
+   Its width floor is `74rem`, which is the ≥74rem template's own literal. Below
+   that the two panels are not columns beside the board, they are rows under it
+   (layout.css section 6), and a one-viewport shell cannot hold a 1067px
+   settings sheet and a 754px key below the board: injected here at 1024x768
+   and 960x600 the band collapsed the pane to 0px tall and the fit read it as
+   permission to paint 55px cells in a box that had no height. A band that
+   zeroes the board is worse than no band, so the floor is the width at which
+   the panels are free.
+
+   And it does not raise the cap: it drops it. The fit reads the cap as
+   `max(pane height, cap)` and clamps to a floor, so a cap on a pane whose
+   height the grid is already deciding is a second, stale answer to a question
+   the layout has answered. `board.css` section 1b removes it inside this band,
+   with the trap that removal avoids written where the cap is read.
+
+   The chrome trims below are the same decision applied to the parts the band
+   can reach: the app's own gaps and padding, the banner's padding and its
+   tagline (one line of `--ink-3` micro-caps, the least informative pixels in
+   the app and not the only place it explains itself — the empty-state sheet
+   says the same thing). Measured at 1280x800 with a coarse pointer and both
+   panels open, the chrome above the pane is what they actually buy: 355px
+   before the band and 289px after, itemised as the banner 126 -> 100, the
+   status row 42 -> 34, the toolbar 114 -> 102 and the footer 70 -> 62. They
+   are worth taking twice over: at 1440x880 they are the difference between a
+   29px cell with no pan and a 24px cell with an 18px one.
+   The rest of the band lives with the property each rule changes, which is
+   not the file each half of the idea is in: `board.css` section 1c for the
+   surface and the cap, `overlays.css` for the status row, `forms.css`
+   section 8a for the toolbar, and the footer trim is the rule below, in this
+   section. `.tmp/style-check.mjs` section 15 is what keeps the four halves in
+   one band — and in step — not this comment. */
+
+@media (pointer: coarse) and (width >= 74rem) and (height < 56rem) {
+  .mg-app {
+    block-size: 100dvh;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    align-items: stretch;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-5);
+  }
+
+  .mg-main {
+    min-block-size: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .mg-banner {
+    padding: var(--sp-2) var(--sp-4);
+  }
+
+  /* The tagline is the app describing itself in the least load-bearing type it
+     owns. In a window this short it is the first thing that goes: 18px of the
+     402px the chrome spends above the board. The wordmark beside it is the
+     identity and stays. */
+  .mg-banner__tagline {
+    display: none;
+  }
+
+  /* The footer's air. Its row is a single line of `--fs-micro` plus a select
+     and a link at `--target-fine`/`--target-min`, so the 12px of padding above
+     and below is the cheapest thing left in the app to give up: 70px -> 62px
+     measured at 1280x800. The padding that matters for reaching the link is
+     forms.css's, which already floors it. */
+  .mg-footer {
+    padding: var(--sp-2) var(--sp-4);
+  }
+}
+
+/* -----------------------------------------------------------------------------
    7. Reduced motion, this file's own
    base.css already neutralises every duration in the document with
    `!important`; this block exists so the reveal does not even hold the first
