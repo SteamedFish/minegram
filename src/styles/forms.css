@@ -572,13 +572,47 @@
     min-inline-size: var(--target-touch);
   }
 
+  /* The footer's two controls are the last named controls a thumb could miss, and
+     they missed for a reason worth writing down: `.mg-footer__select` above is a
+     CLASS rule sized at `--target-fine`, and a class beats base.css's bare
+     `select { min-block-size: var(--target-touch) }`, so the element selector was
+     quietly losing to a literal on the one device that needed it. The source
+     link is a bare anchor, which that same block sizes at `--target-min`. */
+  .mg-footer__select,
+  .mg-footer__source {
+    min-block-size: var(--target-touch);
+  }
+
+  /* The banner's disclosure is the ONLY route to the two panels, and it was
+     missing from the list above — the one named control a coarse pointer could
+     not hit with a thumb. It is in the list rather than beside it because it is
+     a button that a finger aims at, not a label that wraps something: it has to
+     be 44px itself or the whole layout's claim to be thumb-operable stops here.
+     Measured before this rule, on the tablet band: 32px tall, 46px wide. */
+  .mg-banner__panel-toggle {
+    min-block-size: var(--target-touch);
+    min-inline-size: var(--target-touch);
+  }
+
   .mg-seg__label {
     min-block-size: var(--target-touch);
     min-inline-size: var(--target-touch);
   }
 
-  /* The label wraps the control, so making the label 44px is what makes the
-     checkbox a 44px target without a 44px checkbox. */
+  /* The field ROW is 44px, and for `.mg-toolbar__finger` that is the whole
+     target because the label wraps the control there. This comment used to say
+     the same about `.mg-field--toggle` and it was wrong: in the settings toggle
+     the label is a SIBLING associated by `for` (`primitives.tsx` renders
+     `<input>` then `<label htmlFor>` as two grid cells), so the row being 44px
+     makes the ROWS text a 44px target and leaves the box itself at whatever the
+     input's own size is — measured 24x24 on the tablet band. The box is not
+     made 44px here on purpose: a native checkbox draws its shadow content at
+     the input's size, so a 44px input is a 44px CHECKBOX, which is a different
+     and worse answer. The honest fix is a hit area that is not the drawing —
+     a sibling overlay, or an `appearance: none` control with an expander — and
+     it wants its own measure, so it is left as a named gap rather than guessed
+     at here. The text beside the box is already a 44px target that toggles it,
+     which is why this is a gap and not a blocker. */
   .mg-toolbar__finger,
   .mg-field--toggle {
     min-block-size: var(--target-touch);

@@ -296,7 +296,23 @@
      as an unreadable one, only quieter. So the loop is closed BY THE HOST
      instead, which re-solves `--cell` until it stops moving and paints nothing
      it did not converge on. */
-  --rail-num: clamp(10px, calc(var(--cell) * 0.3), 20px);
+  --rail-num: clamp(var(--rail-num-floor), calc(var(--cell) * var(--rail-num-ratio)), 20px);
+
+  /* The two numbers the clamp above spends are TOKENS, not literals, so a
+     display band can retune the trade without either the theme block or the
+     stage having to restate the formula. That matters because the report was
+     precise and measured: 「放大游戏区域不放大数字格子」 — the board grew, the
+     digits did not. The trade was a FLOOR written as a constant while the ratio
+     beside it sat at 0.3, so on any board that fits inside a tablet's height the
+     solve lands the cell at or under 33px, the ratio's own contribution is under
+     10px, and the clamp therefore returns its constant EVERY time. The floor
+     goes to 12px and the ratio to 0.34 in the small-screen bands (BAND, end of
+     file): 12px is the smallest rail numeral that still reads as a numeral
+     rather than a mark, and 0.34 keeps it at roughly a third of its cell while
+     the wider rail is paid for by the fit, which already counts `--rail-digit`
+     when it asks for `--cell`. */
+  --rail-num-floor: 10px;
+  --rail-num-ratio: 0.3;
   --rail-lh: 0.95;
   --rail-step: calc(var(--rail-num) * var(--rail-lh) + var(--rule-w));
   --rail-badge: var(--rail-num); /* the line-state glyph's strip, one numeral tall */
@@ -917,4 +933,65 @@ html[data-theme='light'] {
   syntax: '<number>';
   inherits: true;
   initial-value: 1;
+}
+
+/* =============================================================================
+   BAND — the small screen, spent as tokens
+   -----------------------------------------------------------------------------
+   layout.css and board.css both used to hold literals for the two numbers a
+   small screen argues about: how wide a side panel is allowed to be, and how tall
+   the board pane is allowed to grow. A literal cannot be answered to, so the
+   answer was written in the sheet that happened to need it and the tablet bands
+   below had to repeat the whole template to disagree with it. Both numbers are
+   tokens now, and a band is a short list.
+
+   `--side-col` is the side panels' grid track. 20rem is what layout.css spelled
+   out in all eight of its area templates; it stays the value everywhere the
+   desktop template applies.
+
+   `--board-cap` is the board pane's `max-block-size`, in vh and rem exactly as
+   before — it is still the height the fit answers to, and the fit takes
+   `max(pane height, cap)`, so a cap that is a fraction of the viewport is always
+   the binding one. The value is unchanged here on purpose; the small-screen
+   gains are the band override and the layout, not a bigger number here.
+
+   The two RAIL knobs are the ones the player's 「放大游戏区域不放大数字格子」
+   asked for, and they are the reason this section exists. Below the desktop
+   breakpoint the floor rises to 12px and the ratio to 0.34: on any board small
+   enough to be fitted into a tablet, `0.3 x cell` never cleared the old 10px
+   constant, so the clamp was a constant wearing a formula. 12px is the smallest
+   numeral that still reads as a numeral; `--rail-col` grows with it and the fit
+   pays for the wider rail itself, which it already knew how to do because
+   `--rail-digit` is counted in `--rail-col`. */
+:root {
+  --side-col: 20rem;
+  --board-cap: min(70vh, 46rem);
+}
+
+/* PHABLET AND TABLET, PORTRAIT OR TALL: the band between a large phone and the
+   desktop template, i.e. exactly the widths layout.css already stacks in one
+   column. The numeral floor is the whole of the change. */
+@media (width >= 48rem) and (width < 74rem) {
+  :root {
+    --rail-num-floor: 12px;
+    --rail-num-ratio: 0.34;
+  }
+}
+
+/* TABLET LANDSCAPE: WIDE AND SHORT — the one band where a three-column page is
+   still the right layout, so the columns stay and the page's own scroll does not.
+   A 15x15 board needs about 900px of height for the largest cell the cap allows,
+   and this window has under 896; the two side panels and the app's 354px of
+   chrome cannot both be honoured, so the panels are narrowed to 15rem and made
+   to scroll INSIDE their own box (layout.css) while the board keeps the height
+   it is owed. The height boundary is 56rem because that is a laptop edge: a
+   tablet's landscape is 768-820px tall, a desktop window's is not, and a
+   one-pixel difference must not flip a numeral from 12px to 10px. */
+@media (orientation: landscape) and (height < 56rem) and (width >= 48rem) {
+  :root {
+    --side-col: 15rem;
+    --board-cap: 86dvh;
+    --rail-num-floor: 12px;
+    --rail-num-ratio: 0.34;
+  }
 }

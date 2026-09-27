@@ -35,7 +35,7 @@
    -------------------------------------------------------------------------- */
 .mg-app {
   display: grid;
-  grid-template-columns: minmax(0, 20rem) minmax(0, 1fr) minmax(0, 20rem);
+  grid-template-columns: minmax(0, var(--side-col)) minmax(0, 1fr) minmax(0, var(--side-col));
   grid-template-areas:
     'banner banner banner'
     'left   main   right'
@@ -82,7 +82,7 @@
    collapses below re-spell the stacked templates for the same combinations. */
 @media (width >= 74rem) {
   .mg-app[data-left-panel='hidden']:not([data-right-panel='hidden']) {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 20rem);
+    grid-template-columns: minmax(0, 1fr) minmax(0, var(--side-col));
     grid-template-areas:
       'banner banner'
       'main   right'
@@ -90,7 +90,7 @@
   }
 
   .mg-app[data-right-panel='hidden']:not([data-left-panel='hidden']) {
-    grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+    grid-template-columns: minmax(0, var(--side-col)) minmax(0, 1fr);
     grid-template-areas:
       'banner banner'
       'left   main'
@@ -323,19 +323,25 @@
   animation-delay: calc(var(--i, 0) * var(--stagger));
 }
 
+/* The stagger now follows the NARROW stack's order, banner then the status line,
+   the board, then the two panels, then the footer — which is also the order the
+   three-column layout wants, because the region the player came to play is named
+   before the two regions they came to consult. It used to be the DOM order
+   (banner, left, main, right), which on a phone meant the board was the last
+   thing to arrive on a screen that had already shown a 1000px settings form. */
 .mg-banner {
   --i: 0;
 }
 
-.mg-side--left {
+.mg-main > .mg-status {
   --i: 1;
 }
 
-.mg-main > .mg-status {
+.mg-main > .mg-board-surface {
   --i: 2;
 }
 
-.mg-main > .mg-board-surface {
+.mg-side--left {
   --i: 3;
 }
 
@@ -351,16 +357,30 @@
    6. The two collapses
    -------------------------------------------------------------------------- */
 @media (width < 74rem) {
-  /* Under 74rem the right aside moves below the board as a two-up grid, and the
-     left aside becomes a top sheet. The board therefore always gets the full
-     width of `main`, which is the whole reason the sidebars collapse here and
-     not at the smaller breakpoint. */
+  /* Under 74rem the right aside moves below the board as a two-up grid, and both
+     asides stack BELOW it. The board therefore always gets the full width of
+     `main`, which is the whole reason the sidebars collapse here and not at the
+     smaller breakpoint.
+
+     `main` goes FIRST in the stack, which inverts the DOM order on purpose. The
+     board region is the only region whose height the app cannot predict: it is a
+     250px proof sheet before the first round and a fitted board after one, so
+     anything stacked ABOVE it moves by 450px the moment the player presses
+     print. With the asides above it, the button they pressed was at the top of
+     the page and the board it printed landed 1300px below the fold. The asides
+     are the stable half — same height whatever the board is doing — so they are
+     the half that waits.
+
+     It also means the arrival view is the banner, the board's own "nothing
+     printed yet" sheet, and the top of the settings form: the sheet's text asks
+     for a size and a density, and the form it is asking about is one flick
+     below, so the instruction and the thing that answers it are adjacent. */
   .mg-app {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
       'banner banner'
-      'left   left'
       'main   main'
+      'left   left'
       'right  right'
       'footer footer';
   }
@@ -378,8 +398,8 @@
   .mg-app[data-right-panel='hidden']:not([data-left-panel='hidden']) {
     grid-template-areas:
       'banner banner'
-      'left   left'
       'main   main'
+      'left   left'
       'footer footer';
   }
 
@@ -404,8 +424,8 @@
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       'banner'
-      'left'
       'main'
+      'left'
       'right'
       'footer';
     gap: var(--sp-3);
@@ -423,8 +443,8 @@
   .mg-app[data-right-panel='hidden']:not([data-left-panel='hidden']) {
     grid-template-areas:
       'banner'
-      'left'
       'main'
+      'left'
       'footer';
   }
 
@@ -433,6 +453,48 @@
       'banner'
       'main'
       'footer';
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   6b. The tablet band — wide and short
+   -----------------------------------------------------------------------------
+   Measured on a 1280x800 window with both panels open, 15x15: the page was
+   1608px tall in an 800px window, and the reason was not the board. The board's
+   pane was 448px against a 560px cap, and the LEFT aside alone was 1392px — two
+   panels' worth of stacked content below a window that had 800px in it. The
+   app's own chrome (banner 108, status 42, toolbar 166, footer 58) is 354px
+   before any panel, and the board is what is owed the rest.
+
+   So in this band the asides stop being as tall as their content and become as
+   tall as the window: each scrolls INSIDE its own box, and the page's own scroll
+   is the 100px the banner and the footer are worth. Nothing is hidden and nothing
+   is truncated — a panel that does not fit scrolls, which is the same answer the
+   board's own pane has always given, and it is one axis of wheel instead of a
+   page that never ends.
+
+   The cap is absolute (`100dvh` less the app's own block padding) rather than a
+   fraction of the app's grid, because the app's rows are `auto`: a cap expressed
+   in the grid's own terms would feed back into the row it is capping. `dvh` and
+   not `vh` because a tablet in a browser has a chrome that comes and goes, and
+   the pane must not be sized against a URL bar that is not there.
+
+   `overscroll-behavior: contain` is what stops a flick at the end of a panel from
+   handing the gesture to the page and moving the board out from under the player
+   reading it. `min-block-size: 0` is the other half: a grid item's default
+   `min-height: auto` refuses to shrink below its content, which would make the
+   cap a lie.
+
+   The band's width and height are the same literals tokens.css's BAND uses, and
+   they must stay the same: the numeral floor and the narrowed side column are
+   set in the same band there, and a band that matched on one screen and not the
+   other would give a 12px numeral with a 20rem panel. */
+@media (orientation: landscape) and (height < 56rem) and (width >= 48rem) {
+  .mg-side {
+    max-block-size: calc(100dvh - var(--sp-4) - var(--sp-5));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    min-block-size: 0;
   }
 }
 

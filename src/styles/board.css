@@ -91,7 +91,13 @@
      amputated, and `overflow: auto` never even shows a scrollbar.
 
      `justify-content: safe center` below is the other half of the pan. */
-  max-block-size: min(70vh, 46rem);
+  /* The value moved to `--board-cap` in tokens.css's BAND so a small screen can
+     answer it, and it is UNCHANGED there: this cap is a fraction of the
+     viewport on purpose, because the fit takes `max(pane height, cap)` and a
+     viewport fraction is therefore always the binding one. Raising it on a
+     tablet is a change of ROOM, and room is what the app's chrome and the two
+     side panels were eating, not what this cap was withholding. */
+  max-block-size: var(--board-cap);
   contain: layout paint;
   /* The stage is `inline-grid` and `max-content`, so it sits at the start of
      this block and leaves a wide empty band on its right whenever the board is
@@ -162,7 +168,7 @@
      which hands back a smaller cell — so the host's fit measure iterates to a
      fixed point before it paints. `settleFitCell` in `BoardSurface.tsx` is
      that iteration. */
-  --rail-num: clamp(10px, calc(var(--cell) * 0.3), 20px);
+  --rail-num: clamp(var(--rail-num-floor), calc(var(--cell) * var(--rail-num-ratio)), 20px);
   --rail-step: calc(var(--rail-num) * var(--rail-lh) + var(--rule-w));
   --rail-badge: var(--rail-num);
   --rail-digit: calc(var(--rail-num) * 0.62);
