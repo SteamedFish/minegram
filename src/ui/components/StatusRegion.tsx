@@ -349,8 +349,15 @@ function announcement(
     }
   }
   if (chrome !== null) {
+    /**
+     * The key is `step`, matching the `{step}` placeholder in
+     * `src/ui/copy.ts` `announce.zoom` for both locales. It was `zoom`, which
+     * `interpolate` cannot match, and an unmatched placeholder is copied out
+     * verbatim — so the live region announced the literal string "Zoom {step}."
+     * The `copy.test.ts` sweep that now guards this is what made it visible.
+     */
     return chrome.kind === 'zoom'
-      ? interpolate(t.announce.zoom, { zoom: zoomLabel(t, zoom) })
+      ? interpolate(t.announce.zoom, { step: zoomLabel(t, zoom) })
       : interpolate(t.announce.mode, { mode: modeLabel(t, mode) })
   }
   return interpolate(t.announce.mode, { mode: modeLabel(t, mode) })
