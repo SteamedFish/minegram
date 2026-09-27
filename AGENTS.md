@@ -12,10 +12,17 @@ Minegram is a client-side ordered mine-run puzzle game deployed through GitHub P
 ## Git Workflow
 - This is a personal project: use a topic branch and worktree for implementation, create focused GPG-signed commits, then merge to `master` and push `origin` after all required verification passes.
 - Never include unrelated changes. Never disable commit signing.
+- **Never `git add -A` while a writer lane is running.** A designer's in-flight edits sit in the
+  shared worktree, so a blanket add silently folds a half-finished lane into an unrelated commit
+  and a reset afterwards is the only way out. Stage explicit paths, and read
+  `git show --stat` before believing a commit is as small as its message claims.
 - The remote is `git@github.com:SteamedFish/minegram.git`.
 
 ## Agent Model Policy
 - Every AI agent and sub-agent must use `opencode/space-bunny-free` (Space Bunny Free) without fallback.
+- **Temporary exception, granted 2026-09-25:** the user authorised other models when Space Bunny
+  Free rate-limits (`space-bunny-free rate limit 了，可以暂时使用其他模型工作`). A 403 from that
+  provider is a licence to switch, not a reason to stall. The default stays Space Bunny Free.
 
 ## Architecture
 - `src/domain/`: pure types, board and ordered line clues.
