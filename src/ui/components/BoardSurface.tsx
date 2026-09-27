@@ -128,6 +128,27 @@ const FIT_PASSES = 4
 export type FitProbe = (cell: number) => {
   readonly paneInline: number
   readonly paneBlock: number
+  /**
+   * The pane's own `max-block-size` in pixels — the height it is ALLOWED, as
+   * distinct from `paneBlock`, the height it currently HAS.
+   *
+   * These are different numbers, and using the wrong one is a silent under-use of
+   * the space. The pane's layout is `max-content` on the block axis with
+   * `max-block-size: min(70vh, 46rem)` in board.css, so while the board is SHORTER
+   * than that cap the pane's height IS the board's height: it reports the board back
+   * to the measure, and a solve that takes the report at face value is a no-op that
+   * can only ever confirm the size it already has. Measured in the browser on the
+   * default 15x15 at 1440x900: `clientHeight` 549, `max-block-size` 630, board at
+   * 32px cells — so 81px of the cap, 5.4px per row, was simply not being spent, and
+   * the numeral the player complained about stayed at its 10px floor for a board
+   * that had room to be bigger.
+   *
+   * The cap is safe to read because it is written in `vh` and `rem` — viewport and
+   * root font size — and no board can influence either. That is the same
+   * one-directional property the pane's own box was read for, and the reason this is
+   * a cap and not the pane's parent: a parent's height could be tracking the board.
+   */
+  readonly paneBlockCap: number
   readonly railInline: number
   readonly railBlock: number
   /**
@@ -213,6 +234,7 @@ export function fitCellAt(
   const {
     paneInline,
     paneBlock,
+    paneBlockCap,
     railInline,
     railBlock,
     inlineChrome,
@@ -231,7 +253,7 @@ export function fitCellAt(
   // THE OTHER HALF OF THAT CLAIM WAS WRONG, and walking the solve is what found
   // it. On the block axis the pane is NOT always capped: while the board is
   // shorter than the cap, the pane is tracking the board, so its height IS the
-  // board's output and the two cancel — a no-op, the only correct answer. They did
+  // board's output and the two cancel. They did
   // not quite cancel, because the pane measures the stage's border box and the
   // solve was only subtracting the band. The stage spends 3px on itself at rest
   // (1px border above, 1px below, and the rails ROW's 1px `border-block-end`,
@@ -247,13 +269,38 @@ export function fitCellAt(
   // a true no-op, so the chain is one pass — and a capped pane loses the 3px of
   // chrome that really is spent, which costs a 3-row board one cell of nothing.
   //
+  // The block axis then had a THIRD defect of the same family, and it is the one
+  // that mattered to the player. Charging the chrome made the tracking case an exact
+  // no-op — which is correct only when the board is TALLER than the cap. While the
+  // board is SHORTER than `max-block-size`, "the pane's height" is not a constraint
+  // at all, it is a report of the board's own height, and a solve that reads it as a
+  // constraint can only ever hand back the size it was given. So `fit` was not
+  // fitting: it was confirming. The board sat at whatever cell it happened to be
+  // painted at, and the space under it went unused until the board was tall enough
+  // to fill the pane — which on a short board is never. Measured on the default
+  // 15x15 at 1440x900: `clientHeight` 549 against a `max-block-size` of 630, so 81px
+  // of allowance, 5.4px per row, unspent; and because the numeral scales with the
+  // cell, those 5.4px are exactly the difference between a 10px numeral and an
+  // 11.4px one, on the default board, at fit, with the player having done nothing.
+  //
+  // So the block solve divides by the height the pane is ALLOWED, which is
+  // `max(paneBlock, paneBlockCap)`, and the allow is safe to read for the same
+  // reason the cap was: it is `min(70vh, 46rem)`, written in units no board can
+  // reach. The `max` is what makes both regimes right without a branch. When the
+  // board is taller than the cap the pane is stretched, `paneBlock` is the real
+  // limit and the cap is smaller, so the cap loses; when the board is shorter the
+  // cap is the real limit and the cap wins. One line, no state, and the exact no-op
+  // the chrome fix bought at the cap is preserved because above the cap the two
+  // inputs stop cancelling — the pane stops tracking and starts constraining.
+  //
   // The loop that remains is the rail's, and `settleFitCell` below walks it.
   //
   // A hidden region measures zero on BOTH axes, and the two axes are not symmetric
   // here. On the block axis a zero measure is legitimately weak evidence — the pane
   // is capped by `min(70vh, 46rem)`, so a board that is merely not on screen yet
-  // still has a perfectly good width to divide, and falling through to `byWidth` is
-  // the right answer. On the INLINE axis there is nothing to fall back to: a
+  // still has a perfectly good width to divide, and the cap above often still
+  // resolves, so falling through to `byWidth` is the right answer. On the INLINE
+  // axis there is nothing to fall back to: a
   // zero-width pane means the board has no room at all, and the arithmetic below
   // does not say so. `Math.floor` of a negative number is negative, `byHeight`
   // inherits it, and the closing `Math.max(FIT_FLOOR_PX, …)` then reports the
@@ -275,7 +322,11 @@ export function fitCellAt(
     return Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, cell))
   }
   const byWidth = Math.floor(inlineRoom / columns)
-  const available = paneBlock - blockChrome - railBlock
+  // `max`, not `min`, and the two regimes it serves are the two the pane can be in:
+  // stretched (the board is taller than the cap, the cap loses) or tracking (the
+  // board is shorter, the cap wins). See the block-axis note above for why taking
+  // the pane's current height alone made `fit` a confirmation rather than a fit.
+  const available = Math.max(paneBlock, paneBlockCap) - blockChrome - railBlock
   const byHeight = available > 0 ? Math.floor(available / rows) : byWidth
   return Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, Math.min(byWidth, byHeight)))
 }
@@ -557,11 +608,23 @@ export function BoardSurface(props: BoardSurfaceProps) {
       // and padding are the same pixels at every candidate, which is exactly the
       // property that makes charging them a fixed point rather than a loop.
       const chrome = stageChrome(stageNode, corner)
+      // The pane's cap, read from its OWN computed `max-block-size` and not from any
+      // board variable. It is read once per measure, outside the chain, for the same
+      // reason the chrome is: it is a property of the stylesheet's `min(70vh, 46rem)`,
+      // identical at every candidate. A `getComputedStyle` read that cannot be
+      // resolved (`none`, or `0` on an element that generates no box) is reported as
+      // 0 rather than `NaN`, because `Math.max(paneBlock, 0)` is the exact
+      // pre-existing behaviour and a `NaN` here would poison every later number.
+      const blockCap = (() => {
+        const raw = Number.parseFloat(getComputedStyle(node).maxBlockSize)
+        return Number.isFinite(raw) && raw > 0 ? raw : 0
+      })()
       const probe: FitProbe = (cell) => {
         stageNode?.style.setProperty('--cell', `${cell}px`)
         return {
           paneInline: node.clientWidth,
           paneBlock: node.clientHeight,
+          paneBlockCap: blockCap,
           railInline: corner?.offsetWidth ?? 0,
           railBlock: corner?.offsetHeight ?? 0,
           inlineChrome: chrome.inline,

@@ -115,6 +115,48 @@ function one(selector: string): Element {
   return found[0] as Element
 }
 
+const realGetComputedStyle = globalThis.getComputedStyle
+
+/**
+ * Report the pane's `max-block-size`, which the solve reads as `paneBlockCap`.
+ *
+ * This stubs the GLOBAL and not a prototype, which is a fact discovered the hard way:
+ * jsdom's `getComputedStyle` returns an object that is not rooted at
+ * `CSSStyleDeclaration.prototype` — verified, not assumed — so a property defined on
+ * that prototype is invisible to it, and it answers `none` for `maxBlockSize` no
+ * matter what the stylesheet says. Defining the property on the ELEMENT is invisible
+ * too, for the same reason. The only seam that reaches the read is the call itself, so
+ * the call is wrapped.
+ *
+ * It is also necessary because jsdom resolves every CSS import to an empty module, so
+ * `board.css` contributes nothing — which means every other test in this file runs
+ * with a cap of 0 and exercises the pre-existing behaviour. That is a convenient
+ * accident and also a trap: a suite in which the cap is invisible cannot notice a
+ * solve that ignores it, so the cap is made speakable here rather than left to the one
+ * test that needs it.
+ *
+ * The wrapper is a `Proxy`, not a replacement, so every other computed-style read in
+ * the component — the stage chrome, above — still goes to the real implementation with
+ * its own receiver, and methods stay bound to the target they came from.
+ */
+function stubBlockCap(value: string): void {
+  globalThis.getComputedStyle = ((
+    element: Element,
+    pseudo?: string | null,
+  ): CSSStyleDeclaration =>
+    new Proxy(realGetComputedStyle(element, pseudo), {
+      get(target, property) {
+        if (property === 'maxBlockSize') return value
+        const found = Reflect.get(target, property, target)
+        return typeof found === 'function' ? found.bind(target) : found
+      },
+    })) as typeof globalThis.getComputedStyle
+}
+
+function clearBlockCap(): void {
+  globalThis.getComputedStyle = realGetComputedStyle
+}
+
 beforeEach(() => {
   ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   container = document.createElement('div')
@@ -136,6 +178,7 @@ afterEach(() => {
   Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight')
   Reflect.deleteProperty(HTMLElement.prototype, 'offsetWidth')
   Reflect.deleteProperty(HTMLElement.prototype, 'offsetHeight')
+  clearBlockCap()
 })
 
 describe('BoardSurface — the §5.4 reveal hooks', () => {
@@ -826,11 +869,18 @@ describe('BoardSurface — the height-aware Fit', () => {
     // Both halves are asserted in one test because the second half is the
     // regression: the SAME pane, measured the way the solve used to measure it, does
     // not terminate inside the budget.
+    //
+    // `paneBlockCap` is 0 here, which is the whole point: the no-op this test guards
+    // is the no-op at the CAP, where the pane is stretched and its current height IS
+    // the constraint. The pane the default app actually has is `max-content` under a
+    // cap, and that regime is the next test. Conflating them is what let `fit` be a
+    // confirmation: the no-op was correct, and it was correct in the wrong regime.
     const trackingPane = (extra: number) => {
       const band = 34
       return (cell: number) => ({
         paneInline: 668,
         paneBlock: band + cell + extra,
+        paneBlockCap: 0,
         railInline: 19,
         railBlock: band,
         inlineChrome: 0,
@@ -846,6 +896,50 @@ describe('BoardSurface — the height-aware Fit', () => {
     const ramped = settleFitCell(uncharged, 1, 1, 32)
     expect(ramped.converged).toBe(false)
     expect(ramped.cell).toBeGreaterThan(32)
+  })
+
+  it('grows into the pane cap it is under, instead of confirming the size it was given', () => {
+    // The default app's pane is `max-content` under `max-block-size: min(70vh, 46rem)`,
+    // so while the board is SHORTER than the cap the pane's height is a REPORT of the
+    // board, not a constraint on it. A solve that reads the report as a constraint can
+    // only hand back the size it was given, so `fit` was not fitting — it was
+    // confirming, and the space under the board went unused until the board was tall
+    // enough to fill the pane, which a short board never is.
+    //
+    // Measured on the built bundle, default 15x15 at 1440x900: `clientHeight` 549
+    // against a `max-block-size` of 630, at a 32px cell. 549 is exactly 15 x 32 plus the
+    // 69px of band and chrome, i.e. the pane reporting the board back, and it had 81px
+    // of allowance unspent — 5.4px a row. Because the numeral scales with the cell, that
+    // is the whole distance between the 10px numeral floor the player complained about
+    // and an 11.4px one, on the default board, at fit, with the player having done
+    // nothing at all.
+    //
+    // This block's board is `DIMENSIONS`, 2x2, so the case is stated at that size
+    // instead and the arithmetic is given rather than assumed. A 60px pane over a 10px
+    // band is a 2x2 painted at 25px: (60 - 10) / 2 = 25, the confirming answer. With a
+    // 70px cap the solve may use 70, so (70 - 10) / 2 = 30. 30 is strictly between 25
+    // and the 56px ceiling, so neither the pre-fix answer nor a clamped one can produce
+    // it, and `byWidth` = 200 cannot mask it.
+    stubBlockCap('70px')
+    stubPane(400, 60, 0, 10, 0)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(fitCell()).toBe('30px')
+  })
+
+  it('still stops at the pane, not the cap, once the board is taller than the cap', () => {
+    // The cap is a CEILING on the solve, not a target, and `Math.max` is only correct
+    // because the pane's own height wins ABOVE the cap — a stretched pane, where the
+    // cap is the smaller number and must lose. So the same board with a cap SMALLER
+    // than the pane must answer from the pane: a 120px pane over a 10px band is
+    // (120 - 10) / 2 = 55, just under the 56px ceiling, while a solve that simply always
+    // used the cap would answer (40 - 10) / 2 = 15 and be clamped up to the 24px floor.
+    // 55 and 24 are far enough apart that this cannot pass by accident.
+    stubBlockCap('40px')
+    stubPane(400, 120, 0, 10, 0)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(fitCell()).toBe('55px')
   })
 
   it('keeps the rail out of the width solve', () => {
