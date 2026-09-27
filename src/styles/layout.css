@@ -42,7 +42,15 @@
     'footer footer footer';
   gap: var(--sp-5);
   align-items: start;
-  min-block-size: 100vh;
+  /* `dvh`, not `vh`. On Android `vh` is the LARGEST viewport — the height the
+     page would be with the URL bar retracted — so `100vh` is a promise the page
+     cannot keep on a screen that has 60px of browser chrome showing: the app is
+     then taller than the window by exactly that bar, and the player is handed a
+     scroll that exists before there is anything to scroll to. `dvh` is the height
+     that is actually on screen right now, which is the only one a minimum can
+     honestly be measured against. Desktop has no dynamic bar, so the two are
+     the same length there and this costs nothing above the fold. */
+  min-block-size: 100dvh;
   padding: var(--sp-4) var(--sp-5) var(--sp-5);
 }
 
@@ -323,12 +331,17 @@
   animation-delay: calc(var(--i, 0) * var(--stagger));
 }
 
-/* The stagger now follows the NARROW stack's order, banner then the status line,
-   the board, then the two panels, then the footer — which is also the order the
-   three-column layout wants, because the region the player came to play is named
-   before the two regions they came to consult. It used to be the DOM order
+/* The stagger follows the NARROW stack's order, banner then the status line, the
+   board, then the LEGEND, then the settings, then the footer — which is also the
+   order the three-column layout wants, because the region the player came to play
+   is named before the two regions they came to consult, and the key arrives
+   before the form that prints the next board. It used to be the DOM order
    (banner, left, main, right), which on a phone meant the board was the last
-   thing to arrive on a screen that had already shown a 1000px settings form. */
+   thing to arrive on a screen that had already shown a 1000px settings form; and
+   when the two panels were swapped in §6 they had to be swapped here too, or the
+   key would fade in after the form the player is waiting on. The three-column
+   layout puts left and right BESIDE the board rather than below it, so their
+   two indices are a claim about the stacked reading order and nothing more. */
 .mg-banner {
   --i: 0;
 }
@@ -341,11 +354,11 @@
   --i: 2;
 }
 
-.mg-side--left {
+.mg-side--right {
   --i: 3;
 }
 
-.mg-side--right {
+.mg-side--left {
   --i: 4;
 }
 
@@ -371,17 +384,36 @@
      are the stable half — same height whatever the board is doing — so they are
      the half that waits.
 
+     And of the two asides, the LEGEND comes first — it used to come second,
+     behind the whole settings sheet. On a phone the settings form is 1112-1140px
+     tall, so "what does this glyph mean" cost that plus the key's 768-828 = two
+     screens of
+     scrolling to answer, and the player was paying that DURING a round, with the
+     board above them. The key is the one thing a player consults while the game
+     is in front of them, and the settings are a one-time task they take once
+     and then never touch again (the defaults are already the size most players
+     want), so the key is the half that waits least. The order is: what you are
+     looking at, then the key to it, then the settings you occasionally open.
+     The cost is stated rather than hidden: the empty sheet's own sentence ("Choose
+     a size and a density, then print a board") now sits above the key rather
+     than above the form, so the first run scrolls a screenful further before
+     reaching the print button — which was already at the BOTTOM of that 1112px
+     form, so the extra cost is a screenful of a region the player is about to
+     skip past anyway. Closing the gap properly is a change to the empty sheet's
+     copy and the form's own density, and both are outside this file.
+
      It also means the arrival view is the banner, the board's own "nothing
-     printed yet" sheet, and the top of the settings form: the sheet's text asks
-     for a size and a density, and the form it is asking about is one flick
-     below, so the instruction and the thing that answers it are adjacent. */
+     printed yet" sheet, and the top of the key: the one thing a new player most
+     wants explained — what the underlines and the badges under the numerals mean
+     — is in the first flick, and the form is a named control in the sticky
+     banner above it. */
   .mg-app {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
       'banner banner'
       'main   main'
-      'left   left'
       'right  right'
+      'left   left'
       'footer footer';
   }
 
@@ -419,14 +451,16 @@
 @media (width < 48rem) {
   /* One column. Everything else about the page is unchanged, because the board
      is the only element that must never be squeezed below `--cell-min` and it
-     owns its own scroller. */
+     owns its own scroller. The order is the one §6 chose — board, then the key,
+     then the settings — because at this width the settings sheet is a whole
+     screen of its own and the key would otherwise sit behind it. */
   .mg-app {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       'banner'
       'main'
-      'left'
       'right'
+      'left'
       'footer';
     gap: var(--sp-3);
     padding: var(--sp-2) var(--sp-2) var(--sp-4);
@@ -457,7 +491,44 @@
 }
 
 /* -----------------------------------------------------------------------------
-   6b. The tablet band — wide and short
+   6b. The key is a screenful, not a wall — every band below the desktop one
+   -----------------------------------------------------------------------------
+   §6 puts the legend directly under the board, which makes it the first thing a
+   player can reach when a glyph is unfamiliar. The next question is what that
+   costs: the legend is 828px of content on a 412x915 phone, so the region the
+   player consults DURING a round is a wall they must scroll through, and the
+   page's own scroll is now spent on it.
+
+   So in every band below the desktop template the legend stops being as tall as
+   its content and becomes as tall as the token `--key-cap` (60dvh, tokens.css
+   BAND): it scrolls INSIDE its own box, and the page's scroll is one screen's
+   worth again. Nothing is hidden and nothing is truncated — a key that does not
+   fit scrolls, which is the same answer the board's own pane has always given,
+   and unlike the settings sheet it costs nothing to scroll because a key has no
+   primary action at the bottom of it.
+
+   The SETTINGS sheet is deliberately not bounded here, and the reason is the
+   thing this band is not allowed to do: its print button is the last control in
+   the form, so a bounded settings sheet hides the app's primary action below the
+   fold of its own box. That is a worse failure than a long page, and the long
+   page is what it already was. What would fix it is a shorter form, or a print
+   control that follows the player down the sheet — SettingsPanel.tsx, not here.
+
+   `overscroll-behavior: contain` is what stops a flick at the end of the key
+   from handing the gesture to the page. `min-block-size: 0` is the other half: a
+   grid item's default `min-height: auto` refuses to shrink below its content,
+   which would make the cap a lie. */
+@media (width < 74rem) {
+  .mg-side--right {
+    max-block-size: var(--key-cap);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    min-block-size: 0;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   6c. The tablet band — wide and short
    -----------------------------------------------------------------------------
    Measured on a 1280x800 window with both panels open, 15x15: the page was
    1608px tall in an 800px window, and the reason was not the board. The board's
@@ -471,7 +542,11 @@
    is the 100px the banner and the footer are worth. Nothing is hidden and nothing
    is truncated — a panel that does not fit scrolls, which is the same answer the
    board's own pane has always given, and it is one axis of wheel instead of a
-   page that never ends.
+   page that never ends. Here both asides are bounded, settings sheet included,
+   because a landscape window is 768-820px tall and the form is 1112: a window
+   that short cannot show a whole screen of controls, so scrolling the sheet is
+   not a compromise, it is the only shape it can have. (The narrow bands above
+   leave the sheet alone for the opposite reason — a tall window could show it.)
 
    The cap is absolute (`100dvh` less the app's own block padding) rather than a
    fraction of the app's grid, because the app's rows are `auto`: a cap expressed
@@ -479,16 +554,17 @@
    not `vh` because a tablet in a browser has a chrome that comes and goes, and
    the pane must not be sized against a URL bar that is not there.
 
-   `overscroll-behavior: contain` is what stops a flick at the end of a panel from
-   handing the gesture to the page and moving the board out from under the player
-   reading it. `min-block-size: 0` is the other half: a grid item's default
-   `min-height: auto` refuses to shrink below its content, which would make the
-   cap a lie.
+   This band comes AFTER 6b so that where both match — a 1024x768 tablet, which
+   is both short and narrow — the window's height wins over the key's 60dvh: at
+   728px the whole of a short window is worth more than a screenful, and both
+   rules set the same four properties.
 
    The band's width and height are the same literals tokens.css's BAND uses, and
    they must stay the same: the numeral floor and the narrowed side column are
    set in the same band there, and a band that matched on one screen and not the
-   other would give a 12px numeral with a 20rem panel. */
+   other would give a 12px numeral with a 20rem panel. The check that keeps them
+   together is in `.tmp/style-check.mjs`, not in this comment. */
+
 @media (orientation: landscape) and (height < 56rem) and (width >= 48rem) {
   .mg-side {
     max-block-size: calc(100dvh - var(--sp-4) - var(--sp-5));

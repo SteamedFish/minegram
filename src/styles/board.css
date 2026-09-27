@@ -51,8 +51,10 @@
 }
 
 .mg-board-scroll {
-  /* One scroll container in the whole app (§1.7); `overflow` itself is declared
-     in base.css, which loads first, and nothing here overrides it.
+  /* One scroll container in the whole app (§1.7); `overflow: auto` itself is
+     declared in base.css, which loads first. The two rules at the end of this block
+     are the first things in the app to override it, and the reason is the pane being
+     a scroller on BOTH axes at once — see them.
      `contain: layout paint` is what keeps the board's intrinsic max-content width
      from ever giving the DOCUMENT a horizontal scrollbar.
 
@@ -108,6 +110,54 @@
      back. */
   display: grid;
   justify-content: safe center;
+}
+
+/* -----------------------------------------------------------------------------
+   1b. One axis at a time — the pane panned in two directions at once
+   -------------------------------------------------------------------------- */
+/* A scroll container that has nothing to scroll STILL takes the flick: the browser
+   does not consult the extent before deciding the gesture was a scroll, it hands the
+   gesture to the container and then finds there was nowhere to go. So on a board
+   that overflows the pane, a vertical swipe over the board and a horizontal one are
+   two different answers to the same gesture, and nothing on screen says which is
+   which. Measured at 412x915 with a coarse pointer and a 15x15 printed (the phone's
+   commonest shape): the pane has NOTHING to scroll vertically — `scrollHeight` 549
+   against `clientHeight` 549 — and 77px to scroll inline, and the browser took the
+   vertical flick anyway. A touch drag up over the board moved the board 0px and the
+   PAGE 268px, from a gesture the player made on the board; the same drag in a
+   hand-thrown probe earlier moved the page only when it started off the board. Two
+   answers to one gesture, and nothing on screen said which.
+
+   `data-pan-block` / `data-pan-inline` are written by BoardSurface from the pane's
+   own box, and the rule that is MISSING is the point: the axis the board does not
+   overflow is armed `hidden`. The scrollport survives — the column rail's
+   `position: sticky` resolves against it, a keyboard or programmatic scroll still
+   reaches the board, and the rule below the rail band keeps each rail cell's own
+   `overflow: hidden` doing the numeral's clipping — but the gesture is gone, so a
+   flick can only ever move the one surface the board is bigger than.
+
+   `hidden` rather than `clip` on purpose: `clip` would leave the pane non-scrolling
+   in Chromium and break the sticky rail, and this rule is the one place a rail's
+   stickiness is bought.
+
+   The fit solves BOTH axes (`Math.min(byWidth, byHeight)`), so on a board that does
+   not fit, the fit is already choosing which axis pans — these rules only make the
+   choice visible. Neither attribute present is the fit case. BOTH present is the
+   24x24 case, and it is the OTHER state in which this file changes nothing: there
+   the pan is the answer rather than a compromise, because the player asked for a
+   board the window cannot hold (a 24x24 is 684px wide against a 345px pane at
+   412x915). Measured there: a vertical flick moved the pane its full 65px and the
+   page 0, a horizontal one moved the pane 256 of 318 and the page 0 — the pane owns
+   the gesture while the finger is on the board, which is a defensible ownership and
+   not the defect above, where the gesture bought nothing at all. The zoom steps are
+   the way out of it, and they disarm both: a 15x15 at 412x915 on `l` carries 48px
+   of block and 324px of inline, both attributes absent, both axes `auto`. */
+.mg-board-scroll[data-pan-block]:not([data-pan-inline]) {
+  overflow-inline: hidden;
+}
+
+.mg-board-scroll[data-pan-inline]:not([data-pan-block]) {
+  overflow-block: hidden;
 }
 
 /* -----------------------------------------------------------------------------

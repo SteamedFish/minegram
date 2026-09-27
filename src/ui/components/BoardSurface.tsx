@@ -166,6 +166,56 @@ export type FitProbe = (cell: number) => {
   readonly blockChrome: number
 }
 
+/**
+ * Which of the pane's two axes the board actually overflows.
+ *
+ * The pane is the app's inner scroller and the page around it is the outer one, so a
+ * board too big for the pane can be panned by a player who cannot tell which surface
+ * their flick will move. The sharpest case is a 15x15 at 412x915, where the pane has
+ * NOTHING to scroll on the block axis (`scrollHeight` 549 against `clientHeight` 549)
+ * and 77px on the inline one. A touch drag up, started on the board, moved the board
+ * 0px and the PAGE 268px — the gesture was spent on the surface the player was not
+ * looking at, and nothing on screen said which surface that was.
+ *
+ * `auto` on both axes is what makes that ambiguity, because a scroll container with
+ * nothing to scroll still accepts a flick: the browser does not consult the extent
+ * before deciding the gesture was a scroll. So the pane arms ONE axis at a time. The
+ * axis it does not overflow is armed with `hidden`, which keeps the scrollport and its
+ * scroll range — the column rail's `position: sticky` resolves against it, and a
+ * keyboard or programmatic scroll still works — while taking the gesture away. The
+ * band's rows keep their own overflow for the numeral, so an armed-block pane still
+ * scrolls its rail, which is what the sticky header needs.
+ *
+ * The alternative, and why it is worse: fitting the board to BOTH axes is the fit's
+ * `Math.min(byWidth, byHeight)`, and the 24px floor plus the 8px of inline padding
+ * means 24 columns cannot fit a 345px pane at any cell the floor allows — measured
+ * `24 x 24 + rail = 684` against 345, so 339px of horizontal pan at the very cell the
+ * floor just bought. Lowering the floor is the one lever that removes the pan, and it
+ * was refused: `FIT_FLOOR_PX` is the same 24px that `--cell-min` gives the cell its
+ * minimum size, so a floor below it is a floor the board cannot honour anyway, and
+ * the defect it was aimed at is a cell too small to hit, not a pane too small to hold
+ * it. The 24x24 board is a choice the player makes in the settings, for a reason, and
+ * the app's answer to a board the window cannot hold is the zoom step that
+ * deliberately overflows in both directions at once (56px cells, `xl`).
+ */
+export type PanAxes = {
+  readonly block: boolean
+  readonly inline: boolean
+}
+
+/** What the pane's own box and content say, read live, with no rounding games. */
+export function panAxesFor(pane: {
+  readonly clientHeight: number
+  readonly clientWidth: number
+  readonly scrollHeight: number
+  readonly scrollWidth: number
+}): PanAxes {
+  return {
+    block: pane.scrollHeight - pane.clientHeight > 1,
+    inline: pane.scrollWidth - pane.clientWidth > 1,
+  }
+}
+
 export type FitOutcome = {
   /** The size the board should paint at. Never outside the floor and the ceiling. */
   readonly cell: number
@@ -436,6 +486,14 @@ export function BoardSurface(props: BoardSurfaceProps) {
   const [roving, setRoving] = useState(0)
   const [focusInside, setFocusInside] = useState(false)
   const [fitCell, setFitCell] = useState(32)
+  /**
+   * The axes the board may be panned on, and the reason it is state and not a
+   * measurement read at paint time: `panAxesFor` needs a laid-out pane, and the pane
+   * is laid out after this component renders. So the effect below reads it and the
+   * stylesheet is told, and the resting answer — a pane with nothing to pan — is
+   * "no attribute at all", which keeps every current rule true.
+   */
+  const [panAxes, setPanAxes] = useState<PanAxes>({ block: false, inline: false })
   // The size the fit effect last SETTLED on, as a ref rather than a dep: the
   // solve walks from there, and a state read would make the effect depend on its
   // own output, which is the render loop the note on its deps warns about.
@@ -722,6 +780,60 @@ export function BoardSurface(props: BoardSurfaceProps) {
     // cell size does not need it to, because every pass re-reads the live costs.
   }, [columns, rows, round, isFit])
 
+  /**
+   * Arm the axis the board overflows, and disarm the one it does not.
+   *
+   * Two observers because there are two things that change the answer and neither
+   * one signals the other: the pane's box (a window resize, a side panel opening) and
+   * the stage's (the fit walking, a new round's clues giving a different rail track).
+   * A pane that resizes without its content changing re-arms nothing, and content that
+   * grows inside a still pane — the case that matters, since the fit can only ever
+   * GROW a cell — is only visible on the stage. The pane's own box is not enough: the
+   * stage is `max-content` inside it, so a board growing from 24 to 56px cells leaves
+   * the pane's border box exactly where it was and the callback never fires.
+   *
+   * The state compare is by value and returns the previous object when nothing moved,
+   * so a re-fire that reports the same numbers does not re-render. That matters because
+   * this effect observes an element it re-renders: a re-render does not resize the
+   * pane, but a loop here would be indistinguishable from a real one.
+   *
+   * `isFit` is a dep, and it is a dep that DISARMS rather than only re-measures: a step
+   * that deliberately overflows both axes at once is a choice, not a compromise, and it
+   * must be pannable both ways. That is a separate branch from the early return above,
+   * because an early return would leave the last fit's answer standing — a pane armed
+   * for the fit that was left behind, on a step the player never armed.
+   */
+  useEffect(() => {
+    const pane = scroll.current
+    const stageNode = stage.current
+    const disarm = (): void => {
+      setPanAxes((prev) => (prev.block || prev.inline ? { block: false, inline: false } : prev))
+    }
+    if (pane === null || board === null) {
+      return
+    }
+    if (!isFit) {
+      disarm()
+      return
+    }
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+    const sync = (): void => {
+      const next = panAxesFor(pane)
+      setPanAxes((prev) => (prev.block === next.block && prev.inline === next.inline ? prev : next))
+    }
+    sync()
+    const observer = new ResizeObserver(sync)
+    observer.observe(pane)
+    if (stageNode !== null) {
+      observer.observe(stageNode)
+    }
+    return () => {
+      observer.disconnect()
+    }
+  }, [board, isFit, fitCell])
+
   function moveTo(next: number): void {
     const bounded = Math.max(0, Math.min(columns * rows - 1, next))
     // A move first aborts any live drag, so an arrow key can never commit a batch.
@@ -807,6 +919,8 @@ export function BoardSurface(props: BoardSurfaceProps) {
         className="mg-board-scroll"
         ref={scroll}
         data-testid="board-scroll"
+        data-pan-block={panAxes.block ? 'block' : undefined}
+        data-pan-inline={panAxes.inline ? 'inline' : undefined}
         onFocus={() => {
           setFocusInside(true)
         }}

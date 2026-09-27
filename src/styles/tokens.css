@@ -966,9 +966,37 @@ html[data-theme='light'] {
 :root {
   --side-col: 20rem;
   --board-cap: min(70vh, 46rem);
+  /* How tall the KEY may get before it becomes a scroller of its own (layout.css
+     6b). It is a cap, not a height: the legend is 768px of content at 800x1280,
+     780 at 600x960, 828 at 412x915 and 1090 on a desktop window, and the only
+     question a narrow screen has to
+     answer is whether the region the player consults MID-ROUND is a screenful
+     they can skim or a wall they have to scroll past. One phone screen is the
+     whole of the answer, so the cap is 60dvh rather than a number of pixels: it
+     follows the device it is on, and it leaves 40% of the viewport for whatever
+     the player was looking at when they went looking. */
+  --key-cap: 60dvh;
 }
 
-/* PHABLET AND TABLET, PORTRAIT OR TALL: the band between a large phone and the
+/* PHONE: the band below layout.css's own collapse to one column, where the board
+   is fitted into 345-437px of pane and `--cell` lands on or near the 24px floor.
+   The two tablet bands below were 12px / 0.34, and this one was NOT — so the
+   600x960 and 412x915 viewports, the two a large phone and a small tablet both
+   report, painted a 10px numeral: measured 10.00px at 600x960 and 412x915 against
+   13.60px at 800x1280 on the same 15x15. That is the 「放大游戏区域不放大数字格子」
+   defect with the arithmetic backwards — the SMALLER board got the smaller numeral,
+   which is also the one case where the numeral is the only thing standing between
+   the player and the clue. The floor is 12px here for the same reason it is 12px
+   above: it is the smallest size that still reads as a numeral, and it costs the
+   fit `0.62 x 2px` per column of rail, which the fit already counts. */
+@media (width < 48rem) {
+  :root {
+    --rail-num-floor: 12px;
+    --rail-num-ratio: 0.34;
+  }
+}
+
+/* TABLET AND LARGE PHONE, PORTRAIT OR TALL: the band between a large phone and the
    desktop template, i.e. exactly the widths layout.css already stacks in one
    column. The numeral floor is the whole of the change. */
 @media (width >= 48rem) and (width < 74rem) {

@@ -1,7 +1,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { BoardSurface, ClueCell, fitCellAt, settleFitCell } from './BoardSurface'
+import { BoardSurface, ClueCell, fitCellAt, panAxesFor, settleFitCell } from './BoardSurface'
 import { BoardEmptyState } from './BoardEmptyState'
 import { createGameStore, type GameStore } from '../gameStore'
 import { DEFAULT_LOCALE, getCopy } from '../copy'
@@ -686,7 +686,32 @@ describe('BoardSurface — the height-aware Fit', () => {
     })
     observed.length = 0
     callbacks.length = 0
+    paneContent.w = null
+    paneContent.h = null
     definePane(width, height, railWidth, railBlock, rowChrome)
+  }
+
+  /**
+   * What the pane's CONTENT measures, for the pan arming.
+   *
+   * `null` means "the content is the box", which is the regime every test above is in and
+   * the regime a real pane is in whenever the board fits. The pan arming asks the pane
+   * whether it OVERFLOWS, so a fixture that never overflows would answer "nothing to arm"
+   * to every test of it — a test that passes with the arming deleted. `setPaneContent` is
+   * how a test states the overflow, and it survives `fireObservers` on purpose: a pane
+   * that grows its content without resizing is the case the second observer exists for.
+   */
+  const paneContent: { w: number | null; h: number | null } = { w: null, h: null }
+
+  function setPaneContent(width: number, height: number): void {
+    paneContent.w = width
+    paneContent.h = height
+  }
+
+  /** The pane's arming, as the two attributes board.css §1b reads. */
+  function armed(): (string | null)[] {
+    const pane = one('.mg-board-scroll')
+    return [pane.getAttribute('data-pan-block'), pane.getAttribute('data-pan-inline')]
   }
 
   /**
@@ -716,6 +741,24 @@ describe('BoardSurface — the height-aware Fit', () => {
       configurable: true,
       get(this: HTMLElement) {
         return this.classList.contains('mg-board-scroll') ? height : 0
+      },
+    })
+    // What the pane's CONTENT measures. `scrollWidth`/`scrollHeight` are absent from
+    // jsdom (they read 0 for everything), so the pan arming would read every pane as
+    // empty and answer "nothing to arm" to every test of it. Defaulting to the client's
+    // own number is the honest zero-overflow case: a pane whose content is its box.
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (!this.classList.contains('mg-board-scroll')) return 0
+        return paneContent.w ?? width
+      },
+    })
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (!this.classList.contains('mg-board-scroll')) return 0
+        return paneContent.h ?? height
       },
     })
     // The corner cell is what the fit measures the rail by, and it is the one element
@@ -1267,8 +1310,146 @@ describe('BoardSurface — the height-aware Fit', () => {
     // closes the moment the thing measured is the thing the cap is written on. The
     // observer is on the pane, and the pane's own variables are the cap's, so the
     // measure's inputs never include the board's own output.
-    expect(observed).toHaveLength(1)
-    expect(observed[0]?.classList.contains('mg-board-scroll')).toBe(true)
+    //
+    // There are now TWO observers on this pane, from two effects, and the assertion says
+    // which is which rather than counting: the FIT's is the pane and comes first, and
+    // the pan arming's second target is the STAGE — deliberately, because the stage is
+    // `max-content` inside the pane, so a board that grows from 24 to 56px cells leaves
+    // the pane's border box exactly where it was and a pane-only observer would never
+    // hear about it. Distinct nodes, in order, is the shape of the claim.
+    const distinct = Array.from(new Set(observed))
+    expect(distinct).toHaveLength(2)
+    expect(distinct[0]?.classList.contains('mg-board-scroll')).toBe(true)
+    expect(distinct[1]?.classList.contains('mg-board-stage')).toBe(true)
+  })
+
+  it('arms the axis the board overflows and disarms the one it does not', () => {
+    // The defect: the pane is the app's inner scroller and the page is the outer one, so
+    // a 24x24 on a 412x915 phone left BOTH axes with something to give (measured 345
+    // client against 437 scroll) and nothing on screen to say which surface a flick
+    // would move. board.css §1b answers it with one axis at a time, and the arming
+    // has to be measured rather than assumed — so the fixture states the overflow and
+    // the assertion reads the two attributes the sheet binds.
+    //
+    // Block only: content 400x160 in a 400x100 pane. 160 − 100 is 60px of vertical pan
+    // and 400 − 400 is 0, so the inline axis must be disarmed. `data-pan-inline` ABSENT
+    // is the assertion, not `false`: board.css binds `overflow-inline` off the
+    // `:not([data-pan-inline])` selector, and a `"false"` attribute would satisfy
+    // `[data-pan-inline]` and disarm the wrong side.
+    stubPane(400, 100)
+    setPaneContent(400, 160)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(armed()).toEqual(['block', null])
+  })
+
+  it('arms the inline axis alone when that is the one with room to give', () => {
+    // The same pane one axis over: 500 of content in 400 of pane, nothing vertically.
+    // This is the 24x24-on-a-phone shape without the height, and it is the direction the
+    // vertical fit can never reach on a board this size.
+    stubPane(400, 100)
+    setPaneContent(500, 100)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(armed()).toEqual([null, 'inline'])
+  })
+
+  it('arms BOTH when both overflow, rather than choosing for the player', () => {
+    // The measured 24x24 at 412x915 is this case, and it is the one where the choice
+    // cannot be made on the player's behalf: with a board this size on a pane this
+    // small, a vertical flick genuinely is a pan of the page and a horizontal one
+    // genuinely is a pan of the board, and no sheet can tell the player so. The honest
+    // answer is to arm both and let the finger pick — arming one would silently delete
+    // the other. What fixes the ambiguity is the FIT refusing to shrink past 24px, not
+    // the sheet hiding a pan.
+    stubPane(400, 100)
+    setPaneContent(500, 160)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(armed()).toEqual(['block', 'inline'])
+  })
+
+  it('arms nothing on a pane the board fits, which is most of them', () => {
+    // The default regime, and the one the other three are read against: a pane whose
+    // content is its box has nothing to pan, and `overflow: auto` on a container with
+    // nothing to scroll still accepts a flick, so "nothing armed" is a real state the
+    // sheet has to be able to say. A pane that armed itself here would take the
+    // gesture from the page over the board for no reason.
+    stubPane(400, 100)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(armed()).toEqual([null, null])
+  })
+
+  it('re-arms when the board grows inside a pane that did not resize', () => {
+    // The case the stage observer exists for. The stage is `max-content` inside the
+    // pane, so a board that walks from 24 to 56px cells leaves the pane's border box
+    // EXACTLY where it was: a pane-only observer never fires and the arming is stale
+    // for the whole round. Here the content changes with no `definePane` call at all —
+    // nothing about the pane moved — and the attribute follows it.
+    stubPane(400, 100)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(armed()).toEqual([null, null])
+    setPaneContent(400, 160)
+    act(() => {
+      fireObservers()
+    })
+    expect(armed()).toEqual(['block', null])
+  })
+
+  it('disarms both the moment the player leaves the fit for a zoom step', () => {
+    // The `xl` step is 56px cells and is MEANT to overflow in both directions at once:
+    // it is the answer to a board the window cannot hold, and a step whose point is a
+    // two-axis pan cannot arrive armed for the fit the player just left. This is a
+    // separate branch from the observer's early return on purpose — an early return
+    // would leave the last fit's answer standing, so the `fit` test above (which never
+    // overflows) would pass and this would ship a pane armed for a mode it is not in.
+    stubPane(400, 100)
+    setPaneContent(500, 160)
+    store = openStore()
+    paint(store.getSnapshot(), store, 'mine', undefined, 'fit')
+    expect(armed()).toEqual(['block', 'inline'])
+    // Leaving the fit is what it means: the mode changed, and the step that arrives
+    // re-observes for itself in the effect that follows. Unmounting first is the same
+    // dance the hints boundary test does, because `paint` always builds a fresh root.
+    act(() => {
+      root?.unmount()
+      root = null
+    })
+    paint(store.getSnapshot(), store, 'mine', undefined, 'xl')
+    expect(armed()).toEqual([null, null])
+  })
+
+  it('reads the two extents as a difference, and calls a single pixel nothing', () => {
+    // `panAxesFor` is exported for one reason: it is the arithmetic every one of the
+    // tests above rests on, and a pure function is the only part of the arming jsdom can
+    // test directly. Three facts. Each axis is its own `scroll - client` pair, so the
+    // two can never be compared across axes. A pane that reports one pixel over has
+    // nothing worth a gesture, so the threshold is a whole pixel and not zero. And the
+    // pairs are per axis on purpose: a pane is not square, so 100 of vertical slack
+    // against 400 of horizontal is the ordinary case, and the fourth assertion is the
+    // one that would catch the axes being read out of the wrong slots.
+    expect(panAxesFor({ clientHeight: 100, clientWidth: 400, scrollHeight: 100, scrollWidth: 400 })).toEqual({
+      block: false,
+      inline: false,
+    })
+    // A fractional cell rounds somewhere, and a pane that reports one pixel over has
+    // nothing worth a gesture.
+    expect(panAxesFor({ clientHeight: 100, clientWidth: 400, scrollHeight: 101, scrollWidth: 400 })).toEqual({
+      block: false,
+      inline: false,
+    })
+    expect(panAxesFor({ clientHeight: 100, clientWidth: 400, scrollHeight: 102, scrollWidth: 415 })).toEqual({
+      block: true,
+      inline: true,
+    })
+    // 0px of vertical slack against 15px of horizontal: the inline axis alone, which a
+    // swapped pair would report as neither.
+    expect(panAxesFor({ clientHeight: 100, clientWidth: 400, scrollHeight: 100, scrollWidth: 415 })).toEqual({
+      block: false,
+      inline: true,
+    })
   })
 
   it('does not fit a board that does not exist', () => {
