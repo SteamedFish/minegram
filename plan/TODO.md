@@ -278,28 +278,71 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
   SMALLER member of the cycle, the one that cannot overflow. Measured after:
   cell 32→40px, numeral 10→13.6px.
 
-- [ ] **Defect 1b — the board's bottom falls below the fold in landscape, and
-  the cap is not the term that decides it.** OPEN, with des-5. The band sets
-  `--board-cap: 86dvh` (688px at 1280×800) as a fraction of the VIEWPORT, but the
-  board region only receives the viewport less what the chrome spends above it.
-  Measured at 1280×800, 15×15, both panels open: pane `top 273`, `bottom 945`,
-  `height 672` — so **the pane is 16px short of its own cap and the cap is not
-  binding; the stage's content is.** That matters because the obvious reading of
-  the cap is wrong in exactly this regime: lowering `--board-cap` does not merely
-  trim a slack ceiling, it becomes the binding term immediately, and `fitCellAt`
-  reads it as `Math.max(paneBlock, paneBlockCap)`, so the board shrinks to match.
-  The stack above the pane is banner 148 + status 42 + toolbar ≈ 83 = 273, and the
-  fold at 800 leaves the pane 527. So the options are: lower the cap to ~527
-  (`86dvh` → `~66dvh`), which costs 15×15 roughly 37 → ~29px cells and costs 24×24
-  **nothing** because that cell is already on the 24px floor; or spend ~100px of
-  the banner/footer/status chrome instead, which buys about 7px of cell on a
-  15-row board; or a landscape-specific arrangement of those rows. The decision
-  belongs to des-5 and the measurement to the browser, not to the arithmetic
-  above. Note also that des-5's own round-5 report led with `vPageScroll`
-  ("1280×800: before 346, after 346 … No viewport scrolls more"), which is the
-  metric that hides exactly this: in landscape the page's scroll is the chrome plus
-  the board region's overshoot, and "no viewport scrolls more" is perfectly
-  compatible with the board being cut off.
+- [x] **Defect 1b — the board's bottom fell below the fold in landscape. FIXED by
+  making the app one screenful, not by lowering the cap** (`b5e5b32`). The cap
+  route was measured first and is arithmetically dead: at 527px the pane became
+  515px and the cell fell 39 → 29 with the board still 70px below the fold; at
+  455px the cell fell to 25 and the bottom was still 10px below. A 15×15 at the
+  24px floor needs 440px of stage and this viewport's chrome is 402px before the
+  board has any room at all, so 842 against 800 — the fold is out of reach, and
+  the cap route buys 158px of a 227px deficit for a 26% smaller board. The space
+  was bought from the page's height instead, in four sheets, gated on
+  `pointer: coarse and width >= 74rem and height < 56rem`: `.mg-app`
+  `block-size: 100dvh` with rows `auto minmax(0,1fr) auto`, `min-block-size: 0`
+  on `.mg-main` (a grid item's automatic minimum is its content's, and the
+  surface's content includes the pane's), the same rows on the surface,
+  `max-block-size: none` on the pane, and chrome trims including
+  `.mg-banner__tagline { display: none }`. Measured coarse with both panels open
+  at 24×24: `vPageScroll` **0** at 1280×800, 1280×720, 1366×768 and 1440×880, the
+  board wholly in the fold with **+117px** of slack, 0 console errors; at 1440×880
+  the pane is 522 against a 522 stage, so nothing pans at all. The cost is the
+  cell and it is named: 39 → 24px at 1280×800, 44 → 29px at 1440×880, which is the
+  price of not asking a finger to scroll a page and is the floor the fit already
+  refuses to pass. The zoom steps (`l` 40px, `xl` 56px) remain the escape hatch
+  and arm both pan axes. Two boundaries are load-bearing and both were measured:
+  the width floor, because below 74rem the panels are rows under the board and
+  the band collapsed the pane to **0px** at 1024×768 and 960×600 — a band that
+  zeroes the board is worse than no band; and `pointer: coarse`, because a mouse
+  user pays the whole cost for a benefit only a finger can use (44 → 29px at
+  1440×880 with the gate lifted).
+
+- [ ] **Defect 1c — the band has a one-pixel cliff, and a new instrument is what
+  found it.** OPEN, with des-5. The band is gated on `height < 56rem` = 896px,
+  and the ceiling is 896: 1440×880 is inside the band and 1440×896 is outside it,
+  and the difference is the app's worst state. Measured coarse at 24×24:
+  1440×880 gives `vPageScroll` 0, +117px of slack and a 12px numeral; 1440×896
+  gives `vPageScroll` **780px**, **−86px** of slack (board below the fold) and a
+  **10px** numeral. 1440×896 is a real viewport class — a 1440×900 panel with
+  browser chrome, or a tablet at 1440p in a fullscreen browser. The only evidence
+  in the file for a *height* condition is the pane collapsing to 0px at 1024×768
+  and 960×600, and both are **below 74rem**, so the width floor already excludes
+  them — which makes the height ceiling a magic number that is not yet known to
+  be doing work. The brief asks for a measurement of the band with the condition
+  removed at 1184×900 (the width floor itself), 1280×1024, 1440×1200 and
+  1440×1600, with the two collapsing cases as controls. A cliff is acceptable; an
+  unexamined magic number is not.
+
+- [ ] **Defect 6 — below ~750px wide the control strip wraps to three rows and the
+  chrome is most of the screen.** OPEN, with des-5. Measured coarse, 11 controls,
+  `flex-wrap: wrap`, `overflow-x: visible`, 0 controls offscreen — so nothing is
+  hidden, the strip simply stacks, and rows are counted as distinct child tops:
+
+  | viewport | toolbar | rows | banner + status + toolbar + footer | % of vh | 15×15 slack | 24×24 slack |
+  |---|---|---|---|---|---|---|
+  | 800×1280 | 711×114 | 2 | 126+42+114+70 = 352 | 28% | +236 | +219 |
+  | 600×960 | 543×166 | **3** | 178+42+166+70 = **456** | **48%** | **+6** | **−151** |
+  | 412×915 | 355×214 | **3** | 226+42+214+122 = **604** | **66%** | **−70** | **−260** |
+  | 360×800 | 303×214 | **3** | 604 | **76%** | **−185** | **−290** |
+
+  The band's own trim takes the strip to 102px in 2 rows, which is why no
+  landscape number shows this; in portrait the strip is untouched, and at
+  600×960 — the 8" pad, the closest thing to what the player asked for — the
+  board clears the fold by **six pixels** at 15×15 and misses it by 151 at 24×24.
+  The banner grows with the wrap (126 → 178 → 226), so the strip and the banner
+  charge the player twice for the same narrowness. Ruled out by the parent in the
+  brief: a toolbar that hides controls behind a horizontal scroll the player has
+  to discover, on the same WCAG 2.5.1/2.5.7 reasoning already in force for board
+  drags, and any answer that buys chrome by making the board smaller.
 
 - [x] **Defect 2, in the part that is reachable — no touch target reaches 44×44,
   and the board cells cannot.** 251 of 259 targets at 15×15 and 602 of 610 at
@@ -389,4 +432,6 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
 
 - **A PERSISTED UI flag in a shared browser profile will silently measure a state no player ever arrives in — and it does not merely add noise, it invents a defect and hides two real ones.** Both side panels sit behind a persisted `minegram.panel.*` flag, and every round's probe reuses one Chromium profile on port 9224, so whatever the last run left behind became this round's baseline. The first survey of round 5 therefore reported the left panel as 0px wide at every tablet width — which I wrote into this file as "defect 5" and briefed a designer against — when the panel measures 737/569/381/240px with the flag set. The same hidden state reported `keyOwnScroll false` at every viewport, which read as "the `--key-cap` bound is inert", and it also **understated the defect I was actually chasing**: fold slack at 1280×800 is −151px, larger than the hidden-state run implied. So one leaked flag produced one phantom defect, one false "this feature is broken", and one understated real defect, all at once. The generalisation is about the ORDER of operations: **a probe must set every piece of persisted state it measures, in the state the measurement claims to be about, and a survey that reports a whole region as absent is reporting its own setup.** Related and equally cheap to honour: **a boolean read off a hidden element is not a measurement of the thing the boolean names** — `scrollHeight > clientHeight + 1` on a `display: none` aside is `0 > 1`, which is not a fact about scrollability. Both are the same failure as the three wrong-element reads above, and the fifth instance of the family earns the general rule written once: **before believing a measurement, print the element it came from, its computed `display`, and its box.** A number with no element attached to it is a guess with a decimal point.
 
-- **A refusal to act must be checked against which TERM binds, not against whether the lever is the right shape.** des-5 declined to lower `--board-cap` in the landscape band, reasoning "a cap cannot buy space, only the chrome can" — a correct statement about the page and an irrelevant one about the pane, because the pane is `max-content` under a `max-block-size`. At 1280×800 the pane measured 672px against a 688px cap: the cap was 16px short of binding, and the stage's content was what set the height. So `--board-cap` was not a slack ceiling there at all; lowering it would have become the binding term on the next measure, and `fitCellAt` reads it as `Math.max(paneBlock, paneBlockCap)` precisely so that it can. The refusal was a correct principle applied to the wrong term, and it survived because the evidence column was `vPageScroll` — a metric perfectly compatible with the board being cut off, and in a portrait layout dominated by content below the board. **Where a "max" is documented as a ceiling, measure the gap between the ceiling and the content before concluding the ceiling does nothing; a bound that is not currently binding is still a bound, and the regime in which it starts to bind is the one the design has to survive.** The second half is a scoring rule: **a report's headline number should be the one that would go red if the defect were fixed**, and `vPageScroll` is not that number in either orientation.
+- **A media query is a property of the DEVICE, and a viewport override does not set it — so a survey of a phone can be a survey of a mouse.** The third instance of this family and the most consequential, because it invalidates the instrument rather than one reading. `Emulation.setDeviceMetricsOverride` sets the viewport and nothing else: it does not touch `pointer`, `hover` or `any-pointer`, which are **features** describing the input device, and `maxTouchPoints` is a property of the navigator. So every "small screen" number in `.tmp/` before this round — the 241/241 sub-44px targets, the landscape fold at −151px, the 10px numerals, the 13×13 checkboxes — was taken with `pointer: fine`, `hover: hover` and a mouse, at a window the size of a tablet, and the app's entire `pointer: coarse` branch was **off in all of them**. `Emulation.setTouchEmulationEnabled` is what flips the features. The fix is one call, and the rule that came with it is the part worth keeping: **read the media features back out of the page (`matchMedia('(pointer: coarse)').matches`) and print them on every row, rather than printing the CDP call that asked for them** — a request that silently did nothing leaves both readings false and the report is then indistinguishable from a report of a broken app. This is the same shape as the persisted-flag leak, the hidden-element boolean and the three wrong-element reads, and the generalisation is worth stating once for all of them: **a number is evidence about a state, and the state has to be part of the report or the number is unattached.** A viewport is not a state; a viewport plus a pointer is.
+- **A band gated on a rem threshold is a cliff, and a cliff needs a measurement behind it or it is a preference.** The short-landscape band is gated on `height < 56rem`, and 56rem is 896px, so 1440×880 is inside it and 1440×896 is outside — the best state the app has (page scroll 0, board wholly in the fold, 12px numerals) one pixel above the worst (page scroll 780px, the board 86px below the fold, 10px numerals). What made this a cliff rather than a boundary is that the threshold had **no evidence behind it**: the only measurement in the file that could justify a height condition (the pane collapsing to 0px at 1024×768 and 960×600) is already excluded by the width floor, because both viewports are below 74rem. So the condition is doing nothing yet shown, while changing the answer at an arbitrary coordinate. The generalisation covers every responsive boundary in the app, of which there is now one width breakpoint and two height ones: **a threshold that selects a behaviour needs either a measurement of what breaks on the far side of it, or a rationale that is not a round number** — and `74rem` is defensible precisely because it is the ≥74rem template's own literal, while `56rem` is defensible only if something is actually measured at 896. A boundary is allowed to be a cliff. A boundary that is a cliff *because nobody checked either side* is the defect, and the instrument that finds it is a matrix that straddles the threshold on purpose rather than one that sits inside it.
+- **A refusal to act must be checked against which TERM binds, not against whether the lever is the right shape.** des-5 declined to lower `--board-cap` in the landscape band, reasoning "a cap cannot buy space, only the chrome can" — a correct statement about the page and an irrelevant one about the pane, because the pane is `max-content` under a `max-block-size`. At 1280×800 the pane measured 672px against a 688px cap: the cap was 16px short of binding, and the stage's content was what set the height. So `--board-cap` was not a slack ceiling there at all; lowering it would have become the binding term on the next measure, and `fitCellAt` reads it as `Math.max(paneBlock, paneBlockCap)` precisely so that it can. The refusal was a correct principle applied to the wrong term, and it survived because the evidence column was `vPageScroll` — a metric perfectly compatible with the board being cut off, and in a portrait layout dominated by content below the board. **Where a "max" is documented as a ceiling, measure the gap between the ceiling and the content before concluding the ceiling does nothing; a bound that is not currently binding is still a bound, and the regime in which it starts to bind is the one the design has to survive.** The second half is a scoring rule: **a report's headline number should be the one that would go red if the defect were fixed**, and `vPageScroll` is not that number in either orientation. The cap was then made *literally* a non-constraint in the one place it conflicted with the layout — `max-block-size: none` inside the band — because a cap on a pane whose height the grid is already deciding is a second, stale answer to a question the layout has answered.
