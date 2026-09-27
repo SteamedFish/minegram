@@ -100,6 +100,49 @@ function incompleteRuns(clue: OrderedLineClue): readonly OrderedRunProgress[] {
   )
 }
 
+/**
+ * The start of `runIndex` in a concrete mine line, or `null` when the line does
+ * not contain that run at all.
+ *
+ * `findRunStart` throws for a line that lacks the run, and a `solution` handed
+ * to this module is not re-validated against the clue, so a test or a stale
+ * board can produce a line with fewer runs than the clue claims. Returning
+ * `null` keeps that case a plain "unknown" instead of an exception.
+ */
+function solutionRunStart(solution: BinaryLine, runIndex: number): number | null {
+  let currentRun = 0
+  for (let index = 0; index < solution.length; index += 1) {
+    if (solution[index] !== 1) {
+      continue
+    }
+    if (index > 0 && solution[index - 1] === 1) {
+      continue
+    }
+    if (currentRun === runIndex) {
+      return index
+    }
+    currentRun += 1
+  }
+  return null
+}
+
+/**
+ * Every cell of `runIndex` in a concrete mine line, or `null` when the line does not
+ * contain that run. The length is measured from the line rather than taken from the
+ * clue, so a line that disagrees with the clue reports what it actually holds.
+ */
+function solutionRunCells(solution: BinaryLine, runIndex: number): readonly number[] | null {
+  const start = solutionRunStart(solution, runIndex)
+  if (start === null) {
+    return null
+  }
+  let end = start
+  while (end + 1 < solution.length && solution[end + 1] === 1) {
+    end += 1
+  }
+  return Object.freeze(Array.from({ length: end - start + 1 }, (_, offset) => start + offset))
+}
+
 function deriveRuns(
   clue: OrderedLineClue,
   compatiblePatterns: readonly LegalLinePattern[],
@@ -126,8 +169,30 @@ function deriveRuns(
 
   return Object.freeze(
     clue.map((length, runIndex) => {
-      const start = starts[runIndex]
-      if (start === null) {
+      /**
+       * Which cells are this run's mines.
+       *
+       * The clue only forces a run's position once the ambiguity is resolved, so
+       * a run whose start still varies has no window the clue can offer. The
+       * rule that matters is the player's, not the deduction's: a run reads as
+       * located as soon as every one of its mines is marked, which is exactly
+       * the condition `revealEligibleLines` accepts for a whole line before the
+       * game fills its gaps. Gating the highlight on a *proved* start and a
+       * *proved* separator made it strictly stronger than that rule, so a player
+       * who had correctly placed the `7` and both `2`s of `7 2 2 1` and left the
+       * trailing `1` open saw only the `7` lit. With a solution the window is
+       * read straight off it; without one an unforced run stays open, which is
+       * the conservative answer.
+       */
+      const deducedStart = starts[runIndex]
+      const mineCells =
+        deducedStart !== null
+          ? Object.freeze(Array.from({ length }, (_, offset) => deducedStart + offset))
+          : solution === undefined
+            ? null
+            : solutionRunCells(solution, runIndex)
+
+      if (mineCells === null) {
         return Object.freeze({
           runIndex,
           length,
@@ -139,12 +204,8 @@ function deriveRuns(
         })
       }
 
-      const end = start + length - 1
-      const mineIndices = Object.freeze(
-        Array.from({ length }, (_, offset) => start + offset),
-      )
       let mineCellsMarked = true
-      for (const index of mineIndices) {
+      for (const index of mineCells) {
         if (
           marks[index] !== 'mine' ||
           (solution !== undefined && solution[index] !== 1)
@@ -154,36 +215,14 @@ function deriveRuns(
         }
       }
 
-      let separatorsComplete = true
-      if (runIndex > 0) {
-        const previousStart = starts[runIndex - 1]
-        // The separator range is only well defined when the preceding run is
-        // invariant as well; a moving preceding run means the gap is ambiguous.
-        separatorsComplete = false
-        if (previousStart !== null) {
-          const previousEnd = previousStart + clue[runIndex - 1] - 1
-          const separatorStart = previousEnd + 1
-          const separatorEnd = start - 1
-          for (let index = separatorStart; index <= separatorEnd; index += 1) {
-            if (
-              marks[index] === 'blank' &&
-              (solution === undefined || solution[index] === 0)
-            ) {
-              separatorsComplete = true
-              break
-            }
-          }
-        }
-      }
-
       return Object.freeze({
         runIndex,
         length,
-        start,
-        end,
-        invariant: true,
-        mineIndices,
-        complete: mineCellsMarked && separatorsComplete,
+        start: deducedStart,
+        end: mineCells[mineCells.length - 1],
+        invariant: deducedStart !== null,
+        mineIndices: mineCells,
+        complete: mineCellsMarked,
       })
     }),
   )

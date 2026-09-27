@@ -74,14 +74,65 @@ describe('deriveLineProgress', () => {
     expect(missingMine.complete).toBe(false)
     expect(missingMine.runs[1].complete).toBe(false)
 
-    const missingSeparator = deriveLineProgress({
+    // A run reads as located as soon as its own mines are marked, whatever its gaps
+    // say. That is the rule the player was given, and it is the rule the auto-reveal
+    // already uses for a whole line before the game fills that line's gaps itself.
+    //
+    // This case asserted `false` for the second run and was what kept the stricter
+    // rule alive: a run stayed dark until the gap *before* it was also marked blank,
+    // so a player who marks mines — which is the whole interaction — saw only the
+    // first segment of a line light up. The line is still not complete, because the
+    // gaps are unmarked, and the two claims are not the same one.
+    const gapsUnmarked = deriveLineProgress({
       lineLength: 6,
       clue: [2, 1],
       marks: [MINE, MINE, UNKNOWN, UNKNOWN, MINE, BLANK],
       solution: [1, 1, 0, 0, 1, 0],
     })
-    expect(missingSeparator.runs[0].complete).toBe(true)
-    expect(missingSeparator.runs[1].complete).toBe(false)
+    expect(gapsUnmarked.runs[0].complete).toBe(true)
+    expect(gapsUnmarked.runs[1].complete).toBe(true)
+    expect(gapsUnmarked.fullyLabeled).toBe(false)
+    expect(gapsUnmarked.complete).toBe(false)
+  })
+
+  it('highlights every located run of a line whose last run is still open', () => {
+    // The report this fixes, verbatim as a fixture. A `7 2 2 1` column on a 15-cell
+    // board is the *minimum* length that clue can occupy (7+1+2+1+2+1+1), so the
+    // layout is forced and every start is provable — and the player had still seen
+    // only the `7` lit, because the two `2`s each sat behind a gap they had not
+    // marked. Marking the three finished segments and nothing else must light all
+    // three, and leave the trailing `1` open.
+    const solution = [1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1] as const
+    const marks = solution.map((cell, index) =>
+      index === 14 ? UNKNOWN : cell === 1 ? MINE : UNKNOWN,
+    )
+    const progress = deriveLineProgress({
+      lineLength: 15,
+      clue: [7, 2, 2, 1],
+      marks,
+      solution,
+    })
+    // The clue fills the line exactly, so there is one legal placement and no
+    // separator is ever in doubt.
+    expect(progress.compatiblePatternCount).toBe(1)
+    expect(progress.runs.map((run) => run.mineIndices)).toEqual([
+      [0, 1, 2, 3, 4, 5, 6],
+      [8, 9],
+      [11, 12],
+      [14],
+    ])
+    expect(progress.runs.map((run) => run.complete)).toEqual([true, true, true, false])
+    expect(progress.complete).toBe(false)
+
+    // Marking the last mine completes the line: this is the batch that both reveals
+    // it and wins the round, and the run must not have been left dark until now.
+    const finished = deriveLineProgress({
+      lineLength: 15,
+      clue: [7, 2, 2, 1],
+      marks: marks.map((mark, index) => (index === 14 ? MINE : mark)),
+      solution,
+    })
+    expect(finished.runs.every((run) => run.complete)).toBe(true)
   })
 
   it('does not highlight a run while compatible placements leave its position ambiguous', () => {
@@ -123,10 +174,12 @@ describe('deriveLineProgress', () => {
     expect(partial.complete).toBe(false)
   })
 
-  it('does not highlight a run whose preceding run placement still varies around the separator', () => {
-    // Legal placements (0,3,5) and (1,3,5) both satisfy the explicit marks, so
-    // the second run's separator range is not settled yet. Run 2 stays complete
-    // because its own start and the run 1 gap are both invariant.
+  it('highlights a run whose own mines are marked even while an earlier run still varies', () => {
+    // Legal placements (0,3,5) and (1,3,5) both satisfy the explicit marks, so the
+    // first run's position is genuinely unknown — the deduction could not prove where
+    // it starts. That says nothing about the second run, whose own cell is marked: it
+    // is located, so it lights. The old rule made it wait on the first run's ambiguity
+    // and on a marked gap, which is the same coupling the `7 2 2 1` case exposed.
     const marks = [UNKNOWN, UNKNOWN, BLANK, MINE, BLANK, MINE, BLANK, BLANK] as const
     const solution = [0, 1, 0, 1, 0, 1, 0, 0] as const
     const progress = deriveLineProgress({
@@ -139,9 +192,13 @@ describe('deriveLineProgress', () => {
     expect(progress.fullyLabeled).toBe(false)
     expect(progress.complete).toBe(false)
     expect(progress.runs[0].invariant).toBe(false)
+    // Its window is read off the solution even though the clue cannot fix it, and it is
+    // still open because that mine is unmarked.
+    expect(progress.runs[0].mineIndices).toEqual([1])
+    expect(progress.runs[0].complete).toBe(false)
     expect(progress.runs[1].invariant).toBe(true)
     expect(progress.runs[1].mineIndices).toEqual([3])
-    expect(progress.runs[1].complete).toBe(false)
+    expect(progress.runs[1].complete).toBe(true)
     expect(progress.runs[2]).toMatchObject({
       invariant: true,
       start: 5,
