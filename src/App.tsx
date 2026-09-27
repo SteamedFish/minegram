@@ -255,6 +255,7 @@ export function App() {
           mode={mode}
           zoom={zoom}
           fingerMarking={fingerMarking}
+          hints={hints}
           store={store}
           onMode={setMode}
           onZoom={setZoom}

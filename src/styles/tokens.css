@@ -241,10 +241,12 @@
   --rule-w-heavy: 2px; /* the preview's dotted outline, the revealed line edge */
 
   /* ===========================================================================
-     5. Board sizing — 1x1 through 30x30
-     `--cell` and `--rail-col` are the two live values; §7.2 allows exactly
-     these two plus `--cols`/`--rows` to be set inline from the board
-     dimensions, and nothing else is ever set inline.
+     5. Board sizing — 1x1 through 24x24
+     `--cell` is the one live size; §7.2 allows exactly it plus `--cols`/`--rows`
+     and the three rail budgets (`--rail-slots`, `--rail-digits`, `--rail-runs`)
+     to be set inline from the board dimensions and the round's own clues, and
+     nothing else is ever set inline. The CSS below owns what each budget SPENDS;
+     the host only counts.
      ======================================================================== */
   --cell-min: 24px; /* the floor: a cell is never smaller than a target */
   --cell-max: 56px; /* the ceiling, so a 1x1 board reads as one stamp */
@@ -254,7 +256,6 @@
   --cell-xl: 56px; /* zoom step XL — the board may outgrow the pane; the pane scrolls */
   --cell-xxl: 72px; /* zoom step XXL */
   --cell: var(--cell-m); /* the live cell size (set inline by the host) */
-  --rail-col: 24px; /* the live rail column width; also the minimum */
   --target-min: 24px; /* WCAG 2.5.8, for every interactive element */
 
   /* The rail's clue rhythm, and the band it spends to be readable.
@@ -262,35 +263,61 @@
      wide, the row rail is `--cell` tall — because the host sets the stage's
      grid template inline and the board's cell centres have to keep matching
      the rail's. Everything else the clue needs is bought with the other axis:
-     the column rail is `--rail-band` tall (above the board), the row rail stays
-     `--rail-col` wide (beside it) and packs more runs per line instead.
+     the column rail is `--rail-band` tall (above the board), the row rail is as
+     wide as its own clue (beside it). The band's run capacity comes from the
+     round itself — the host sets `--rail-slots` inline from the longest column
+     clue — so a rail is always sized FROM the clue, and the clue is never cut
+     to fit a rail.
 
      `--rail-step` is one clue line, gutter included. The run underline is drawn
      with an inset shadow rather than a border precisely so that this step does
      not change between an open run (1px) and a complete one (2px): a border
      would make one line taller than the other and the column rail's bottom edge
-     would no longer be a straight line of baselines. */
-  --rail-num: clamp(9px, calc(var(--cell) * 0.25), 11px);
+     would no longer be a straight line of baselines.
+
+     The numeral is a FLAT 10px, and that is the design decision, not a shortcut.
+     10px is the stated legibility floor: the mono rail figures are 0.6 of their
+     font-size wide, so a 10px numeral is a 6.7px cap with a real bowl, and below
+     9px they start to fill in. Keeping it flat also closes the fit loop on
+     paper: `--rail-band` and `--rail-col` are then a function of the round's
+     clues alone, so the host's fit measure — which reads this rail's two costs
+     back off the corner cell — cannot chase its own output. The trade is that
+     the rail stops growing with the board, which is right for a reference the
+     player reads rather than clicks. */
+  --rail-num: 10px;
   --rail-lh: 0.95;
-  --rail-gap: max(1px, calc(var(--cell) * 0.05));
   --rail-step: calc(var(--rail-num) * var(--rail-lh) + var(--rule-w));
   --rail-badge: 10px; /* the line-state glyph's strip, one step tall at the floor */
-  --rail-slots: 7; /* six runs plus the ellipsis that stands in for the rest */
+  --rail-run-gap: 5px; /* the gutter BETWEEN runs — what makes two digits two runs */
+  --rail-digit: 6.2px; /* one tabular numeral's advance at --rail-num, plus rounding slack */
+  /* The `3px` opening `--rail-col` is 1px of cell padding on each side PLUS the
+     one pixel of border a settled or contradicted line spends on its own edge:
+     §1 draws that edge as `border-inline-end`, which comes out of the content
+     box, so a track sized for the padding alone would clip the last numeral of a
+     completed row by one pixel. The band does not need the extra pixel — it
+     already ends in 4px of slack. */
+
+  --rail-slots: 7; /* the band's run capacity; the host overwrites it per round */
+  --rail-digits: 4; /* the widest row clue's TOTAL numerals; the host overwrites it */
+  --rail-runs: 2; /* the widest row clue's run count, for its gutters; host overwrites */
   --rail-band: calc(var(--rail-badge) + var(--rail-step) * var(--rail-slots) + 4px);
+  --rail-col: calc(3px + var(--rail-badge) + var(--rail-digits) * var(--rail-digit) + (var(--rail-runs) - 1) * var(--rail-run-gap));
 
   /* The size formula, and why the arithmetic below is allowed to overflow.
        fit  = clamp(--cell-min, floor((scrollerInline - --rail-col) / cols), --cell-max)
        zoom = --cell-s / --cell-m / --cell-l / --cell-xl / --cell-xxl
-     The clamp floor is what keeps 30x30 legal: on a 360px-wide phone the fit
-     value would be floor((360 - 24) / 30) = 11px, which is refused, so the
-     board becomes 30 * 24 + 24 = 744px wide and `.mg-board-scroll` scrolls
-     horizontally instead. That is the intended trade (a scrolled board beats an
-     11px grid), and 1x1 hits the ceiling: 1 * 56 + 24 = 80px, centred.
-     Arithmetic at 30x30: S 780 + 24 = 804px, M 960 + 24 = 984px,
-     L 1200 + 24 = 1224px, XL 1680 + 24 = 1704px, XXL 2160 + 24 = 2184px. The
-     two largest steps are meant to overflow: the pane caps its own height and
-     scrolls, so an oversized board never traps the page. A 15x15 default at M
-     is 480 + 24 = 504px. */
+     `--rail-col` is a LENGTH, not a content size, and it has to be: the stage and
+     every board row are separate grids, so a `max-content` track lets each of
+     them resolve its own width and the rails then sit over the wrong columns.
+     One length read by all three templates is what keeps a rail cell 1:1 with
+     its line. The clamp floor is what keeps 24x24 legal: on a phone a few
+     hundred pixels wide the fit value lands well under `--cell-min` no matter
+     how narrow the rail, which is refused, so the board becomes 24 *
+     `--cell-min` + `--rail-col` wide and `.mg-board-scroll` scrolls horizontally
+     instead. That is the intended trade (a scrolled board beats a 10px grid),
+     and 1x1 hits the ceiling, centred. The two largest steps are meant to
+     overflow: the pane caps its own height and scrolls, so an oversized board
+     never traps the page. A 15x15 default at M is 480 + --rail-col. */
 
   /* ===========================================================================
      6. Motion — one budget, no bounce, nothing that moves a cell's box (§7.3)
@@ -747,6 +774,43 @@ html[data-theme='light'] {
   --badge-color-unknown: var(--unknown);
   --badge-color-preview: var(--accent);
   --badge-bg-preview: var(--accent);
+
+  /* The hint layer's ON state, as one vocabulary. A closed run's numeral and a
+     closed line's badge are the same mark: a SOLID ground with the rail's own
+     surface as the ink on top. It is deliberately not a tint — the marker this
+     replaces was a 2px rule and a shade of green at 10px, which read as texture
+     across thirty cells, and the player's complaint was that they could not see
+     it. A block is a shape; the eye finds a shape without reading it.
+
+     The two values are the contrast pair that makes the knock-out work in both
+     themes, measured from the sRGB above: `--surface-1` on `--confirm` is 8.1:1
+     in light (#f7f3ea on #1f5d4c) and 6.6:1 in dark (#1b1e24 on #59b391), so the
+     digit a block knocks out is read against the same ratio whether the theme
+     puts the rail on paper or on slate. The weights are the second channel, for a
+     player who cannot separate shape from colour.
+
+     Every one of these is a PAIR: the value here is the ON state, and clues.css
+     re-declares the same names on `.mg-board-stage[data-hints='off']` with the
+     resting value for that element — the same `color`, `font-weight`,
+     `font-size`, `--clue-edge` and inset shadow a rail carries with no hint layer
+     at all. Nothing is switched off by being cancelled; it is switched off by
+     becoming the value the rail already had. That is why there are nine names and
+     not four: `inherit` on a custom property means "take the parent's value",
+     which for these is the token block right here, so an `inherit` off-switch
+     leaves the ON weight in place. The OFF values are literals, each one copied
+     from the rule it replaces. */
+  --clue-on-ground: var(--confirm); /* the closed run's block, the closed line's badge */
+  --clue-numeral-ink: var(--surface-1); /* the digit, knocked out of the block */
+  --clue-badge-ink: var(--surface-1); /* the ✓, knocked out of the filled strip */
+  --clue-on-weight: 600; /* a closed RUN's numeral */
+  --clue-on-line-weight: 700; /* a closed LINE's numerals: heavier than one run */
+  --clue-on-badge-weight: 700; /* the ✓, which rests at 600 */
+  --clue-on-badge-size: 0.8em; /* the ✓, which rests at --rail-num */
+  --clue-on-radius: 1px; /* the block and the strip are square at rest */
+  --clue-on-edge: var(--rule-w) solid var(--confirm); /* a settled line's edge */
+  /* a closed run's underline — an INSET SHADOW, because a border here would make a
+     closed run's line one pixel taller than an open run's in the column rail. */
+  --clue-on-run-mark: inset 0 calc(var(--rule-w-heavy) * -1) 0 var(--confirm);
 
   /* A fully-labelled line's edge. §5.4 asks for a 2px edge and a ring that fades
      to 60%. 60% of `--confirm` over `--surface-3` measures 2.77:1 in light and

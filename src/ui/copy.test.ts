@@ -189,6 +189,7 @@ describe('copy', () => {
       'storage.fingerMarking',
       'storage.panelSettings',
       'storage.panelLegend',
+      'storage.hints',
       'help.actions.cancelDrag.keyboard',
       'cell.describe',
       'clue.describe',

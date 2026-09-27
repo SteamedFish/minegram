@@ -66,6 +66,14 @@ export interface BoardSurfaceProps {
   readonly mode: MarkingMode
   readonly zoom: ZoomStep
   readonly fingerMarking: boolean
+  /* The hint layer's master switch, rendered as `data-hints` on the stage so
+     clues.css §5.1 can restore the resting treatment with four custom
+     properties. The attributes themselves stay truthful either way — this is a
+     presentation gate, never a state gate — and the `aria-label` keeps
+     reporting line state to a screen reader under both values. Optional
+     because the stylesheet reads an absent attribute as "on", which is also
+     what the existing renders (tests, the legend's neighbours) expect. */
+  readonly hints?: boolean
   readonly store: GameStore
   readonly onMode: (mode: MarkingMode) => void
   readonly onZoom: (zoom: ZoomStep) => void
@@ -133,6 +141,33 @@ export function BoardSurface(props: BoardSurfaceProps) {
       longest = Math.max(longest, line.clue.length)
     }
     return Math.max(2, longest)
+  }, [board])
+
+  // The row rail's two budgets, read the same way and from the same round. Its
+  // track is `--rail-col` in tokens.css, and because a run may be two numerals
+  // wide (`10`) the budget is counted in NUMERALS, not runs, or a clue of five
+  // two-digit runs would be given the room of five one-digit ones and lose its
+  // last numeral. The run count comes with it because the gutters between runs
+  // are part of the same width. Nothing here is a guess and nothing is capped:
+  // a one-run clue gets one numeral and no gutter, a nine-run clue gets all of
+  // it, and the rail is never narrower than the clue it has to hold.
+  const railRow = useMemo(() => {
+    if (board === null) {
+      return { digits: 1, runs: 1 }
+    }
+    let digits = 0
+    let runs = 0
+    for (const line of board.rowProgress) {
+      let lineDigits = 0
+      for (const length of line.clue) {
+        lineDigits += String(length).length
+      }
+      if (lineDigits > digits) {
+        digits = lineDigits
+        runs = line.clue.length
+      }
+    }
+    return { digits: Math.max(1, digits), runs: Math.max(1, runs) }
   }, [board])
 
   // The ports read live values through a ref, so the controller is built once and
@@ -272,11 +307,13 @@ export function BoardSurface(props: BoardSurfaceProps) {
     const node = scroll.current
     if (node === null || typeof ResizeObserver === 'undefined' || columns === 0) {
       return
-    }    const measure = (): void => {
+    }
+    const measure = (): void => {
       // The rail costs the pane a COLUMN on the inline axis and a BAND on the block
       // axis, and both come off before the cells divide what is left. Reading them off
-      // the corner cell — which spans exactly the band — keeps the two axes symmetric
-      // and picks up any future change to the band without a constant to update here.
+      // the corner cell — which spans exactly the band, and whose width IS the
+      // content-sized rail track — keeps the two axes symmetric and picks up any
+      // change to either without a constant to update here.
       const corner = rail.current
       const inlineCost = corner?.offsetWidth ?? 0
       const blockCost = corner?.offsetHeight ?? 0
@@ -433,17 +470,21 @@ export function BoardSurface(props: BoardSurfaceProps) {
             data-testid="board-stage"
             data-dragging={dragState.phase === 'idle' ? undefined : 'true'}
             data-finger-marking={props.fingerMarking ? 'on' : 'off'}
+            data-hints={props.hints === false ? 'off' : 'on'}
             data-inert={interactive ? undefined : 'true'}
             style={
               {
                 '--cols': String(columns),
                 '--rows': String(rows),
                 '--cell': cellSize,
-                // The band's run capacity, from the round's own longest column
-                // clue — see `railSlots` above. The row rail needs no inline
-                // value at all: its track is `max-content`, so the browser sizes
-                // it from the real glyphs and a row clue is never truncated.
+                // The two rail budgets, from this round's own clues and never from
+                // a cap: the column band's run capacity, and the row track's
+                // numeral count and run count. The CSS owns what each one SPENDS
+                // (tokens.css §5, re-bound on the stage in board.css §2) so the
+                // rail's rhythm can be retuned without touching the component.
                 '--rail-slots': String(railSlots),
+                '--rail-digits': String(railRow.digits),
+                '--rail-runs': String(railRow.runs),
               } as CSSProperties
             }
             onPointerDown={(event) => {
@@ -991,15 +1032,20 @@ export function ClueCell({
         ) : (
           line.clue.map((length, runIndex) => (
             <span className="mg-rail-cell__run" key={runIndex}>
-              {runIndex > 0 ? (
-                <span className="mg-rail-cell__separator" data-separator="gap">
-                  │
-                </span>
-              ) : null}
-              {/* §5.2 states a closed run ON its numeral: `data-run-state` is
-                  the hook clues.css turns into confirm ink, 600 weight and the
-                  solid underline. There is deliberately no chip box — the
-                  number is the claim, so the number carries the state. */}
+              {/* A run is one numeral and nothing else. The blank guarantee is
+                  drawn by the gutter between runs and by the run's own underline
+                  (clues.css §4, §6), not by a separator glyph: a `│` cost 5.7px
+                  of a row rail's width per run and pushed every numeral after the
+                  first off the cell's centre line, for a grouping the line break
+                  already gives a column rail. */}
+              {/* §5 states a closed run ON its numeral: `data-run-state` is the
+                  hook clues.css turns into the hint layer's ON state — the
+                  numeral's own box filled solid confirm with the digit knocked
+                  out, plus the solid underline. The block is the numeral's box
+                  and nothing more, so it cannot push a column rail's run past the
+                  band or widen a row rail. The glyph above is the line's state
+                  and is always rendered, which is what lets clues.css fill the
+                  badge strip of a closed line. */}
               <span
                 className="mg-rail-cell__numeral"
                 data-run-state={line.runs[runIndex]?.complete === true ? 'complete' : 'open'}

@@ -117,8 +117,12 @@
      is a grid item stretched to the stage's tracks — and a non-flexible
      `minmax()` track absorbs no free space, so every row collapsed to the
      24px floor and the rows overlapped each other. `var(--cell)` is the same
-     number the stage resolves, by construction, with no growth phase. */
-  grid-template-columns: max-content repeat(var(--cols), var(--cell));
+     number the stage resolves, by construction, with no growth phase. The first
+     track is the row rail's own `--rail-col`, the same LENGTH here and in every
+     `.mg-board-row`: the stage and each row are three separate grids, and a
+     `max-content` first track lets each of them resolve a different width, which
+     puts every column clue over the wrong column. */
+  grid-template-columns: var(--rail-col) repeat(var(--cols), var(--cell));
   /* The row template is stated outright even though the rows are auto-placed.
      It costs nothing to place them by column, and it buys §6 the two fixed lines
      it needs to hang a column strip between (`2 / -1` is the first cell row down
@@ -140,17 +144,16 @@
      (`0.46em` of this) actually scale with the board. */
   --fs-numeral: clamp(13px, var(--cell) * 0.44, 18px);
   font-size: var(--fs-numeral);
-  /* The same re-binding, for the rail's rhythm. tokens.css builds `--rail-num`,
-     `--rail-gap`, `--rail-step` and `--rail-band` from `--cell` on `:root`, where
-     `--cell` is still the 32px default, so inherited they arrive frozen at the
-     9px numeral of a 32px board and a 40px board's rail would be laid out for a
-     size it is not. Each formula is repeated here, verbatim, to see the cell size
-     the host actually set. `--rail-lh`, `--rail-badge` and `--rail-slots` do not
-     mention `--cell`, so they are inherited and need nothing. */
-  --rail-num: clamp(9px, calc(var(--cell) * 0.25), 11px);
-  --rail-gap: max(1px, calc(var(--cell) * 0.05));
-  --rail-step: calc(var(--rail-num) * var(--rail-lh) + var(--rule-w));
+  /* The same re-binding, for the rail's two budgets. Both are `calc()`s over a
+     count the host writes INLINE on this element — `--rail-slots` from the
+     round's longest column clue, `--rail-digits`/`--rail-runs` from its longest
+     row clue — and a custom property resolves its own `var()` where it is
+     DECLARED, so the `:root` copies arrive with `:root`'s fallback counts
+     substituted in and are blind to the round. Re-declared here, they see the
+     real ones. `--rail-num`, `--rail-run-gap`, `--rail-digit` and `--rail-badge`
+     are constants, so they are inherited as written and need nothing. */
   --rail-band: calc(var(--rail-badge) + var(--rail-step) * var(--rail-slots) + 4px);
+  --rail-col: calc(3px + var(--rail-badge) + var(--rail-digits) * var(--rail-digit) + (var(--rail-runs) - 1) * var(--rail-run-gap));
   /* A drag paints with the crosshair: declared here, on the ancestor, because
      `--cell-cursor` is inherited and the cells must not need a rule of their own
      for a state that lives on the stage. */
@@ -163,10 +166,11 @@
 
 .mg-board-row {
   display: grid;
-  /* Verbatim copy of the stage's template. This duplication is the price of
-     §1.7's "each board row is its own element": it is what keeps `role="row"`
-     real in the accessibility tree, and it is why rail alignment is exact by
-     construction rather than by measurement. */
+  /* Verbatim copy of the stage's template, and the alignment guarantee rests on
+     that: because the first track is the same LENGTH in all three grids, a rail
+     cell lands on the same x as the cells it labels no matter which grid lays it
+     out. This duplication is the price of §1.7's "each board row is its own
+     element", which is what keeps `role="row"` real in the accessibility tree. */
   grid-template-columns: var(--rail-col) repeat(var(--cols), var(--cell));
   /* The stage lays its rows out as an auto-placement grid, so without this a row
      is placed in the FIRST column only (the row rail) and the column tracks
@@ -186,10 +190,12 @@
   inset-block-start: 0;
   z-index: var(--z-rail-row);
   /* The one row whose height is not `--cell`. The rails buy legibility with their
-     free axis: a column rail is `--cell` wide and `--rail-band` tall, which is
-     the room a six-run clue needs plus the state glyph's strip and the ellipsis.
-     The band is a token, not a pixel count, so the whole thing still tracks
-     `--cell` — drop to 24px on a phone and the band narrows with it. */
+     free axis: a column rail is `--cell` wide and `--rail-band` tall, and the
+     band is sized from the round's own longest column clue (`--rail-slots`, set
+     inline by the host) plus the state glyph's strip — so every run of every
+     column is always on screen, never truncated. The band is a token, not a
+     pixel count, so drop `--cell` to 24px on a phone and the band holds its
+     size and the board scrolls instead: a clue is read, not squeezed. */
   block-size: var(--rail-band);
   /* Opaque, and opaque in the SAME colour the row rails use, or a cell scrolling
      under the column rail would show through it and the sticky header would
@@ -212,9 +218,10 @@
   justify-content: center;
   gap: var(--sp-1);
   min-inline-size: 0;
-  /* 1px, not `--sp-1`. The row rail is one cell TALL and its width is the host's
-     `--rail-col`, so every pixel of padding here comes out of the two runs a line
-     has to hold; 4px of it was the difference between two runs fitting and one. */
+  /* 1px, not `--sp-1`. The row rail is one cell TALL, so every pixel of padding
+     here is paid by every row clue in the round's width budget twice over, and
+     4px of it is the difference between a nine-run clue fitting and clipping its
+     last numeral — the economy stays. */
   padding: 1px;
   background-color: var(--surface-1);
   font-family: var(--font-mono);
@@ -224,15 +231,16 @@
   color: var(--ink-2);
   /* A size container, so clues.css can read how much room this particular rail
      actually got instead of guessing from `--cell`. `size` containment is safe
-     here because every rail cell's box is DEFINITE — a grid track for the
-     inline axis, `block-size: var(--cell)` or `--rail-band` for the block axis,
-     and `var(--cell-s)` square in the legend — so nothing is ever measured by
-     its content. */
+     here because every rail cell's box is DEFINITE, and now genuinely so: the
+     column rail is `--cell` across by its grid track and `--rail-band` tall, the
+     row rail is `--rail-col` across by the same track every other row reads and
+     `--cell` tall, and the legend swatch is a `var(--cell-s)` square. */
   container: rail / size;
-  /* The rail is a summary, and a summary that is silently cut in half is a lie:
-     a long line is TRUNCATED with an ellipsis (clues.css), never overlapped and
-     never left half-drawn. The full text stays in the cell's `aria-label` and in
-     the help dialog. */
+  /* The rail is the line's whole claim: every run of the clue is rendered and
+     the rail is sized to hold them all (the band from `--rail-slots`, the row
+     track from `--rail-digits`/`--rail-runs`), so nothing is ever cut.
+     `overflow: hidden` stays as the guard that a rail can never paint over its
+     neighbour — but it should never have anything to hide. */
   overflow: hidden;
 }
 
@@ -256,10 +264,11 @@
      uses, because the host sets `--cell` inline and the corner is exactly as wide
      as the row rail. It is a bare text node — there is no element to restyle and
      no `::before` to put a mark in — so the label itself has to be the thing
-     that fits: 65px of room at Fit takes "ROWS / AND / COLUMNS" at 11px on three
-     centred lines, and at the 24px floor the clamp drops it to 6.7px, which is
-     small but complete, square to the box, and not overlapping the first column
-     clue the way an 11px overflow was. */
+     that fits: the corner is a grid item in the same `--rail-col` track as every
+     row rail, so it gets the rail's width to wrap in ("ROWS / AND / COLUMNS" on
+     three centred lines when the rail is wide enough, fewer lines and a smaller
+     face when it is not) and never a width of its own. Its box is also the
+     host's fit measure (§7.2) reads the rail's two costs back from. */
   font-size: clamp(6.5px, calc(var(--cell) * 0.28), var(--fs-micro));
   line-height: var(--lh-micro);
   text-align: center;

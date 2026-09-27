@@ -1,6 +1,6 @@
 /* =============================================================================
    Minegram — clues
-   The rail vocabulary: a line's state, a run's state, the badges, the separator.
+   The rail vocabulary: a line's state, a run's state, the badges, the grouping.
 
    Division of labour: board.css draws the rail's BOX (the sticky rail row, the
    band above the board, the corner, the size container, the colour, the clip).
@@ -8,12 +8,15 @@
    file allowed to change a rail cell's edge. Five decisions worth stating:
 
    * A rail spends its FREE axis to stay readable, and keeps exactly ONE axis at
-     `--cell`. The host sets the stage's grid template inline, so the board's
-     cell centres match the rails' by construction and the two must not move. A
-     column rail is therefore `--cell` wide and `--rail-band` tall, and a row
-     rail is `--rail-col` wide and `--cell` tall: the first stacks its runs one
-     per line down the band, the second packs two per line across the width it
-     has. Six runs fit either way.
+     `--cell`. The stage and every board row are separate grids that all read the
+     SAME `--rail-col` length, so the board's cell centres match the rails' by
+     construction and the two must not move. A column rail is therefore `--cell`
+     wide and `--rail-band` tall, and a row rail is `--rail-col` wide and `--cell`
+     tall: the first stacks its runs one per line down a band the host sized from
+     the round's longest column clue, the second lays its runs out in one
+     unbroken line inside a track the host sized from the longest row clue's own
+     numerals. Either way, every run of every clue is always fully rendered — the
+     rail is sized from the clue, never the clue cut to fit the rail.
    * The state is chosen once and applied twice. Each `data-line-state` picks a
      `--clue-edge` shorthand; the two orientation rules then spend it on the side
      that separates the rail from the cells. Four state rules, two orientation
@@ -22,10 +25,12 @@
    * The line-state badge is a strip, out of flow, on the rail's own axis: a
      `--rail-badge`-tall bar across the top of a column rail, a
      `--rail-badge`-wide bar down the side of a row rail. §5.1's anatomy is
-     "[badge] [runs]", but §3.5 sizes a row rail at 24px at rest, and 14px of
-     badge plus a 12px numeral does not fit in 24px — inline, the badge would
-     push the numbers off the shared centre line and every rail in a column
-     would be ragged.
+     "[badge] [runs]", but a row rail is `--cell` tall — 24px at the floor — and
+     14px of badge plus a 10px numeral does not fit in 24px — inline, the badge
+     would push the numbers off the shared centre line and every rail in a column
+     would be ragged. The strip is also where the ON state gets loudest: a closed
+     line FILLS it, so a settled line is a bar the length of the cell and a
+     thirty-cell rail can be counted without reading a single digit (§5).
    * The run underline is an inset SHADOW, not a border. It has to be: the
      column rail's bottom edge is a straight line of baselines only if a closed
      run's 2px underline does not make its line one pixel taller than an open
@@ -55,12 +60,12 @@
   --clue-edge: var(--clue-line-border);
 }
 
-/* A settled line loses its border frame — the numeral highlight is the
-   signal, not the box. There is deliberately no fill either: a completed
-   rail cell reads through its numerals (confirm ink, 700 weight) and the ✓
-   badge, and a tinted box behind them would restate what they already say. */
+/* A settled line does not change the WIDTH of the rail: its edge keeps the
+   resting one pixel and only changes its ink to confirm. What it does change is
+   loud — see §5, where a closed line fills its badge strip as well, because an
+   edge on its own was exactly what the player reported they could not see. */
 .mg-rail-cell[data-line-state='complete'] {
-  --clue-edge: none;
+  --clue-edge: var(--clue-on-edge);
 }
 
 .mg-rail-cell[data-line-state='contradiction'] {
@@ -86,12 +91,14 @@
 
 /* -----------------------------------------------------------------------------
    2. The two shapes a rail clue can take
-   The same content, packed two ways. A column rail is one cell wide, so it puts
-   one run on each line of the band and hangs the state glyph's strip above them;
-   a row rail is one cell TALL and as wide as the host's `--rail-col`, so it puts
-   two runs on each of its three lines and gives the glyph a column of its own at
-   the inline end. Neither orientation is a fallback: at 40px a 15x15 line never
-   wraps, because there is no wrapping to do.
+   The same content, packed two ways, and the packing follows the one axis the
+   rail is allowed to grow on. A column rail is one `--cell` wide, so it puts one
+   run on each line of the band and hangs the state glyph's strip above them. A
+   row rail is one `--cell` TALL, so its only free axis is width: its runs lie in
+   a single unbroken line, flush against the board edge, with the glyph in a
+   column of its own at the inline end. Neither orientation truncates — the band
+   is sized from the round's longest column clue and the row track from the
+   longest row clue's own numerals — so there is no run count a rail cannot hold.
    -------------------------------------------------------------------------- */
 .mg-rail-cell[data-line='column'] {
   flex-direction: column;
@@ -115,8 +122,8 @@
          collects at the bottom instead, against the board's own rule, where it
          is quiet.
        * `row-gap: var(--rule-w)` matches `--rail-step` exactly, so the runs sit on
-         the step the band was sized from and the seventh slot lands where the
-         truncation marker is drawn.
+         the step the band was sized from and the longest column's last run lands
+         inside the band's last slot.
        * `flex-wrap: nowrap`: in a column container a wrap break would flow the
          overflow into a SECOND COLUMN sideways. Overflow must be clipped, and
          `flex: none` on a run stops the flex algorithm squashing it to hide the
@@ -132,9 +139,17 @@
 }
 
 .mg-rail-cell[data-line='row'] .mg-rail-cell__clue {
-  /* Fill the rail, so `padding-inline-end` is a real reserve and the two runs of a
-     line are centred in the space that is left. */
+  /* ONE UNBROKEN LINE, flush against the board. `--rail-col` is the round's own
+     row-clue budget, so the widest row clue in the round sets every row rail's
+     width and a shorter clue has room to spare; `flex-end` sends that slack to
+     the inline START, so the LAST run of every row sits the same distance from
+     the board whatever the clue's length — the run adjacent to the board is
+     always the last one. `nowrap` because a wrap break would silently reflow a
+     line the single line was chosen to keep honest, and there is nothing left to
+     wrap for. */
   flex: 1 1 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
   align-self: center;
   padding-inline-end: var(--rail-badge);
 }
@@ -200,7 +215,17 @@
   flex-wrap: wrap; /* §5.1: a clue that will not fit on one line stacks */
   align-content: center;
   justify-content: center;
-  gap: var(--rail-gap);
+  /* THE GROUPING GUTTER, and the only thing between two runs. Not a separator
+     glyph: a single-digit run has no ink of its own to attach a bar to, so a bar
+     printed before it is 5.7px of punctuation per run (42% of a 54px row rail)
+     that reads as a bracket and pushes the numeral off the centre line. The
+     gutter buys the same grouping for 5px, as air, which is a thing the eye
+     segments a line by before it reads it. The grouping is then doubled by the
+     per-run underline below, whose extent already spells the run out — one digit
+     is one tick, `10` is one two-wide tick — so the eye has a shape to read even
+     at 10px, and the mark doubles as the run's state (1px muted open, 2px confirm
+     closed). */
+  gap: var(--rail-run-gap);
   min-inline-size: 0;
   overflow: hidden;
   color: var(--ink);
@@ -221,7 +246,8 @@
 .mg-rail-cell__run {
   display: flex;
   align-items: center;
-  gap: var(--rail-gap);
+  /* No `gap` here: a run is now exactly one numeral, so it has nothing inside it
+     to space. The `│` that used to sit in the gap has gone with the separator. */
   /* A run is an atom. Both rails are `nowrap` (a wrap break in a column rail flows
      sideways, and in a row rail it silently reflows a line the band was sized
      from), so a flex item's default `flex-shrink: 1` would squash a run to fit
@@ -241,7 +267,7 @@
 
 .mg-rail-cell:not(:is([data-line-state='contradiction'], [data-line-state='unknown']))
   .mg-rail-cell__run:has(> .mg-rail-cell__numeral[data-run-state='complete']) {
-  box-shadow: inset 0 calc(var(--rule-w-heavy) * -1) 0 var(--confirm);
+  box-shadow: var(--clue-on-run-mark);
 }
 
 .mg-rail-cell__numeral {
@@ -249,135 +275,127 @@
 }
 
 /* -----------------------------------------------------------------------------
-   6. The run numeral carries its own completion
-   §5.2: a closed run is stated ON its numeral — confirm ink at 600 weight —
-   with the 2px underline above as the second channel. There is no chip box:
-   the number is the claim, so the number itself carries the state, and the
-   signal survives the narrow tiers below because it needs no extra box.
-   The same negation guard as the underline keeps contradiction and unknown
-   from asserting anything (§5.3, §5.6).
+   5. THE ON STATE — a closed run is INVERTED, a closed line is STAMPED
+   The player turned the hint layer on because the old marker was easy to miss: a
+   2px rule and a shade of green at 10px, repeated across thirty cells, is texture
+   and not a state. So the ON state is a SHAPE, and it is one shape in both themes
+   and both orientations:
+
+     · A closed run's numeral becomes a SOLID `--confirm` block with its own digit
+       knocked out to the rail's surface. The block IS the numeral's own box — no
+       padding, no border, 1px of radius — because the column rail's slot is one
+       10.5px step and a padded block would push the run past the band and clip
+       the next one. Knocking the digit OUT is also what keeps it readable: the
+       contrast that decides whether a 6px digit resolves is the 8:1 and 6.6:1 pair
+       in tokens.css, and 600 weight at 10px is about 1.2px of stem, so the digit
+       gets THICKER than it was, not thinner.
+     · A closed line adds the two things a closed run cannot. Its edge goes solid
+       confirm — same one pixel, so the rail never changes width — and its ✓ badge
+       FILLS its strip: a 10px bar across the whole cell, confirm ground, the
+       surface as the glyph. The strip, not a disc: on a 24px-wide column rail a
+       10px disc would render as a 24×10 ellipse, and a bar the length of the cell
+       is findable on a thirty-cell rail by counting bars, which is the only read
+       that survives when the individual digits do not.
+
+   The hierarchy is unchanged and deliberate: ONE BLOCK is one run, a FILLED BADGE
+   is a whole line. Colour and weight are kept as the second and third channels,
+   for a player who cannot separate shape from colour.
    -------------------------------------------------------------------------- */
 .mg-rail-cell:not(:is([data-line-state='contradiction'], [data-line-state='unknown']))
   .mg-rail-cell__numeral[data-run-state='complete'] {
-  color: var(--badge-color-complete);
-  font-weight: 600;
+  color: var(--clue-numeral-ink);
+  background-color: var(--clue-on-ground);
+  font-weight: var(--clue-on-weight);
+  border-radius: var(--clue-on-radius);
 }
 
-/* A closed LINE reads through its numerals: every numeral takes the confirm
-   ink at 700 weight, and the ✓ glyph stamps the cell. The numeral IS the
-   signal — no box, no frame. Run-complete and line-complete share the colour
-   but not the weight: a single closed run is a hint; a complete line is a
-   conclusion. */
+/* A closed LINE reads through its numerals at a heavier weight, because a single
+   closed run is a hint and a complete line is a conclusion. */
 .mg-rail-cell[data-line-state='complete'] .mg-rail-cell__numeral[data-run-state='complete'] {
-  color: var(--badge-color-complete);
-  font-weight: 700;
+  font-weight: var(--clue-on-line-weight);
+}
+
+/* The ✓ of a closed line fills the strip §3 reserved for it. A closed line is
+   per cell, so the rail becomes countable: how many bars have turned green is
+   how much of the line the machine has done for you. */
+.mg-rail-cell[data-line-state='complete'] .mg-rail-cell__glyph {
+  color: var(--clue-badge-ink);
+  background-color: var(--clue-on-ground);
+  border-radius: var(--clue-on-radius);
+  font-size: var(--clue-on-badge-size);
+  font-weight: var(--clue-on-badge-weight);
+  animation: none;
 }
 
 /* -----------------------------------------------------------------------------
-   5. The separator
-   The component renders the bar before every run after the first. It is the blank
-   guarantee, and it is drawn in the muted ink so it reads as punctuation rather
-   than as a fifth number in the clue.
+   5a. THE OFF SWITCH — nine values, each one the resting value
+   The hint layer is a preference and it is OFF by default, so "off" has to mean
+   the rail says NOTHING about progress: not a quieter tint, not a lighter weight,
+   the resting ink, the resting weights, the resting glyph at its resting size,
+   the resting edge and the resting underline. So the switch does not cancel the
+   five rules in §5 — it re-points every name they read at the value that rule
+   replaced, and the rules keep applying. Nothing in the component, the reducer or
+   the `aria-label` changes when it is thrown, and the state stays reported to a
+   screen reader through the cell's label either way.
 
-   It inherits the clue's `line-height`, which is what keeps the bar inside
-   `--rail-step`: at `line-height: 1` a 10px bar is 10px tall in a 9.5px line box
-   and every run after the first would grow its line by half a pixel. It is also
-   set at `0.72em`, and that is a legibility fix, not a taste one. The bar glyph
-   fills its em box, so at full size its ink is as tall as the run beside it and
-   two stacked bars with a 1px gutter between them read as ONE continuous
-   vertical rule down the column — the clue stops looking like a list of runs and
-   starts looking like a ruled table. Shortened, the ink is shorter than the
-   numeral's cap height, which is what makes it read as punctuation, and every
-   line is separated by clear air. The box stays under `--rail-step`, so the
-   rhythm is untouched.
+   One custom property per THING a rule changes, not per rule, because the values
+   are not interchangeable: the ✓ rests at 600 and the numeral at 400, the ✓ rests
+   at `--rail-num` and only shrinks when it sits in a filled strip, the numeral
+   rests on `--ink` and the glyph on the badge's own green. A single
+   `--clue-on-ink` cannot be both, and `font-size: 0.8em` written straight into §5
+   cannot be un-written at all — which is exactly what the browser measured when
+   the first version of this section used `inherit` for the weights: `inherit` on a
+   custom property inherits the PROPERTY's value from the parent element, and for
+   these names the parent is the token block, so the off switch kept the ON weight
+   and the off rail still drew a full progress marker. Literals, each copied from
+   the rule it replaces; that is the whole discipline.
+
+   The alternative wiring is equally cheap and needs no CSS at all: omit
+   `data-run-state="complete"` and `data-line-state="complete"` instead, and the
+   rules above have nothing to match. It is the component's call, and either way
+   the answer a keyboard player gets is the same.
+
+   The legend's swatches sit OUTSIDE the stage, so they never see this rule and
+   keep the `:root` values: they always draw the loud form, which is right for a
+   legend whose job is to name the shapes the rail can take.
    -------------------------------------------------------------------------- */
-.mg-rail-cell__separator {
-  color: var(--ink-3);
-  font-size: 0.72em;
-  user-select: none;
+.mg-board-stage[data-hints='off'] {
+  --clue-on-ground: transparent; /* the block and the strip are GONE, not pale */
+  --clue-numeral-ink: var(--ink); /* §4's clue colour */
+  --clue-badge-ink: var(--badge-color-complete); /* §3's settled-glyph colour */
+  --clue-on-weight: 400; /* §4 sets no weight, so the rail's own */
+  --clue-on-line-weight: 400;
+  --clue-on-badge-weight: 600; /* §3 */
+  --clue-on-badge-size: var(--rail-num); /* §3 */
+  --clue-on-radius: 0px; /* nothing at rest is round; §4 and §3 set no radius */
+  --clue-on-edge: var(--clue-line-border); /* §1's resting edge */
+  --clue-on-run-mark: inset 0 calc(var(--rule-w) * -1) 0 var(--ink-3); /* §5.3's own */
 }
 
 /* -----------------------------------------------------------------------------
-   7. Capacity — what a rail will show, and how it says "there is more"
-   A 30x30 line at 60% carries nine or ten runs. The rail shows six and prints an
-   ellipsis, which is a claim the reader can check; clipping is a claim they
-   cannot. The full text is in the rail cell's `aria-label` and in the help
-   dialog, so nothing is lost to assistive tech. The ellipsis takes the seventh
-   line of a column rail, where the band has already paid for it, and the corner
-   of a row rail, which has no seventh line to spend.
+   6. No separator glyph — the gutter and the underline are the grouping
+   The blank guarantee used to be a `│` printed before every run after the first.
+   It is gone, and the reason is a measurement: the bar is a 0.72em glyph in a full
+   em box, so it cost 5.7px of inline space per run — 42% of a 54px row rail —
+   and it measured 2.73px of centre offset, so every run but the first sat off the
+   cell's centre line. In a column rail the line break was already doing that work,
+   so the bar bought nothing; in a row rail it was a 1px-wide, 7px-tall tick doing
+   the one job the design actually needs, which is telling a player where one run
+   stops and the next begins.
+
+   Two channels do it now, and both were already in the markup:
+     · `--rail-run-gap` (§4) is 5px of air between runs and 0 inside one, so the
+       eye segments the list before it reads it, at any run count.
+     · the per-run underline's own extent IS the run: one digit is one tick, `10`
+       is one two-wide tick, and the gutter keeps two ticks from reading as one
+       long rule. It is already the run's state — 1px muted open, 2px confirm
+       closed — so the grouping and the state are one gesture, not two.
+   Nothing about the clue's meaning moves: the runs stay in reading order and the
+   cell's `aria-label` still spells the whole clue, bar or no bar.
    -------------------------------------------------------------------------- */
-.mg-rail-cell__run:nth-child(n + 7) {
-  display: none;
-}
-
-.mg-rail-cell__clue:has(> :nth-child(7))::after {
-  content: '\2026';
-  display: grid;
-  place-items: center;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-}
-
-.mg-rail-cell[data-line='column'] .mg-rail-cell__clue:has(> :nth-child(7))::after {
-  /* In flow: the band is sized for seven lines and this is the seventh. */
-  inline-size: var(--rail-num);
-  line-height: var(--rail-lh);
-}
-
-.mg-rail-cell[data-line='row'] .mg-rail-cell__clue:has(> :nth-child(7))::after {
-  /* Out of flow, in the corner the state glyph's column already owns. */
-  position: absolute;
-  inset-block-end: 0;
-  inset-inline-end: 0;
-  inline-size: var(--rail-badge);
-  block-size: var(--rail-badge);
-}
 
 /* -----------------------------------------------------------------------------
-   8. The tight tiers, read off the rail's own box
-   `--cell` is set inline by the host and `--rail-col` is derived from it, so the
-   only honest way to ask "how much room did THIS rail get" is a container query
-   on the size container board.css put on every rail cell. Two tiers, and each
-   one drops the first thing to go rather than letting content clip — the run
-   numeral itself never goes, because the numeral is where a closed run is
-   stated now:
-     · a narrow COLUMN rail gives up the separator, so a three-digit run (a
-       30x30 line) still fits instead of being cut mid-numeral;
-     · a short ROW rail gives up a clue line and the glyph's column, and
-       holds four runs, which is what two lines of two will take at 32px.
-   -------------------------------------------------------------------------- */
-@container rail (max-inline-size: 24px) {
-  /* The floor. A run is its numeral and nothing else, so "100" is 18px of a 22px
-     box. The underline still says where a run ends, and the ellipsis still says
-     how many more there are. */
-  .mg-rail-cell[data-line='column'] .mg-rail-cell__separator {
-    display: none;
-  }
-}
-
-@container rail (max-block-size: 33px) {
-  .mg-rail-cell[data-line='row'] .mg-rail-cell__glyph {
-    display: none;
-  }
-
-  .mg-rail-cell[data-line='row'] .mg-rail-cell__clue {
-    padding-inline-end: 0;
-  }
-
-  .mg-rail-cell[data-line='row'] .mg-rail-cell__run:nth-child(n + 5) {
-    display: none;
-  }
-
-  /* Four runs now, so the ellipsis that says "there is more" moves with them.
-     Only the content has to be restated: the row rail's marker is out of flow
-     and already placed by rule 7. */
-  .mg-rail-cell[data-line='row'] .mg-rail-cell__clue:has(> :nth-child(5))::after {
-    content: '\2026';
-  }
-}
-
-/* -----------------------------------------------------------------------------
-   9. Reduced motion, this file's own
+   7. Reduced motion, this file's own
    The badge stops blinking. It keeps its colour and its strip, and the rail's
    edge keeps its dash pattern, so both states stay distinguishable without
    moving — the rail never needed motion to be readable, only to be noticed.
