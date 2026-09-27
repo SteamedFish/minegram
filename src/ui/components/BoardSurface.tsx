@@ -218,7 +218,6 @@ export function fitCellAt(
     inlineChrome,
     blockChrome,
   } = probe(cell)
-  const byWidth = Math.floor((paneInline - inlineChrome - railInline) / columns)
   // The vertical half of Fit, which §1.7's width-only solve never had. A cell has
   // to fit BOTH axes, so the answer is the SMALLER of the two solves — `max` here
   // would grow a board straight back out of the pane, which is the defect this
@@ -248,10 +247,34 @@ export function fitCellAt(
   // a true no-op, so the chain is one pass — and a capped pane loses the 3px of
   // chrome that really is spent, which costs a 3-row board one cell of nothing.
   //
-  // The loop that remains is the rail's, and `settleFitCell` below walks it. A
-  // hidden region measures zero on both axes; the width solve is then the only one
-  // with an answer, and a board that is merely not on screen yet must not be sized
-  // to the floor because of it.
+  // The loop that remains is the rail's, and `settleFitCell` below walks it.
+  //
+  // A hidden region measures zero on BOTH axes, and the two axes are not symmetric
+  // here. On the block axis a zero measure is legitimately weak evidence — the pane
+  // is capped by `min(70vh, 46rem)`, so a board that is merely not on screen yet
+  // still has a perfectly good width to divide, and falling through to `byWidth` is
+  // the right answer. On the INLINE axis there is nothing to fall back to: a
+  // zero-width pane means the board has no room at all, and the arithmetic below
+  // does not say so. `Math.floor` of a negative number is negative, `byHeight`
+  // inherits it, and the closing `Math.max(FIT_FLOOR_PX, …)` then reports the
+  // floor — so hiding a side panel yanked a live board to the smallest size it can
+  // paint and left it there until something happened to re-fire the observer. The
+  // comment here used to PROMISE the opposite ("must not be sized to the floor
+  // because of it") while the code did exactly that, which is the same class of
+  // defect as two agreeing comments: a claim in prose that nothing checks.
+  //
+  // So the code now keeps the promise. An inline measure with no room in it is not
+  // a measurement, and the honest response to a measurement that did not happen is
+  // to hold the size the board already has — clamped, because the caller's range
+  // still applies — and let the observer re-solve when the pane is measurable
+  // again. Returning rather than guessing is what makes the walk converge on a
+  // board that is not on screen: a frozen cell is already a fixed point, so the
+  // chain terminates on the first pass instead of oscillating.
+  const inlineRoom = paneInline - inlineChrome - railInline
+  if (inlineRoom <= 0) {
+    return Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, cell))
+  }
+  const byWidth = Math.floor(inlineRoom / columns)
   const available = paneBlock - blockChrome - railBlock
   const byHeight = available > 0 ? Math.floor(available / rows) : byWidth
   return Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, Math.min(byWidth, byHeight)))

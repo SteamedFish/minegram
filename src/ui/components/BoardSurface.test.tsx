@@ -600,6 +600,16 @@ describe('BoardSurface — the height-aware Fit', () => {
    * and not the stage.
    */
   const observed: Element[] = []
+  // The callbacks as well as the nodes, so a test can make the pane report a new size
+  // and have the fit re-solve. Without this the only way to re-measure is to remount
+  // the whole board, which cannot distinguish "re-solved" from "never moved".
+  const callbacks: (() => void)[] = []
+
+  function fireObservers(): void {
+    for (const callback of callbacks) {
+      callback()
+    }
+  }
 
   // A parameter property would be shorter, but `erasableSyntaxOnly` is on in
   // tsconfig.app.json, so the field is declared and assigned like everything else here.
@@ -612,6 +622,7 @@ describe('BoardSurface — the height-aware Fit', () => {
 
     observe(node: Element): void {
       observed.push(node)
+      callbacks.push(this.callback)
       this.callback()
     }
     unobserve(): void {}
@@ -631,6 +642,27 @@ describe('BoardSurface — the height-aware Fit', () => {
       value: StubResizeObserver,
     })
     observed.length = 0
+    callbacks.length = 0
+    definePane(width, height, railWidth, railBlock, rowChrome)
+  }
+
+  /**
+   * Re-report the pane's box WITHOUT resetting the observer registries.
+   *
+   * A pane that resizes is not a new observer, and conflating the two is a trap this
+   * suite has already paid for once: clearing the registry in `stubPane` meant that
+   * re-stubbing a size threw away the very callback the test then wanted to fire, and
+   * the re-solve it was checking silently never happened. The first draft of that test
+   * passed the "holds still" half and failed the "re-solves" half for exactly that
+   * reason — a failure that read like a defect in the fix.
+   */
+  function definePane(
+    width: number,
+    height: number,
+    railWidth = 0,
+    railBlock = 0,
+    rowChrome = 0,
+  ): void {
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
       configurable: true,
       get(this: HTMLElement) {
@@ -722,6 +754,42 @@ describe('BoardSurface — the height-aware Fit', () => {
     store = openStore()
     paint(store.getSnapshot(), store)
     expect(fitCell()).toBe('30px')
+  })
+
+  it('holds its size when the pane reports no WIDTH, rather than falling to the floor', () => {
+    // The inline axis has no fallback, and that asymmetry is the whole point. A pane
+    // of zero width is not a measurement — it is the absence of one — and the old
+    // arithmetic turned the absence into the floor: `Math.floor(0 / 2)` is 0, the
+    // closing `Math.max(FIT_FLOOR_PX, …)` raised that to 24, and a live board was
+    // yanked to the smallest size it can paint. Both side panels are hideable, so a
+    // zero-inline pane is reachable in play and not only in a `display:none` test.
+    //
+    // The expectation is the size the board ALREADY had (32 is the resting `--cell`),
+    // not merely "not 24": holding is the behaviour, and an implementation that
+    // answered some other number in the 24..56 range would also be refusing to hold.
+    stubPane(0, 620)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(fitCell()).toBe('32px')
+  })
+
+  it('re-solves once the pane is measurable again, after holding through a zero-width one', () => {
+    // Holding must not become stuck. A frozen cell is a fixed point, so the walk
+    // terminates on the first pass while the pane is unmeasurable; when the pane comes
+    // back the observer re-fires and the solve runs against real numbers again. The
+    // second half is the one that matters — a guard that returns early unconditionally
+    // would satisfy the test above forever and leave the board at 32px for good.
+    stubPane(0, 620)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(fitCell()).toBe('32px')
+    definePane(400, 620)
+    fireObservers()
+    // 400 over two columns is 200 and 620 over two rows is 310, so the smaller is 200
+    // and the ceiling has the last word: 56px. The point of the number is that it is
+    // the ceiling rather than the 32px held above — a solve that never ran again would
+    // also be "not 24".
+    expect(fitCell()).toBe('56px')
   })
 
   it('takes the band off the height solve, as it takes the column off the width one', () => {
