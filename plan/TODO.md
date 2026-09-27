@@ -231,13 +231,35 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
   five defects below are invisible at the desktop viewport I had been tuning
   against, and the worst one only appears when the device is rotated.
 
-- [ ] **Defect 1 — landscape is worse than portrait, and self-contradictory.**
-  At 1280×800 the page scrolls 163px while the cap has ALREADY reserved 240px
-  (30% of the viewport) for chrome, so the reservation is both too large and not
-  large enough. The board also SHRINKS on rotation (41px/12.3px → 32px/10px)
-  while 1191px of width sits ~80% idle: `byWidth` computes ≈74px and `byHeight`
-  binds at ≈32px. A 10" tablet in landscape is the most natural way to hold a
-  game and it is the worst case measured. Biggest win available. IN PROGRESS.
+- [x] **Defect 1 — landscape is worse than portrait, and self-contradictory.**
+  At 1280×800 the page scrolled 163px while the cap had ALREADY reserved 240px
+  (30% of the viewport) for chrome, so the reservation was both too large and not
+  large enough. The board also SHRANK on rotation (41px/12.3px → 32px/10px) while
+  1191px of width sat ~80% idle. Fixed, and the cause was not the layout at all:
+  the fit's fixed-point walk is DECREASING (`--rail-num` is a function of
+  `--cell`, so a bigger cell buys a bigger rail and leaves less room), so it
+  settles into a 2-cycle that `next === cell` can never detect. Measured trace at
+  1280×800: `32→40→39→40→39`, budget exhausted, `converged: false`, and the
+  effect's response to that is to paint NOTHING — so the board was frozen at 32px
+  with 128px of the pane's cap unspent, permanently, because every later resize
+  walked the same cycle and failed the same way. Cycle detection in
+  `settleFitCell` (`src/ui/components/BoardSurface.tsx`) now settles it at the
+  SMALLER member of the cycle, the one that cannot overflow. Measured after:
+  cell 32→40px, numeral 10→13.6px.
+
+- [ ] **Defect 1b — the landscape cap overshoots the space the board's own
+  region gets, so the board's bottom now falls below the fold.** This is the
+  price of the fix above, and it is a layout judgement, not a logic error: the
+  band sets `--board-cap: 86dvh` (688px at 1280×800) as a fraction of the
+  VIEWPORT, but the board region only receives the viewport minus the banner
+  (108px), the footer (58px), the board's own toolbar (144px) and the body
+  margins (32px). Measured at 1280×800: `main` is 832px in an 800px viewport,
+  so `vPageScroll` went 163→302 and the board's bottom edge is below the fold at
+  scroll 0. The board is fully inside its pane and the pane is `max-block-size`
+  bounded, so this is a cap-sizing decision: either bound the board's region to
+  the space the chrome leaves (and keep the page still), or let the page scroll
+  and lower the cap so the board still finishes above the fold. The second is
+  the smaller change and preserves the larger board. OPEN, with des-5.
 
 - [ ] **Defect 2 — no touch target reaches 44×44**, including the board cells
   (best 41px), so WCAG 2.5.5 AAA is unmet everywhere; the two `INPUT`s are
@@ -245,10 +267,17 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
   660px of grid plus ~209px of rail chrome, which does not fit an 800px portrait
   tablet. Whatever is chosen has to be legible in the result, not papered over.
 
-- [ ] **Defect 3 — below ~700px the numeral is back on its 10px floor**
-  (`clamp(10px, calc(var(--cell) * 0.3), 20px)`), so round 4's 「数字实在太小了」
-  is still present on an 8" tablet at default fit (600×960 → 30px cell → 10px).
-  Portrait at 800px is fine at 12.3px; the floor bites at 600px and 1280×800.
+- [x] **Defect 3 — below ~700px the numeral was back on its 10px floor**, so
+  round 4's 「数字实在太小了」 was still present on an 8" tablet at default fit
+  (600×960 → 30px cell → 10px). The floor and the ratio are now TOKENS
+  (`--rail-num-floor`, `--rail-num-ratio`) and 12px/0.34 is spent at 768–1184px
+  and in the landscape band, which takes 800×1280 12.3→13.94px, 800×1100
+  12→13.6px and 1280×800 10→13.6px. STILL OPEN below 48rem: 600×960 still
+  measures 10px, because the override is scoped `width >= 48rem`, and at 600px
+  the cell is 30px so a 12px floor would be 40% of the cell against the ratio's
+  own 34%. That is a design call, not an oversight — a floor is exactly the
+  parameter that decouples legibility from the cell, and it is the one that has
+  to be bounded against a minimum cell width.
 
 - [ ] **Defect 4 — 24×24 on a small screen scrolls in two axes inside a page
   that also scrolls** (600×960: pane scrolls X and Y, 420/576 in view). Nested
@@ -285,3 +314,8 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
 - **A check that demands a difference which cannot exist reports a defect in the check, not in the fix.** Twice this round. First, "the new tokens buy a bigger numeral than the flat one" was written as `>` and failed at fit, where the numeral is 10px in *both* arms because the fit lands where `0.3 * cell` clamps back to the 10px floor — demanding growth there demands the impossible, and the fix is `>=` plus a separate assertion that growth happens at the explicit zoom steps, which is where the player actually asked for it. Second, the zoom-step readings all came back at 10px and read as a total failure of the scaling, when the probe had measured them *after* pinning the 10px override it was A/B-ing — the flat arm, six times, reported as a failure of the new tokens. Both were the harness asserting something about an arm it was not measuring. The rule: **before believing a check that fails on a fix you have just verified, read which arm the numbers came from and whether the expectation could ever hold.** A check whose expectation is unsatisfiable in some regime of its own matrix is not a strict check, it is a wrong one.
 - **A check that asserts a check's PREMISE rather than its subject will break the day a premise stops being true — and it will report the change as a regression.** `round4-probe.mjs`'s "the numeral never shrinks as the cell grows" walked the zoom steps in CLICK order, which was the same as cell order only for as long as `fit` was the smallest step. The moment `fit` learned to grow into the pane's cap, `fit` became 37px while `xs` stayed at 26px, so `fit -> xs` legitimately goes DOWN in the cell and the numeral goes down with it. The check read `11.1 -> 10 -> 10 -> 12 -> 16.8 -> 20` and called the first dip a failure of the scaling, and the tempting fix — loosen it until it goes green — would have buried a real invariant. The invariant is monotonicity IN THE CELL, and by the cell the sequence is non-decreasing throughout. **When a check fails right after a change you believe is an improvement, ask whether the change moved a premise the check was resting on, before touching the check.** The tell is that the failure looks like the improvement's opposite: an improvement that the check reports as a regression is a premise that moved, not a defect.
 - **A "fit" that reads its own output back as a constraint cannot grow — and the symptom is a board that looks right.** The pane is `max-content` under a `max-block-size`, so while the board is shorter than the cap the pane's height IS the board's height. The solve was reading that as a limit, which made it a no-op that could only confirm whatever size the board already had, and the exact-no-op comment in the code called it "the only correct answer" without saying which regime it was in — true at the cap, wrong below it. This is a third instance of one shape in this project: a claim in prose that is correct in the regime it was written for and silently wrong in every other, sitting in a comment that a reader has no way to falsify. Where a measure can be a report rather than a constraint, the pair has to be named, and a comment that says "the only correct answer" without naming the regime is the defect. The measurement that found it was a probe phase written to check something else — the check that was supposed to be about the previous fix reported a failure that was not about it, and the honest move was to diagnose that before weakening either side.
+
+- **A fixed-point walk over a DECREASING map settles in a 2-cycle, and a solver that tests only `next === cell` will declare it unconverged forever.** This was a real, live defect, and the mechanism is the opposite of what the code claimed. The fit's map is decreasing, not merely "shallow": `--rail-num` is a function of `--cell`, so a larger cell buys a larger clue rail, which leaves less room, which asks for a smaller cell. The walk therefore alternates around the answer. Measured trace at 1280×800: `32→40→39→40→39` — no step equals the step before it, the 4-pass budget runs out, `converged` is `false`, and the effect's response to that is to paint NOTHING and keep the last size React rendered. So the board was frozen at 32px with 128px of the pane's cap unspent, and because every later resize walks the same cycle and fails the same way, the staleness was permanent rather than momentary. The fix detects a REPEAT (proof) rather than a small residual (a guess) and takes the smaller member of the cycle, which is the one that cannot overflow. The docstring had asserted "the chain is monotone and its links are shallow, so this converges" — true in the sense that mattered for the magnitude, and wrong in the only sense that mattered for termination. **Monotone convergence and decreasing-map contraction are different properties, and only one of them lets an equality test pass.** Check which one a walk actually has before writing the termination condition.
+- **A fixture modelled from the FORMULA instead of from the MEASUREMENT passed the old code — the same mistake as round 4, re-learned inside the same fix.** The new cycle test derived the rail costs from the clamp arithmetic and put the 39px rail at 85.25 where the browser says 84, which moved the fixed point onto an exact value, so the chain converged under the *pre-fix* code and the test passed while testing nothing. It passed because the defect had been smoothed out of its own fixture. The corrected fixture carries the browser's measured pairs (77, 85) at 32px and (86, 92) at 40px, and asserts the cycle as a PREMISE (`f(40) === 39`, `f(39) === 40`) so the test dies if the fixture ever stops having the defect. Round 4's lesson said fixtures must be the browser's own numbers; the sharper form is that a fixture derived from the same arithmetic as the code under test cannot disagree with it, and a fixture that cannot disagree is not evidence. **Every number in a regression fixture must be traceable to an observation, not to a restatement of the implementation.**
+- **In a decreasing map, "does it fit" is `f(x) >= x`, and writing it the other way round makes the test fail on the FIX.** I asserted `fitCellAt(probe, …, settled.cell) <= settled.cell` and the correct implementation failed it, because in a decreasing map a solve that asks for a SMALLER cell than the one asked about is the OVERFLOWING one. This is the second time this round family flipped that direction — round 4 had the same inversion on the numeral's growth check — and the tell was the same both times: the failure looked exactly like the opposite of the improvement, which is what a premise that moved looks like and what a wrong inequality looks like. **An inequality that encodes a safety property is worth deriving out loud before it is written, because its direction is not guessable and the two forms are silently opposite.**
+- **Two probe faults, both of which cost real time and neither of which was a product defect.** (1) A probe that assembles from a shared prelude must carry the prelude's SHUTDOWN too — an open CDP WebSocket keeps node's event loop alive forever, so the probe does not fail, it HANGS; `small-body.mjs` ends with `await fetch(\`http://127.0.0.1:${PORT}/json/close/${target.id}\`)` followed by `process.exit(0)` and slicing the prelude without those two lines produced a 20-minute run. (2) `getComputedStyle(el).maxBlockSize` must be read from the element that CARRIES the `max-block-size` — here `.mg-board-scroll`, which is also the element the app reads `clientWidth`/`clientHeight` from, not `.mg-board-stage`, which reports `none`. That is the third wrong-element read in this project's probe history after `getComputedStyle(el)['--cell']` (a property lookup, not a custom-property one) and a wrong numeral selector. **Every one of the three produced a number that looked entirely reasonable.**
