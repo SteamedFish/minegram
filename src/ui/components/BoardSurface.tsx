@@ -279,19 +279,37 @@ export function fitCellAt(
   // painted at, and the space under it went unused until the board was tall enough
   // to fill the pane — which on a short board is never. Measured on the default
   // 15x15 at 1440x900: `clientHeight` 549 against a `max-block-size` of 630, so 81px
-  // of allowance, 5.4px per row, unspent; and because the numeral scales with the
-  // cell, those 5.4px are exactly the difference between a 10px numeral and an
-  // 11.4px one, on the default board, at fit, with the player having done nothing.
+  // of allowance, 5.4px per row, unspent. The numeral scales with the cell, so those
+  // 5.4px are what carried it off the 10px floor: `0.3 × 32` clamps to 10, `0.3 × 37`
+  // is 11.1px, and the player gets that on the default board, at fit, having touched
+  // nothing.
   //
   // So the block solve divides by the height the pane is ALLOWED, which is
-  // `max(paneBlock, paneBlockCap)`, and the allow is safe to read for the same
+  // `Math.max(paneBlock, paneBlockCap)`, and the allow is safe to read for the same
   // reason the cap was: it is `min(70vh, 46rem)`, written in units no board can
-  // reach. The `max` is what makes both regimes right without a branch. When the
-  // board is taller than the cap the pane is stretched, `paneBlock` is the real
-  // limit and the cap is smaller, so the cap loses; when the board is shorter the
-  // cap is the real limit and the cap wins. One line, no state, and the exact no-op
-  // the chrome fix bought at the cap is preserved because above the cap the two
-  // inputs stop cancelling — the pane stops tracking and starts constraining.
+  // reach.
+  //
+  // What `max` actually does here was measured rather than reasoned about, and the
+  // first answer was wrong. It was written as a two-regime selector — "the board is
+  // taller than the cap, so the cap loses" — and that regime cannot exist:
+  // `max-block-size` CLAMPS the box's own used size, so the pane's `clientHeight` is
+  // never larger than its cap in any regime. Dropping a 4000px child into the real
+  // pane leaves `clientHeight` at exactly 630 and pushes the excess into
+  // `scrollHeight` (4630). So `paneBlock <= paneBlockCap` always, `max` always
+  // resolves to the cap whenever the read succeeds, and the line is not a selector at
+  // all — it is the fallback for an UNREADABLE cap. An unresolvable cap reports 0,
+  // `max(paneBlock, 0)` is the pane's height, and the expression is then exactly the
+  // pre-existing behaviour, so the fallback is free.
+  //
+  // The one state where the cap is not the pane's height is a pane that is neither
+  // its content's height nor its cap: a stretched grid item under a definite parent
+  // (measured 260 against a 569.1px cap). There the board is sized to the cap, no
+  // longer fits the pane it exists to fit, and pans — never amputated, because the
+  // solve can only divide the cap it is given. It is not reachable as built:
+  // `.mg-app` is `align-items: start` with `min-block-size: 100vh` and auto rows, so
+  // the main item is start-aligned and the surface/pane chain is content-sized end to
+  // end. It is a trap for the next layout change, not a defect today, and the
+  // observable would be a board that pans while the pane reports far less than its cap.
   //
   // The loop that remains is the rail's, and `settleFitCell` below walks it.
   //
@@ -322,10 +340,9 @@ export function fitCellAt(
     return Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, cell))
   }
   const byWidth = Math.floor(inlineRoom / columns)
-  // `max`, not `min`, and the two regimes it serves are the two the pane can be in:
-  // stretched (the board is taller than the cap, the cap loses) or tracking (the
-  // board is shorter, the cap wins). See the block-axis note above for why taking
-  // the pane's current height alone made `fit` a confirmation rather than a fit.
+  // `max`, not `min`, and not because of two regimes: the cap clamps the pane, so
+  // this is `max(paneBlock, unreadableCapAsZero)` — the cap when it resolves, the
+  // pane's own height when it does not. The block-axis note above has the measurement.
   const available = Math.max(paneBlock, paneBlockCap) - blockChrome - railBlock
   const byHeight = available > 0 ? Math.floor(available / rows) : byWidth
   return Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, Math.min(byWidth, byHeight)))
@@ -615,8 +632,21 @@ export function BoardSurface(props: BoardSurfaceProps) {
       // resolved (`none`, or `0` on an element that generates no box) is reported as
       // 0 rather than `NaN`, because `Math.max(paneBlock, 0)` is the exact
       // pre-existing behaviour and a `NaN` here would poison every later number.
+      //
+      // Only a value that RESOLVED to px is accepted, and the check is on the raw
+      // string rather than after parsing. `max-block-size: 80%` reads back as the
+      // literal string `"80%"` — measured, not assumed — and `parseFloat` hands that
+      // straight back as `80`, so a percentage cap would be silently read as 80px. The
+      // failure direction is benign (a too-small cap makes `max` choose the pane, which
+      // is the pre-existing behaviour, so it can never overflow the pane), but silent
+      // is the part that matters: the next person to write the cap in `%` would see the
+      // fit quietly stop working with nothing in the console to say why. Rejecting it
+      // here makes the stylesheet's own unit the thing that decides, which is where the
+      // answer belongs.
       const blockCap = (() => {
-        const raw = Number.parseFloat(getComputedStyle(node).maxBlockSize)
+        const resolved = getComputedStyle(node).maxBlockSize.trim()
+        if (!resolved.endsWith('px')) return 0
+        const raw = Number.parseFloat(resolved)
         return Number.isFinite(raw) && raw > 0 ? raw : 0
       })()
       const probe: FitProbe = (cell) => {

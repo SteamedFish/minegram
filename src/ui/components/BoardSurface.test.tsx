@@ -910,16 +910,23 @@ describe('BoardSurface — the height-aware Fit', () => {
     // against a `max-block-size` of 630, at a 32px cell. 549 is exactly 15 x 32 plus the
     // 69px of band and chrome, i.e. the pane reporting the board back, and it had 81px
     // of allowance unspent — 5.4px a row. Because the numeral scales with the cell, that
-    // is the whole distance between the 10px numeral floor the player complained about
-    // and an 11.4px one, on the default board, at fit, with the player having done
-    // nothing at all.
+    // is what carried it off the 10px numeral floor the player complained about:
+    // `0.3 × 32` clamps to 10 while `0.3 × 37` is 11.1px, on the default board, at fit,
+    // with the player having done nothing at all.
     //
     // This block's board is `DIMENSIONS`, 2x2, so the case is stated at that size
     // instead and the arithmetic is given rather than assumed. A 60px pane over a 10px
-    // band is a 2x2 painted at 25px: (60 - 10) / 2 = 25, the confirming answer. With a
+    // band would be (60 - 10) / 2 = 25 if the solve used the pane's height — that is
+    // the number the pre-fix code returns here, so the test is red against it. With a
     // 70px cap the solve may use 70, so (70 - 10) / 2 = 30. 30 is strictly between 25
     // and the 56px ceiling, so neither the pre-fix answer nor a clamped one can produce
     // it, and `byWidth` = 200 cannot mask it.
+    //
+    // The framing here is deliberately arithmetic, not behavioural, because the real
+    // browser cannot produce this pair: `stubPane` freezes `clientHeight` at 60 for
+    // every candidate the fit tries, so nothing TRACKS a shrinking board. What this
+    // test pins is that the cap term is the one the solve divides by — not that the
+    // pane's reported height is a report at all.
     stubBlockCap('70px')
     stubPane(400, 60, 0, 10, 0)
     store = openStore()
@@ -927,19 +934,72 @@ describe('BoardSurface — the height-aware Fit', () => {
     expect(fitCell()).toBe('30px')
   })
 
-  it('still stops at the pane, not the cap, once the board is taller than the cap', () => {
-    // The cap is a CEILING on the solve, not a target, and `Math.max` is only correct
-    // because the pane's own height wins ABOVE the cap — a stretched pane, where the
-    // cap is the smaller number and must lose. So the same board with a cap SMALLER
-    // than the pane must answer from the pane: a 120px pane over a 10px band is
-    // (120 - 10) / 2 = 55, just under the 56px ceiling, while a solve that simply always
-    // used the cap would answer (40 - 10) / 2 = 15 and be clamped up to the 24px floor.
-    // 55 and 24 are far enough apart that this cannot pass by accident.
+  it('reads the pane, not the cap, when the pane reports more than the cap allows', () => {
+    // This fixture is SYNTHETIC, and it is here on purpose.
+    //
+    // `max-block-size` clamps the box's own used size, so a real pane can never report
+    // more than its cap — measured in the built app: a 4000px child dropped into the
+    // pane leaves `clientHeight` at exactly 630 and pushes the overflow into
+    // `scrollHeight`. A pane taller than its own cap is not a regime, it is a
+    // contradiction, and the first version of this comment claimed it was one.
+    //
+    // It is still the only thing that separates `Math.max(paneBlock, paneBlockCap)`
+    // from `paneBlockCap` alone, and that difference is invisible everywhere else: in a
+    // real browser the two are indistinguishable, because a readable cap is always
+    // `max`. So the guard has to pin a state no browser produces, and its name says so
+    // rather than implying the state is reachable. Drop the `max` and this goes red —
+    // a 40px cap over a 120px pane answers (40 - 10) / 2 = 15, clamped up to the 24px
+    // floor, while the pane answers (120 - 10) / 2 = 55, just under the ceiling. 55 and
+    // 24 are far enough apart that this cannot pass by accident, and the fallback this
+    // protects is the unreadable-cap path, which reports 0 rather than a real number.
     stubBlockCap('40px')
     stubPane(400, 120, 0, 10, 0)
     store = openStore()
     paint(store.getSnapshot(), store)
     expect(fitCell()).toBe('55px')
+  })
+
+  it('grows a board that is tiny for the pane UP to the ceiling, not down to the floor', () => {
+    // The cap change has a consequence nobody had written down, so it is written down
+    // here. A board with very few rows divides a large cap by very few of them, and
+    // the answer can land above the ceiling: a 1x1 board in a 630px pane solves to
+    // 630 and paints at the 56px ceiling, where the old code — reading a pane frozen at
+    // 60px — answered (60 - 10) / 2 = 25 and painted near the floor.
+    //
+    // That is what `fit` is FOR. "Fit" means fill the pane, so a two-row board that
+    // fills it is correct and a two-row board huddled at the bottom of it is the
+    // defect this whole change exists to remove. It is bounded by the ceiling, so
+    // nothing runs away; the test is here so that the bound is a fact with a witness
+    // rather than a hope, and so the next person to read the cap as a suspicious
+    // constant finds this instead of guessing.
+    //
+    // 56 is the ceiling, and it is reached from above, not from below: (630 - 10) / 2
+    // is 310.
+    stubBlockCap('630px')
+    stubPane(400, 60, 0, 10, 0)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(fitCell()).toBe('56px')
+  })
+
+  it('rejects a cap that is not resolved to pixels, rather than reading 80% as 80px', () => {
+    // `getComputedStyle` hands back the literal string `"80%"` for a percentage cap —
+    // measured, not assumed — and `parseFloat` of that is 80. So a cap written in `%`
+    // would be silently read as 80px and the fit would quietly stop working with
+    // nothing in the console to say why. The read accepts px only, and a rejected cap
+    // is reported as 0, which makes `max(paneBlock, 0)` the pane's own height: exactly
+    // the pre-existing behaviour, and the safe direction, since a cap that is too small
+    // can only make the solve fall back to the pane and never grow the board out of it.
+    //
+    // The fixture is the same one as the first cap test with the unit changed: the 70px
+    // cap answers (70 - 10) / 2 = 30 there, and here it must answer (60 - 10) / 2 = 25,
+    // because the cap is not a number this read is willing to use. 25 and 30 are the
+    // two answers that differ only by whether the cap was believed.
+    stubBlockCap('80%')
+    stubPane(400, 60, 0, 10, 0)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(fitCell()).toBe('25px')
   })
 
   it('keeps the rail out of the width solve', () => {
