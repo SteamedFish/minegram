@@ -423,9 +423,20 @@
    to come last in the file. The stage keeps the attribute for the same reason the
    cell does — it is the board's mode, and one `querySelector` reads it.
 
-   The legend's swatches sit OUTSIDE the stage and carry no `data-hints`, so no
-   rule here reaches them and they keep the loud form: a legend's job is to name the
-   shapes the rail can take, including the ones currently switched off. */
+   The legend's swatches carry no `data-hints`, so nothing in this section reaches
+   them: that is the point, and it is why the legend renders the ON shape of the two
+   annotations rather than their absence. A legend names the shapes a rail CAN take,
+   including the two that are switched off; a legend that rendered the off shape
+   would teach a hole, which is the one thing the rail is not.
+
+   What that makes mandatory, and what this file once let the legend forget: the ON
+   shape of an annotation is the FILLED BAR as much as the edge and the wash, so
+   `Legend.tsx` renders `.mg-rail-cell__glyph` in the same place among the swatch's
+   children that `ClueCell` renders it, and overlays.css gives it a strip. The
+   swatches are outside the stage and outside this section's selectors, so nothing
+   here would have complained when the span went missing — a legend drift is
+   invisible to every rule in the rail, and only the legend's own children and
+   `Legend.test.tsx` can see it. */
 .mg-rail-cell[data-hints='off']:is([data-line-state='contradiction'], [data-line-state='unknown']) {
   --clue-edge: var(--clue-line-border);
   background-color: var(--surface-1);

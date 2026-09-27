@@ -480,10 +480,19 @@
 
 /* -----------------------------------------------------------------------------
    7. The legend
-   Twelve swatches, each rendered with the board's own selector, so the list
-   cannot drift from the stylesheet. The swatch has to supply the two things the
-   board gets from its own surroundings: `--cell` (set inline on the stage, and
-   the legend is not inside a stage) and the tape's orientation.
+   Twelve swatches, each rendered with the board's own selector, so the list cannot
+   drift from the stylesheet — as long as the swatch really is the board's markup.
+   "The same attribute" is not the same markup: the three rail swatches once carried
+   `data-line-state` and no `.mg-rail-cell__glyph`, which taught the edge and the
+   wash and dropped the filled bar, and no rule on this board could have noticed. A
+   selector matches what is there, so a missing child is invisible to the cascade and
+   only the component's own test can see it.
+
+   The swatch has to supply the three things the board gets from its own
+   surroundings: `--cell` (set inline on the stage, and the legend is not inside a
+   stage), the tape's orientation, and the badge strip's reservation — a square is
+   neither a row rail nor a column rail, so §3's two orientation rules cannot place
+   or reserve it and both are done here.
    -------------------------------------------------------------------------- */
 .mg-legend__lead {
   color: var(--ink-2);
@@ -543,6 +552,71 @@
    has no sides to be wrong about, so one rule spends it. */
 .mg-legend__swatch.mg-rail-cell {
   border-inline-end: var(--clue-edge);
+}
+
+/* The rail swatches carry the SAME `.mg-rail-cell__glyph` the board renders, so the
+   legend teaches the FILLED BAR and not only the edge and the wash. The bar is the
+   loud form — the answer to 「太不明显」 — and a legend that omits it teaches the
+   quiet half of a shape the player is then going to meet on the rail.
+
+   A square is neither a row rail nor a column rail and carries no `data-line`, so
+   §3's two orientation rules cannot place the strip and it would land on the clue at
+   its natural width. The COLUMN treatment is chosen here, for one reason: the row
+   treatment spends its strip on the inline END, which is the side the rule above
+   spends `--clue-edge` on, and two states drawn on one side of a 26px square is one
+   mark rather than two. So the bar runs across the top at the cell's full width, the
+   numeral hangs below it, and the strip is the length it is on the board.
+
+   The strip is NOT scaled down to suit the swatch. `--rail-badge` is 10px in both
+   places, so on a 26px square the bar is a bigger share of its box than on a 24px
+   cell: a legend teaches the shape, not its exact proportion, and a 4px bar would be
+   a shape the board never draws. */
+/* `animation: none` below is the one declaration that has to out-rank clues.css's
+   annotation rule (`.mg-rail-cell:is([…]) .mg-rail-cell__glyph`, 0-4-0), and it
+   reaches the same 0-4-0 by naming the state that makes that rule apply — so the
+   selector stays two compounds deep like every other rule in the lane, and says
+   what it is about. A tie is settled by the sheet order in `index.css`, where the
+   overlays load after the board and sit on top of it; that is the architecture the
+   aggregator already states, and `style-check` asserts the order, so a reordering
+   fails a check rather than quietly letting a legend flicker. Measured: at 0-2-0 the
+   two annotation swatches kept blinking here. The geometry above needs no such
+   fight — the swatch carries no `data-line`, so §3's orientation rules, the only
+   other writers of `inset` in this block, cannot match it. */
+.mg-legend__swatch.mg-rail-cell[data-line-state] .mg-rail-cell__glyph {
+  inset: 0 0 auto 0;
+  block-size: var(--rail-badge);
+  /* The blink belongs to the board, where thirty identical numerals need something
+     to catch the eye. A legend is read face-on and once, so the bar stands still
+     here — a legend that flickered would teach a flicker that is only ever a way of
+     being noticed, and would make the legend's own screenshot unstable. */
+  animation: none;
+}
+
+.mg-legend__swatch .mg-rail-cell__clue {
+  /* §3's column rule reserves the strip out of the clue's flow; the swatch needs the
+     same reservation, or the numeral would sit underneath the bar. It is left
+     unconditional on purpose, so the run-only row reserves a strip it never paints
+     and all four rail numerals share ONE optical line — in a key, four numbers that
+     hop up and down read as four different shapes. Measured: 26px box, 10px strip,
+     10px numeral, 1px padding a side — 3.25px clear at the foot, never clipped. */
+  padding-block-start: var(--rail-badge);
+}
+
+/* The two annotation entries are the only shapes the board does not draw by default.
+   The pill names the switch that owns them, in the switch's own words, so the legend
+   and the settings panel cannot end up calling 提示 two different things. It states
+   which LAYER a shape belongs to and says nothing about the switch's current value:
+   that is the switch's own business, and a static "off" here would be a lie the
+   first time a player turned it on. */
+.mg-legend__gate {
+  grid-column: 2;
+  justify-self: start;
+  padding: 0 var(--sp-1);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: var(--radius-sharp);
+  color: var(--ink-2);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
 }
 
 /* The revealed entry teaches the tint and the edge that board.css draws across a
