@@ -469,6 +469,90 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
   there is no information-architecture work to do here.
 
 
+- [x] **Defect 6 — CLOSED in `7575acc` (strip) and the banner half, and the last
+  thing the small-screen bands were for: the rail numeral was a STEP, and it is
+  now a ramp.** Every other item in this round is chrome, and this one was legibility.
+  What the bands had done was reach the numeral with a WIDTH literal — `--rail-num-floor:
+  12px` in `width < 48rem` and in `48rem <= width < 74rem` — so a step sat in the
+  middle of a quantity the player reads as continuous. Measured consequence on the
+  same 15×15, coarse: **800×1280 painted 13.6px while 1184×900 painted 10px**, a
+  narrower window with a larger digit, and the `>= 74rem` window got the *floor*
+  the phone was supposed to have raised. The touch band's own comment promised
+  "a one-pixel difference must not flip a numeral from 12px to 10px" and was
+  **false at its own edge**: 1440×880 painted 12px, 1440×896 painted 10px.
+  `--rail-num-floor` is now `clamp(10px, calc(10px + (100dvh - 37.5rem) * 0.02), 12px)`
+  and `--rail-num-ratio` is `0.34` app-wide; both number-sized bands are DELETED and
+  the landscape band keeps only `--side-col` and `--board-cap`, the two values that
+  are about the panels. So the numeral is `clamp(floor(window height), 0.34 × cell,
+  20px)` — two inputs, both monotone, no media query anywhere in it. Measured after:
+  **12px at every viewport measured**, 1440×896's inversion gone, the ratio's 0.34
+  costing nothing (at 1440×1200 the numeral goes 12 → 13.6 and the rail's first
+  track 687 → 693 inside a 700px pane).
+  **The 700px line is the measured knee, not a tidy number.** Pinning the floor to
+  12px and re-solving at each height (the pin charged through the same
+  `ResizeObserver` the fit uses) costs **zero** visible cells at 700 and 780px of
+  window at both 1184 and 1440 wide — 135/135 and 180/180 at 1184, 165/165 and
+  210/210 at 1440 — because the pane is already shorter than the board there, and
+  **15 cells, one row**, at 650 and 600 (105 → 90 at 1440×600, 75 → 60 at
+  1184×600). 700 is exactly where the larger numeral becomes free, and 10px is a
+  floor rather than a third stop because below 600px the pane is 194px tall and
+  the board is dragged through it whatever the type does. The one honest caveat is
+  written down in `tokens.css`: `100dvh` moves when a mobile browser's chrome moves
+  and the ramp's live range is 100px wide, so in that one band the numeral can
+  follow the chrome.
+  **The band half of defect 6, and the banner.** The banner grows as the window
+  narrows (100/126/178/160/226/226/208px at 1184/800/600/480/412/360/320) and its
+  term-by-term measurement shows exactly three terms: 24px block padding, a 12px
+  gap, and the tagline at 28px on two lines — the tagline being the only one that
+  is CONTENT rather than air. `@container banner (width < 24rem)`
+  (`layout.css`, `container: banner / inline-size` on the banner) spends it for
+  **32px**, measured 226 → 194 at 360×800 and 412×915, 208 → 176 at 320×800, with
+  the wordmark 58 → 26, the row unchanged at 130, the padding still 12/12, and the
+  gate INERT at 480 (160 → 160). 24rem is arithmetic: the sentence needs 349px on
+  one line, and the banner's own content box is 270/295/347/415/535/703 at a
+  320/360/412/480/600/800px window, so the gate sits between the demand and the
+  first width that fits it.
+  The strip's other half: the zoom group was not "too big", it was **wrapping inside
+  its own row slot** — 92px of box holding 44px of pills and 48px of nothing,
+  because a group wider than the strip does not become one clipped line.
+  `@container toolbar (width < 20rem)` (`forms.css` §6b) closes it with
+  `column-gap: 0` on `.mg-toolbar__group` and `padding-inline: 2px` on
+  `.mg-toolbar__zoom`, reaching 275 against a 279px content box at 360×800:
+  **toolbar 214 → 166, group 277×92 → 275×44**, 412×915 unchanged at 166 with the
+  group 307×44, which is the point of the gate. A zero gap is not the pills
+  touching, and that was measured rather than asserted: what meets is two 1px
+  **borders**, not two words — `Range.getClientRects()` on each label gives
+  ink-to-ink gaps of 13.3, 6, 6, 17.2, 24.5px against 19.3, 14, 14, 23.2, 28.5px
+  where the rule is inert, so the tightest pair of words in the app under this rule
+  is 6px apart, and it is 6 rather than 0 because a centred label carries the
+  typeface's side bearing inside a box 4px wider than the word. All six pills stay
+  ≥ 44px wide, nothing is hidden, and no name changes.
+  **Item 2 needed no change and I say so rather than adding the property for its
+  own sake: the 320px floor is already there**, at `src/styles/base.css:65`
+  `min-inline-size: 320px; /* the narrowest phone in portrait */`, and it is
+  load-bearing in a way a new `min-inline-size` on the shell would not have been —
+  the fit's inline guard (`BoardSurface.tsx:388-391`) means a window under 320px is
+  not cramped, it is **unpainted**. That is why 280×800 and 320×800 measure
+  identically: both render the 320px app and the page pans.
+  **What this round does NOT buy, stated plainly: not one visible cell.** `inView`
+  and `--cell` are unchanged at 360×800, 320×800 and 412×915, and at 24×24 on a phone
+  −277 → −245 and −440 → −360 with the cell still on its 24px floor. The board is
+  content-sized and the fit has already put the cell at its floor, so the 32px buys
+  the **FOLD** — the board's bottom edge 185px below it at 360×800 and 19px at
+  412×915 before, so 32px is 17% of the first figure and more than half of the
+  second. At 412×915 the fold slack goes **−11 → +21**, i.e. the board now fits
+  above the fold. Nothing above 600px moved a pixel: banner, toolbar, footer, pane
+  and `vPageScroll` are byte-identical at 600×960, 800×1280 and all five ≥1184
+  viewports, `hOverflow` 0, and Generate reachable everywhere.
+  **Validation, and the part that is mine rather than the lane's.** The nine
+  `style-check` assertions this change broke were **stale checks, not
+  regressions** — they pinned the two bands the change deliberately removed — and
+  deleting them is how a change like this loses its evidence, so they were
+  rewritten to pin the new structure and §18 was added. I did not take the lane's
+  "six mutations, all caught" for it: I reintroduced a deleted `--rail-num-floor`
+  band into `tokens.css` myself and counted **4 failures**, then restored and got
+  ALL CHECKS PASS. §18 is not vacuous, verified independently.
+
 ## Lessons
 
 - **A measurement probe that reads the WRONG element will report a defect that does not exist — and the fix is to print the element, not just the count.** The first run of this round's probe reported `openTapes=1` with the layer off and I was one step from calling it a leak. The one surviving tape is the LEGEND's own key: the legend deliberately carries no `data-hints` so it always teaches the true shape, and its swatch is literally `<span class="mg-run-tape" data-run="tape" data-cap="only">`, which a document-wide `.mg-run-tape[data-run="tape"]` selector matches. Scoped to the board stage the count is 0 → 34 → 0 as designed. This is lesson (1) from the Phase 4 round recurring in its sharpest form: the same shape of mistake, three rounds apart, in a file I wrote myself. The generalisation: **when a count disagrees with a design claim, dump `outerHTML` of the offender before theorising** — a two-line diagnostic that would have cost thirty seconds and is now built into the probe permanently (`offenders`).
@@ -551,3 +635,63 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
   one that matters: `max-block-size: calc(100dvh - …)`, `overflow-y: auto`,
   `overscroll-behavior: contain`, and **`min-block-size: 0`**, since a grid item's
   automatic minimum size is its content size and defeats the bound on its own.
+- **A container query never matches the element that establishes it, so a rule
+  written "just inside" the query it gates is inert — and it is inert
+  SILENTLY.** `@container banner` cannot style `.mg-banner`; the banner is the
+  container, and a container's own box is not among its descendants. Two
+  declarations were written that way (`padding-block`, `gap` on `.mg-banner`
+  inside the query), measured at **zero effect** — the padding still read 12px
+  16px and the gap still 12px — and then **deleted rather than left in as a
+  claim**. The same trap has a reach clause: the only container that can reach
+  the banner's own air is `.mg-app` or `.mg-main`, and moving it there converts
+  the query into a viewport query wearing a container's name, which moves the
+  gate that was measured on the strip. So 16px was left on the table and the
+  refusal written down, which is cheaper than a rule that does nothing. The
+  generalisable form: before believing a rule inside `@container NAME` has any
+  effect, check that its subject is not `NAME` itself or an ancestor of it — the
+  test is a measurement of the property, not a read of the stylesheet.
+
+- **A zero gap is not "the content touches", and the only way to know is to
+  measure INK rather than boxes.** The narrow strip's 6b rule sets
+  `column-gap: 0`, which reads in a diff as six pills pressed together and would
+  have been refused on that reading. What actually meets is two 1px **borders**,
+  because a label centred in its box keeps the typeface's own side bearings
+  inside it: measured with `Range.getClientRects()` on each label, the ink-to-ink
+  gaps are 13.3, 6, 6, 17.2 and 24.5px under the rule against 19.3, 14, 14, 23.2
+  and 28.5px where it is inert. So the tightest pair of words in the app is 6px
+  apart, 3px a side, and 6 rather than 0 because each box is 4px wider than its
+  word. **Boxes say how the layout is built; ink says whether it reads.** A
+  check that compares `getBoundingClientRect()` of two controls answers a
+  different question from the one a player is asking, and the cheap version of
+  the cheap check is what produces a "touching" design that is not touching.
+
+- **A check that goes red when you do the RIGHT thing is a debt the check was
+  hiding, and deleting it is the cheap repair that loses the evidence.** The
+  numeral ramp removed two media bands deliberately, and nine `style-check`
+  assertions went red — every one of them a check *I* had written, pinning the
+  structure the change deliberately removed. Nothing was regressed. The tempting
+  moves were both wrong: deleting nine failures is faster than rewriting them, and
+  re-asserting the old shape would have been faster still. What made it
+  tractable was that the assertions' SUBJECTS were named in their own strings
+  ("the phablet/tablet band exists", "the two are byte-identical to the tablet
+  band's knobs"), so a red line said *which* promise had been retired. A check
+  whose failure message does not name the promise it kept is one you cannot
+  retire deliberately, and you will either keep a wrong rule or delete a
+  right one. Then, because a rewritten check is a claim like any other, I
+  reintroduced a deleted band myself and counted the failures: **4**, and ALL
+  CHECKS PASS after restoring. A specialist's "six mutations, all caught" is a
+  report about a harness in `.tmp/`, which is gitignored; the check that matters
+  is one the parent re-ran.
+
+- **Report the number that did NOT move, or the report is a press release.**
+  The narrow-window work spent 32px of banner and 48px of empty row, and the
+  honest summary is "**not one visible cell**: `inView` and `--cell` are
+  unchanged at 360×800, 320×800 and 412×915, and at 24×24 on a phone the cell is
+  still on its 24px floor." The board is content-sized and the fit has already
+  put the cell at its floor, so the win is the FOLD, not the board — at 412×915
+  the fold slack goes −11 → +21, so the board now fits above the fold, and at
+  360×800 it goes −174 → −94, which is 17% of a 185px overhang and still not a
+  win. A lane that reported only "32px saved" would have implied the board
+  changed shape. The discipline is the same one that made a headline number be
+  "the one that would go red if the defect were fixed": a report's own negative
+  result is the part a reader cannot get from the diff.
