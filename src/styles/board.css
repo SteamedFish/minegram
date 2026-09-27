@@ -160,7 +160,7 @@
   overflow-block: hidden;
 }
 
-/* 1c. The short-landscape band: the surface is the leftover, and the cap goes
+/* 1c. The touch band: the surface is the leftover, and the cap goes
    The other half of layout.css section 6d, kept here because both properties
    are about what the fit reads.
 
@@ -187,8 +187,10 @@
    One answer, from the layout. The band's measured result at 1280x800 with a
    coarse pointer and both panels open: page scroll 380 -> 0, pane 394, stage
    440, `data-pan-block` armed, 124/124 runs drawn; at 1440x880 the pane is 522
-   and the stage 522, so nothing pans at all. */
-@media (pointer: coarse) and (width >= 74rem) and (height < 56rem) {
+   and the stage 522, so nothing pans at all, and at 1440x1200 the pane is 794
+   with `scrollHeight` 794 for a 15x15 and for a 24x24, so nothing pans at
+   either. */
+@media (pointer: coarse) and (width >= 74rem) {
   .mg-board-surface {
     min-block-size: 0;
     grid-template-rows: auto minmax(0, 1fr) auto;

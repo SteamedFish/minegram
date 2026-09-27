@@ -107,13 +107,15 @@
   line-height: var(--lh-small);
 }
 
-/* The short-landscape band, this file's one piece: the status row's own
-   padding. layout.css section 6d is the band's argument and board.css section
-   1c its other half; the rule lives here because this is where the padding is
+/* The touch band, this file's one piece: the status row's own padding.
+   layout.css section 6d is the band's argument and board.css section 1c its
+   other half; the rule lives here because this is where the padding is
    declared, and the trim is worth 8px of the 402px the chrome spends above the
    board at 1280x800 (measured the row 42px -> 34px). The text is a 15px line
-   either way: this is air around it, not type. */
-@media (pointer: coarse) and (width >= 74rem) and (height < 56rem) {
+   either way: this is air around it, not type. The band no longer has a height
+   condition, so this trim now applies to every touch window wide enough for
+   both panels, including 1440x1200 where the chrome has 300px to spare. */
+@media (pointer: coarse) and (width >= 74rem) {
   .mg-main > .mg-status {
     padding: var(--sp-1) var(--sp-3);
   }

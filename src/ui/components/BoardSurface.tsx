@@ -361,6 +361,19 @@ export function fitCellAt(
   // end. It is a trap for the next layout change, not a defect today, and the
   // observable would be a board that pans while the pane reports far less than its cap.
   //
+  // There is a second trap of the same kind, and it is the reason the block axis's
+  // `byWidth` fallback below cannot be read as a safety net. A pane that is zero tall
+  // because its SHELL collapsed — a grid row given no room — is not the off-screen
+  // board the fallback is written for, and the two are indistinguishable from the DOM:
+  // both read 0. The fallback then hands back a cell sized by the pane's WIDTH, so a
+  // collapsed pane paints a board at 55px into a box with no height, which is worse
+  // than either state it was trying to rescue. Measured: injecting the touch band at
+  // 1024x768 and 960x600, where the panels are rows under the board and a
+  // `100dvh` shell cannot hold them, collapsed the pane to 0px and the fit answered
+  // from width. That is why the band's floor is the `74rem` at which the panels are
+  // free — a band that zeroes the board is worse than no band, and it is the width
+  // that keeps it from being so, not the fit.
+  //
   // The loop that remains is the rail's, and `settleFitCell` below walks it.
   //
   // A hidden region measures zero on BOTH axes, and the two axes are not symmetric

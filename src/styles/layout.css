@@ -575,7 +575,7 @@
 }
 
 /* -----------------------------------------------------------------------------
-   6d. Short landscape on a touch device is one screenful, not a document
+   6d. A touch device with room for the panels beside it is one screenful
    -----------------------------------------------------------------------------
    The problem this answers, measured at 1280x800 with both panels open and a
    15x15 printed: the page was 1180px tall in an 800px window, so it scrolled
@@ -604,7 +604,7 @@
    measure — takes the rest. Measured at 1280x800: page scroll 380 -> 0, the
    board's 440px stage in a 394px pane, `data-pan-block` armed, 124/124 runs
    still drawn, and 117px of the pane's bottom edge above the fold. At
-   1440x880 it is better than a full fit: pane 518, stage 518, the cell 29px
+   1440x880 it is better than a full fit: pane 522, stage 522, the cell 29px
    and NO pan at all. The page scroll is not merely smaller, it is gone, so a
    drag across the board can no longer move anything but the board.
 
@@ -613,6 +613,56 @@
    to scroll a page, and it is the floor the fit already refuses to pass. A
    player who wants a bigger board than that still has the zoom steps: `l` and
    `xl` are 40px and 56px cells, and both arm both pan axes.
+
+   Nor is the band height-limited, which is the point of the next paragraph: at
+   1184x900 the pane is 446 and at 1280x1024 it is 618, both with the page at
+   scroll 0.
+
+   One thing this band has stopped doing, which was the 1px cliff, and three it
+   deliberately never does.
+
+   The band used to read `(pointer: coarse) and (width >= 74rem) and (height <
+   56rem)`, and 56rem is 896px, so its edge was 16px of window: 1440x880 was
+   one screenful and 1440x896 was a 780px page scroll. The ceiling had a job —
+   keeping the two asides from running past a shell that is exactly `100dvh` —
+   and expressing that job as a height condition is what made the cliff,
+   because the thing that actually breaks is the aside, not the height. Bound
+   the aside (the `.mg-side` rule at the end of this section) and the ceiling
+   has nothing left to hold up, so it goes. Measured with a coarse pointer and
+   both panels open, page scroll before -> after: 776 -> 0 at 1184x900, 652 ->
+   0 at 1280x1024, 780 -> 0 at 1440x896, 476 -> 0 at 1440x1200, 76 -> 0 at
+   1440x1600, and 0 -> 0 at 1280x800, 1280x880 and 1440x880. A 15x15 is wholly
+   in the first view at every one of them, and the settings sheet's Generate
+   button, which at 1184x900 sat at y 1445 of a 900px window — `visible: true`,
+   `insideApp: true`, `inViewportNow: false`, `reachByScrolling: false`, a
+   primary action that existed and could not be reached — is inside the
+   viewport at every one of them.
+
+   The ceiling's own cost, now that it is gone: at 1440x896, the window it used
+   to exclude, the band is at its most expensive. The pane falls 613 -> 490,
+   the cell 36 -> 28, and a 24x24 there pans in the block axis (pane 490
+   against a 706px stage). At 1440x1200 and 1440x1600 it costs nothing at all:
+   panes of 794 and 1194, `scrollHeight` equal to the pane at BOTH board sizes,
+   no pan, the cell 40px on 15x15. So the whole trade is confined to the
+   sixteen-pixel band the old cliff lived in.
+
+   What happens as the window keeps shortening is a gradient, not a cliff, and
+   it was measured rather than assumed. The pane is the leftover after the
+   chrome, and the chrome is about 320px: 298 of banner, status row, toolbar
+   and footer plus the app's own padding, and 54 of toolbar rather than 102 at
+   the widths where the toolbar fits one row. At 1280x600 and 1184x600 the
+   leftover is 194, the cell sits on its 24px floor, the pan arms, and the
+   board is whole — 124/124 runs, 300/300 runs — but the player is dragging it
+   through a 194px window, which is the honest limit of a 600px-tall app and
+   not a fault in the band. At 1184x600 a 24x24 also needs the inline axis
+   (pane 604 against a 688px board) and gets `data-pan-inline`, so the band
+   hands both pan axes back to a window that needs both. At 1440x400, which no
+   device this app is delivered on produces, the leftover is 42: the board
+   region is a letterbox, and it is still not broken — page scroll 0, every
+   control reachable, 124/124 runs drawn, `data-pan-block` armed. So there is
+   no height at which the band stops being correct; there is a height at which
+   a window is too short to be worth having, and that is a property of the
+   window.
 
    Three things this band deliberately does not do.
 
@@ -655,7 +705,7 @@
    section. `.tmp/style-check.mjs` section 15 is what keeps the four halves in
    one band — and in step — not this comment. */
 
-@media (pointer: coarse) and (width >= 74rem) and (height < 56rem) {
+@media (pointer: coarse) and (width >= 74rem) {
   .mg-app {
     block-size: 100dvh;
     grid-template-rows: auto minmax(0, 1fr) auto;
@@ -674,9 +724,12 @@
   }
 
   /* The tagline is the app describing itself in the least load-bearing type it
-     owns. In a window this short it is the first thing that goes: 18px of the
-     402px the chrome spends above the board. The wordmark beside it is the
-     identity and stays. */
+     owns, so it is the first thing that goes where the chrome and the board are
+     competing for one screenful: 18px of the 402px the chrome spends above the
+     board at 1280x800. The wordmark beside it is the identity and stays. The
+     band is not height-limited, so this is not a short-window trim either — it
+     is the same trade at 1440x1600, where the board would rather have the 18px
+     than the sentence. */
   .mg-banner__tagline {
     display: none;
   }
@@ -688,6 +741,26 @@
      forms.css's, which already floors it. */
   .mg-footer {
     padding: var(--sp-2) var(--sp-4);
+  }
+
+  /* The asides' bound, carried into the band rather than inherited from 6c.
+     `align-items: stretch` above makes the middle row a DEFINITE height, and an
+     aside that is taller than its row with `overflow: visible` does not shrink
+     and does not scroll: its content simply runs past the row and past the
+     app's own box, and since the app is exactly `100dvh` the page cannot scroll
+     to it. Measured before this rule, at 1184x900 with the ceiling dropped: the
+     settings sheet's Generate button sat at y 1445 of a 900px window, `visible:
+     true`, `insideApp: true`, `inViewportNow: false`, `reachByScrolling: false`
+     -- a primary action that exists and cannot be reached. This is the one thing
+     the band's height ceiling was silently holding up, which is why the ceiling
+     goes and this comes with it. `max-block-size` is kept for symmetry with 6c
+     and for the case where the content is shorter than the row; under
+     `align-items: stretch` the ROW is what actually binds. */
+  .mg-side {
+    max-block-size: calc(100dvh - var(--sp-4) - var(--sp-5));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    min-block-size: 0;
   }
 }
 

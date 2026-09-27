@@ -496,12 +496,123 @@
   background-color: var(--surface-1);
   border: var(--rule-w) solid var(--rule);
   border-radius: var(--radius-sharp);
+  /* The toolbar is its own container, because the boundary in 6a is a
+     property of the STRIP and not of the window: at 1184x900 the window is
+     1184px wide while the main column is 472 and the strip's own content box
+     436, so a viewport query would miss the case that needs it most.
+     `inline-size` only — not `size`, which would also contain the block axis,
+     and the strip's height is its content. Nothing sticky, positioned or
+     stacked lives inside the toolbar, so containment here cannot strand a
+     focus ring or trap the column rail's stickiness. */
+  container: toolbar / inline-size;
 }
 
 .mg-toolbar__group {
   display: inline-flex;
   flex-wrap: wrap;
   gap: var(--sp-1);
+}
+
+/* -----------------------------------------------------------------------------
+   6a. A narrow strip: 8px of pill padding, and what it was costing
+   -----------------------------------------------------------------------------
+   The strip is a flex line of pills that wraps, and it is the only place in
+   the app whose width a MAIN COLUMN decides rather than the window. Its
+   content box, measured with the coarse instrument the band is measured with
+   (so the app is exactly 100dvh, the page has no scrollbar, and no width is
+   given back to it):
+
+       277 at 360x800    329 at 412x915    436 at 1184x900
+       517 at 600x960    692 at 1280x800 and at 1440x896
+       852 at 1440x880   845 at 960x600    909 at 1024x768
+
+   The last two are the out-of-band widths, where the app is one column and the
+   page scrolls. 1184x900 is the widest window in that set and the narrowest
+   strip in it at the same time, because the >= 74rem template spends 640px on
+   two 20rem panels. A viewport query cannot make this cut; the strip can be
+   asked directly.
+
+   The two groups have a fixed arithmetic of their own, because every pill
+   carries `--sp-3` (12px) of padding either side of 13px type and the
+   toolbar's own column gap is `--sp-4` (16px). Measured untrimmed at
+   800x1280, where the strip is 683px and 6a is inert: the mode group is 195
+   and the zoom group 366, so one line takes 195 + 16 + 366 = 577. Trimmed
+   to `--sp-1` (4px) and measured again: 150 and 307, so one line takes
+   150 + 16 + 307 = 473. Every strip and group figure in this comment is a
+   rounded box and moves by up to 2px between runs of the same viewport, so
+   the gate is quoted to the pixel it is rather than to the pixel it was
+   measured at.
+
+   36rem is 576, and 576 is not a rounded guess: it is the measured width at
+   which the UNTRIMMED pair stops fitting on one line, which is 577 to the
+   pixel. So `(width < 36rem)` reaches that whole region and no part of the
+   one above it, and the 1px it leaves out is in the direction of trimming,
+   which cannot make a row taller. The region where trimming can turn two
+   lines into one is 473 <= strip < 577. Below 473, where neither pair fits,
+   the trim still buys the thing that matters most — a group wider than the
+   strip stops wrapping inside its own row slot.
+
+   Measured, coarse pointer, 15x15, the toolbar before -> after:
+
+       600x960  strip 517  3 rows 166 -> 114
+                the trimmed pair (473) fits where the untrimmed pair (577)
+                did not: the two groups now share one row
+
+      412x915  strip 329  3 rows 214 -> 166
+                the zoom group stops wrapping inside its own row slot,
+                329x92 -> 307x44; still three rows, and three is the honest
+                count there
+
+       360x800  strip 277  3 rows 214 -> 214  UNCHANGED
+                473 > 277, so six pills still cannot take one line at a
+                360px window, and they keep their air rather than going to
+                the border
+
+      1184x900  strip 436  3 rows 150 -> 150  UNCHANGED
+                the trim reaches this width and cannot finish the job,
+                473 > 436. The number is the point, not the failure.
+
+   1280x800, 1440x896, 1440x880, 1024x768 and 960x600 are untouched, by the
+   boundary: at 692 and above, the untrimmed pair already shares its row.
+
+   Where the untrimmed arithmetic loses, it loses twice, and the second loss
+   is the expensive one. A group wider than the strip does not become one
+   clipped row, it WRAPS INSIDE ITS OWN ROW SLOT: 92px of box for a row of
+   44px, and the other 48px of nothing. Measured before the trim, the zoom
+   group at 412x915 was 329x92 inside a 355px toolbar, and at 360x800 it was
+   277x92 inside a 303px one. That is a bug rather than a layout, and at
+   412x915 the cause is the padding, which is air: a 44px target is 44px
+   TALL, and 8 of those 44 are padding, so 6a closes the wrap there (307 in a
+   327 strip). At 360x800 it does not close, and the comment would be lying
+   if it said it did: the zoom group's own width is 307 against a 275 strip,
+   so it still wraps at 92px. Zero padding would reach one row (measured 328
+   against a 327 strip, which is not one row but a rounding accident) and the
+   pills would touch, so 3 rows of air at that width is the answer this sheet
+   gives rather than the answer it manufactures.
+
+   So the trim buys 52px at 600x960 and 48px at 412x915, and nothing anywhere
+   else. That is a small win and it is stated in full, because a comment that
+   listed only the widths it improved would be a comment about a different
+   sheet.
+
+   Nothing is hidden. The pills are their own labels — each button's text is
+   the mode name or the zoom step, and each group's name comes from
+   `aria-label` on the `role="radiogroup"` — so trimming padding costs no name
+   and hides no control. The finger switch keeps its label: it is a checkbox,
+   not a pill, and it is not in this rule.
+
+   The rule is not gated on a pointer, and that was checked with a mouse
+   rather than assumed: at 600x960 a fine pointer has the same 517px of
+   strip, its untrimmed pair is 195 + 16 + 363 = 574 and its trimmed pair
+   147 + 16 + 273 = 436, the two groups share a row, and the toolbar is two
+   rows at 90px rather than 114px. The arithmetic is the arithmetic either
+   way. */
+
+@container toolbar (width < 36rem) {
+  .mg-toolbar__mode,
+  .mg-toolbar__zoom {
+    padding-inline: var(--sp-1);
+  }
 }
 
 .mg-toolbar__mode[aria-checked='true'],
@@ -602,30 +713,6 @@
 }
 
 /* -----------------------------------------------------------------------------
-   8a. Short landscape on a touch device: the toolbar's own air
-   -----------------------------------------------------------------------------
-   The band's argument is layout.css section 6d; this is the one piece of it
-   that lands on a control strip rather than on the shell. The toolbar is the
-   third-largest thing above the board (measured 114px at 1280x800, after the
-   banner's 100 and the app's own padding), and it cannot give up a ROW: its
-   content is 837px of pills — the mode group, the six zoom steps, the finger
-   switch and Generate — against a 676px inner strip, so it wraps to two and
-   every step's `min-block-size` is 44px, which is the target itself, not air
-   above it. What is air is the frame and the gap between the two rows, and
-   that is what this trims: `--sp-2`/`--sp-3` of padding to `--sp-1`/`--sp-2`
-   and an 8px row gap to 4px, so the strip keeps a 1px border and two 44px
-   rows of control with a 4px frame around them and nothing else. Measured
-   114px -> 102px at 1280x800; see section 6d for what the band buys with it
-   and what it costs. */
-
-@media (pointer: coarse) and (width >= 74rem) and (height < 56rem) {
-  .mg-toolbar {
-    padding: var(--sp-1) var(--sp-2);
-    row-gap: var(--sp-1);
-  }
-}
-
-/* -----------------------------------------------------------------------------
    8. Pointer-size targets
    One block, one decision. Everything above targets a fine pointer by default
    and everything here raises it for a coarse one, so the desktop design is never
@@ -686,6 +773,43 @@
     min-block-size: var(--target-touch);
   }
 }
+
+/* -----------------------------------------------------------------------------
+   8a. The toolbar's own air, in a one-screenful app
+   -----------------------------------------------------------------------------
+   The band's argument is layout.css section 6d; this is the one piece of it
+   that lands on a control strip rather than on the shell. The toolbar is the
+   third-largest thing above the board (measured 114px at 1280x800, after the
+   banner's 100 and the app's own padding), and it cannot give up a ROW: its
+   content is 837px of pills — the mode group, the six zoom steps, the finger
+   switch and Generate — against a 676px inner strip, so it wraps to two and
+   every step's `min-block-size` is 44px, which is the target itself, not air
+   above it. What is air is the frame and the gap between the two rows, and
+   that is what this trims: `--sp-2`/`--sp-3` of padding to `--sp-1`/`--sp-2`
+   and an 8px row gap to 4px, so the strip keeps a 1px border and two 44px
+   rows of control with a 4px frame around them and nothing else. Measured
+   114px -> 102px at 1280x800; see section 6d for what the band buys with it
+   and what it costs.
+
+   This block used to sit ABOVE section 8, which was a trap waiting for the
+   next person: 8 is `(pointer: coarse)` and owns `.mg-toolbar__mode` and
+   friends, so a future line in 8 that set `.mg-toolbar` padding would win on
+   source order and this band would silently stop trimming anything. It is below
+   8 for that reason, and it keeps the number — 8a after 8 reads as a child of
+   8, which is what it is. */
+
+@media (pointer: coarse) and (width >= 74rem) {
+  .mg-toolbar {
+    padding: var(--sp-1) var(--sp-2);
+    row-gap: var(--sp-1);
+  }
+}
+
+/* The pill trim is NOT repeated here, and that is deliberate: it is 6a's, and 6a
+   is a container query because what decides it is the width of the strip. This
+   band is on at 1184x900 where the strip is 436px, so 6a reaches this toolbar —
+   and 6a also reaches 1024x768 (909px of strip) with no band existing at all. */
+
 
 /* -----------------------------------------------------------------------------
    9. A class the component uses and no other file defines
