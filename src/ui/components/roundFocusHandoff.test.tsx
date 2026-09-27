@@ -163,6 +163,8 @@ function paintSettings(draft: SettingsDraft): void {
         generating={false}
         onChange={noop}
         onGenerate={noop}
+        hints={false}
+        onHintsChange={noop}
         onDefaults={noop}
         onNewSeed={noop}
       />,

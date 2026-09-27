@@ -2,7 +2,7 @@ import { MAX_BOARD_SIDE, MIN_BOARD_SIDE } from '../../domain/board'
 import { DIFFICULTY_BANDS } from '../../engine/solver/difficulty'
 import { interpolate, type Copy } from '../copy'
 import type { DraftValidation, SettingsDraft } from '../gameStore'
-import { DifficultySelect, NumberField, RangeField } from './primitives'
+import { DifficultySelect, NumberField, RangeField, ToggleField } from './primitives'
 
 /**
  * The settings panel, in the left aside.
@@ -25,6 +25,9 @@ export interface SettingsPanelProps {
   readonly onGenerate: () => void
   readonly onDefaults: () => void
   readonly onNewSeed: () => void
+  /** The hint layer's on/off state, a preference and not part of the draft. */
+  readonly hints: boolean
+  readonly onHintsChange: (next: boolean) => void
 }
 
 export function SettingsPanel({
@@ -37,6 +40,8 @@ export function SettingsPanel({
   onGenerate,
   onDefaults,
   onNewSeed,
+  hints,
+  onHintsChange,
 }: SettingsPanelProps) {
   const invalid = validation.error !== null
   return (
@@ -159,6 +164,12 @@ export function SettingsPanel({
           }}
         />
         {invalid ? <DraftWarning t={t} message={validation.error} /> : null}
+        <HintsToggle
+          t={t}
+          id={`${id}-hints`}
+          enabled={hints}
+          onChange={onHintsChange}
+        />
         <FormActions
           t={t}
           generating={generating}
@@ -167,6 +178,45 @@ export function SettingsPanel({
         />
       </form>
     </section>
+  )
+}
+
+/**
+ * The hints switch.
+ *
+ * It lives in the settings form rather than the board toolbar because it is a
+ * *preference*, exactly like the theme and the locale: it survives a reload, it is
+ * never part of the draft that the generator reads, and turning it on mid-round
+ * must not disturb the round. `useStoredFlag` in `preferences.ts` owns the storage;
+ * this component only binds it to the field and re-renders.
+ *
+ * It is deliberately NOT part of `SettingsDraft`. A draft describes the board to
+ * print, and this switch does not change what gets printed — it changes what the
+ * player is shown while playing it. Bundling the two would make the switch a
+ * generation setting, and the seed the player typed would then be reprinted
+ * whenever they toggled a hint.
+ */
+function HintsToggle({
+  t,
+  id,
+  enabled,
+  onChange,
+}: {
+  readonly t: Copy
+  readonly id: string
+  readonly enabled: boolean
+  readonly onChange: (next: boolean) => void
+}) {
+  return (
+    <div className="mg-form__preference" data-testid="hints-toggle">
+      <ToggleField
+        id={id}
+        label={t.settings.hints.label}
+        checked={enabled}
+        hint={t.settings.hints.hint}
+        onChange={onChange}
+      />
+    </div>
   )
 }
 

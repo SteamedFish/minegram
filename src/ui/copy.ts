@@ -56,6 +56,7 @@ const en = {
     fingerMarking: 'minegram.fingerMarking',
     panelSettings: 'minegram.panel.settings',
     panelLegend: 'minegram.panel.legend',
+    hints: 'minegram.hints',
   },
 
   status: {
@@ -252,6 +253,10 @@ const en = {
     initialScore: {
       label: 'Initial score',
       hint: 'Each wrong claim costs one point. At zero the round ends.',
+    },
+    hints: {
+      label: 'Hints',
+      hint: 'Off by default. On: a run lights up as soon as its mines are marked, and a finished line takes a tick. Off: you get the numbers and your own marks, nothing else. Turning it on mid-round does not cost a point.',
     },
     units: {
       percent: '%',
@@ -695,6 +700,7 @@ export const zhCN: Partial<Copy> = {
     fingerMarking: 'minegram.fingerMarking',
     panelSettings: 'minegram.panel.settings',
     panelLegend: 'minegram.panel.legend',
+    hints: 'minegram.hints',
   },
 
   status: {
@@ -890,6 +896,10 @@ export const zhCN: Partial<Copy> = {
     initialScore: {
       label: '初始分数',
       hint: '每标错一格扣一分。分数归零时本局结束。',
+    },
+    hints: {
+      label: '提示',
+      hint: '默认关闭。开启：某串地雷全部标出时对应数字立即高亮，整行或整列完成后打上对勾。关闭：只看数字和你自己的标记，不给任何额外信息。游戏中随时切换不会扣分。',
     },
     units: {
       percent: '%',

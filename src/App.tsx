@@ -82,6 +82,12 @@ export function App() {
      Generate and only on Generate, so there is no editability gate to own. */
   const [settingsPanelOpen, setSettingsPanelOpen] = useStoredFlag(t.storage.panelSettings, true)
   const [legendPanelOpen, setLegendPanelOpen] = useStoredFlag(t.storage.panelLegend, true)
+  /* The hint layer is OFF by default. The player asked for it that way: the numbers
+   * and their own marks are the game, and a run that lights itself up is an answer
+   * handed over. Toggling it changes nothing about the round, so it is a stored
+   * preference and never a generation setting — the seed the player typed must not
+   * be reprinted because they switched a hint on. */
+  const [hints, setHints] = useStoredFlag(t.storage.hints, false)
 
   // The draft is seeded once, from what the store is actually running, and then left
   // alone: re-seeding it on every snapshot would erase half-typed input. The draft and
@@ -190,6 +196,8 @@ export function App() {
           onGenerate={generate}
           onDefaults={resetDraft}
           onNewSeed={deriveSeed}
+          hints={hints}
+          onHintsChange={setHints}
         />
       </aside>
       <main className="mg-main">
