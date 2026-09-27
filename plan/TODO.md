@@ -119,7 +119,54 @@ ruling in `AGENTS.md` so a later reader does not re-derive it.
 - [x] **Deployed and re-verified against the live artifact, not a local build.** master fast-forwarded `858c28a` → `bb519a8` in 5 signed commits and pushed; the live site began serving `index-u-gZN2qk.js`, which is the exact build verified locally. Re-run against `https://steamedfish.github.io/minegram/`: the hint gate is 4/4 in both themes (off → `glyphs ["",""]`, `onGround: transparent`, 0 numerals filled; on → `["✓","✓"]` filled), and the core win contract holds — a probe that marks **only** the mines, solving every clue from the DOM, finishes with `failed: []`, `skipped: []`, `consoleErrors: []`, `exitCode: 0`. No 404s, no exceptions.
 - [x] ~~Withhold the ✓ when the layer is off~~ — **wrong, shipped, and corrected by the player. Read this entry as a record of the error, not as a decision.** I gated the ✓ and the run numeral's on-state behind `minegram.hints`, reasoning that the layer was "the display of deduced progress" and that an off switch that left the loudest cue standing had "relocated the complaint rather than answered it". The player answered: "你错误理解了我的意思。一个雷区完成标记之后，对应数字高亮，这是必须要做的，不属于提示。但是 虚框提示，也就是图例里面的 矛盾提示 格虚线边框加叉号 / 进度未解 提示格点线边框加问号 应该默认关闭." The layer is **exactly the two dashed/dotted annotations**, named in the legend's own words — 矛盾提示 (✕) and 进度未解 (?). The complete-run numeral highlight and the line's ✓ are 必须做的, and the fact I had already recorded myself, that a clue numeral "cannot be off" because turning it off makes the game unplayable, was the whole answer sitting in `AGENTS.md` while I widened the gate past it anyway. So the React-level withhold technique is kept and pointed at the other two marks: a committed vitest test cannot observe `display: none` in jsdom, so a CSS-only switch could only ever be checked by an uncommitted probe, and a switch whose removal cannot be asserted is a switch nobody will believe. What changed is *which* switch is in React. The `aria-label` stays unconditional in both phases — it is the only channel of state a screen reader has, and gating it would delete information rather than present it differently. `BoardSurface.test.tsx` now pins all four phases (off/on × the glyphs present), so a gate that grows again fails a test instead of needing someone to notice.
 
+## Player-reported fixes — round 4
+
+Two reports, both about the clue rails, and the first one is a question rather
+than a complaint: 「段落位置已定 这个应该也属于提示？」 and 「数字实在太小了，放大游戏
+区域不放大数字格子，数字很难看清」.
+
+- [x] **Rule on the layer's membership, from the code rather than from the word.**
+  Answer: yes, the open run's position tape belongs to the layer. The
+  ground is `RunGuides` in `src/ui/components/BoardSurface.tsx` — it returns
+  `null` unless `run.invariant`, and only then paints `data-run="tape"`, so the
+  tape says *the solution pinned this run's window*, which the player has not
+  done and cannot see. The **closed** run's tape, the filled numeral and the line's
+  ✓ are keyed off `run.complete`, which is derived from the player's own marks, so
+  they stay 必须做的. The layer is therefore the annotations keyed off **machine
+  inference**, and the membership test for any future candidate is: name what the
+  machine deduced, or name what the player finished. Recorded as a ruling in
+  `AGENTS.md`. Note the previous grounding — the word 提示 occurring in exactly two
+  legend cues — reached the right answer for the wrong reason and would have kept
+  the tape outside the layer permanently; see the lesson below.
+- [ ] Gate the position tape behind `data-hints`, in React. `RunGuides` takes
+  `hints` and renders nothing for an open run at off, while a complete run renders
+  at both settings. React rather than CSS because a committed vitest test cannot
+  observe `display: none` in jsdom, so a CSS-only switch ships unguarded — and this
+  is the standing residual on this project. `runTape` joins the legend's gated set
+  so its row carries the 提示 pill; the legend swatch itself keeps the true form,
+  because a key must teach the shape.
+- [ ] **Make the rail numerals scale with the board.** 「数字太小」. `--rail-num` is a
+  flat `10px` **by design**, and the recorded reason is that a flat value "closes
+  the fit loop on paper" so the host's fit measure cannot chase its own output
+  (`tokens.css`, the `--rail-num` block). That is a convenience, not a proven
+  necessity: `--cell` is `clamp(--cell-min, floor((scrollerInline - --rail-col) /
+  cols), --cell-max)`, `--rail-col` grows ≈0.6px per px of cell, so the map's slope
+  is ≈ −0.6/cols and a bounded fixed point exists. Scale `--rail-num` under a hard
+  upper clamp (so the rail cost has a constant ceiling and the fixed point is
+  provably reachable) and make the fit measure iterate to a verified stable cell.
+  The trap to close rather than repeat: `--rail-digit: 6.2px` is a **measured**
+  constant, 0.62em at 10px. Scale `--rail-num` and leave `--rail-digit` alone and
+  the budget under-counts the ink — and because the row rail is `flex-end`, all the
+  slack sits in FRONT of the first numeral, the one the player reads first and the
+  one `overflow: hidden` kills first. `--rail-digit` must become a function of
+  `--rail-num` and the 0.2px margin must be re-derived AT THE NEW SIZE. Re-measure
+  the worst case (24×24, a hand-built 12-single-digit-run clue) in a real browser in
+  both themes and report the first numeral's clearance in px; the current figure is
+  2.38px, and 6.0px leaves exactly 0.00px.
+
 ## Lessons
+
+- **The rule that decides a membership question must be a fact about the CODE, not a fact about the WORD the player used — and the two are not substitutes.** Round 3 grounded the hint layer on the word 提示 occurring in exactly two legend cues, and that grounding was correct about those two and silent about everything else. It was a *search* result, not a *rule*: it could enumerate what already matched and had no way to say what else belonged. Round 4 the player asked whether 段落位置已定 was a 提示 too, and under the search-result reading the honest answer would have been "no, the word is not there" — while the right answer was yes, because `RunGuides` returns `null` unless `run.invariant`, so that tape reports a deduction the solution made and the player did not. The generalisable form: **quote the artifact to find the candidates, then apply a code-grounded test to each one.** A word tells you what the player is pointing at; it cannot tell you where the boundary is. Here the boundary is inference versus acknowledgement — name what the machine deduced, or name what the player finished — and that cut is legible in the components, survives a new candidate appearing, and would have answered the player's question before it was asked. The corollary is about my own record-keeping: the round-3 entry in this file still reads as a completed justification, and a completed justification is exactly what stops the next question from being asked properly. Record the *rule* a decision was reached by, not only the decision.
 
 - **A probe that cannot reach the server will report a product defect that does not exist.** `vite preview` bound `[::1]:4173` only, so every probe's hardcoded `http://127.0.0.1:4173/minegram/` got a connection-refused page. The failure was invisible because `document.readyState === 'complete'` is just as true on `chrome-error://chromewebdata/` as on `about:blank` — the probe's readiness wait passed instantly on an error page, then timed out sixty seconds later waiting for a board that was never on screen. Two probes failed this way and neither failure was a product bug. The two defences: have a probe **print the URL it actually landed on** and assert the origin, and never treat a `waitFor` timeout as a defect until `location.href` has been read. Always drive the app at `localhost`, never `127.0.0.1`.
 - **A measurement that cannot fail is not evidence, and it will look like evidence for months.** I closed the `Cannot update a component` item partly on "0 occurrences in the production bundle". That check is a tautology: the production build of `react-dom` strips the warning string, so the count is necessarily 0 and the check cannot fail. The gate caught it by counting the string in each `react-dom-client` build. A result that is zero because the thing cannot appear is not a refutation. Before recording any count as proof, ask what would make it non-zero — and if the answer is "nothing in this configuration ever could", say so instead of claiming the result.
