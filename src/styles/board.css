@@ -17,9 +17,12 @@
      board row, is what makes §1.7's "minimum target size is guaranteed
      structurally" true. A 30x30 board is 1200px wide and scrolls; it is never
      squeezed, because a grid track cannot be squeezed below its own min.
-   * `--cell`, `--cols`, `--rows` and `--rail-col` are set inline on the STAGE by
+   * `--cell`, `--cols`, `--rows` and `--rail-slots` are set inline on the STAGE by
      the host, so the stage is the only place that reads them, and the rows read
-     them by inheritance. There is no per-cell exception to keep in sync.
+     them by inheritance. There is no per-cell exception to keep in sync. The row
+     rail's track is NOT one of them: it is `max-content`, sized by the browser
+     from the widest row clue in the round, so a row clue is one unbroken line of
+     runs and no run is ever truncated to fit a guessed width.
    * A revealed line is drawn from the line's OWN container, never from a rail
      cell. §5.4 wants a tint and an edge across a whole line, and a rail cell can
      only ever say something about itself: a tint declared on one does not reach
@@ -115,7 +118,7 @@
      `minmax()` track absorbs no free space, so every row collapsed to the
      24px floor and the rows overlapped each other. `var(--cell)` is the same
      number the stage resolves, by construction, with no growth phase. */
-  grid-template-columns: var(--rail-col) repeat(var(--cols), var(--cell));
+  grid-template-columns: max-content repeat(var(--cols), var(--cell));
   /* The row template is stated outright even though the rows are auto-placed.
      It costs nothing to place them by column, and it buys §6 the two fixed lines
      it needs to hang a column strip between (`2 / -1` is the first cell row down

@@ -46,8 +46,11 @@ import { BoardEmptyState } from './BoardEmptyState'
  *
  * ─── Why nothing is measured for alignment ───────────────────────────────────────────
  * The stage and every row declare the identical `grid-template-columns`
- * (`--rail-col`, then `--cols` × `--cell`), so cell *i* sits in the same column of
- * every row by arithmetic alone. `display: contents` would have been the shorter way
+ * (a `max-content` rail track, then `--cols` × `--cell`), so cell *i* sits in the
+ * same column of every row by arithmetic alone. The rail track is `max-content`
+ * because a row clue is one unbroken line of runs: the widest row clue in the
+ * round sets the track, so every run of every row is always fully rendered and
+ * nothing is ever truncated. `display: contents` would have been the shorter way
  * to make a row of cells, but it strips `role="row"` out of the accessibility tree,
  * so the rows stay real elements and each one repeats the template.
  *
@@ -114,6 +117,23 @@ export function BoardSurface(props: BoardSurfaceProps) {
   const columns = board?.columns ?? 0
   const rows = board?.rows ?? 0
   const grid = useMemo(() => groupRows(board), [board])
+
+  // The column rail's band is sized from the round's own longest column clue, so
+  // a rail never truncates a run: the band always has exactly one slot per run of
+  // the worst column, and shorter columns leave their slack at the bottom. The
+  // clue is right there on every LineProgress — no cap is ever guessed. The floor
+  // of 2 keeps the header from collapsing to a sliver on a board whose columns
+  // are all one run (or empty).
+  const railSlots = useMemo(() => {
+    if (board === null) {
+      return 2
+    }
+    let longest = 0
+    for (const line of board.columnProgress) {
+      longest = Math.max(longest, line.clue.length)
+    }
+    return Math.max(2, longest)
+  }, [board])
 
   // The ports read live values through a ref, so the controller is built once and
   // never rebuilt when a snapshot arrives.
@@ -246,12 +266,13 @@ export function BoardSurface(props: BoardSurfaceProps) {
     landing.current?.focus({ preventScroll: true })
   }, [round])
 
+  // `isFit` names the one zoom fact the fit effect depends on (see its deps).
+  const isFit = props.zoom === 'fit'
   useEffect(() => {
     const node = scroll.current
     if (node === null || typeof ResizeObserver === 'undefined' || columns === 0) {
       return
-    }
-    const measure = (): void => {
+    }    const measure = (): void => {
       // The rail costs the pane a COLUMN on the inline axis and a BAND on the block
       // axis, and both come off before the cells divide what is left. Reading them off
       // the corner cell — which spans exactly the band — keeps the two axes symmetric
@@ -292,7 +313,15 @@ export function BoardSurface(props: BoardSurfaceProps) {
     return () => {
       observer.disconnect()
     }
-  }, [columns, rows])
+    // `round` and the fit switch are deps because the rail's two costs are not
+    // constants: a new round brings new clues (a different content-sized rail
+    // track and a different band), and the corner is only read at fire time, so
+    // without re-running here the fit would be solved against the PREVIOUS
+    // round's rail. `fitCell` itself is deliberately NOT a dep: it is the
+    // effect's own output, and depending on it would let a numeral-size change
+    // feed the corner back into the measure as a render loop. The observer
+    // watches the pane only, so a content change never re-fires it.
+  }, [columns, rows, round, isFit])
 
   function moveTo(next: number): void {
     const bounded = Math.max(0, Math.min(columns * rows - 1, next))
@@ -410,7 +439,11 @@ export function BoardSurface(props: BoardSurfaceProps) {
                 '--cols': String(columns),
                 '--rows': String(rows),
                 '--cell': cellSize,
-                '--rail-col': 'max(4.5ch, calc(var(--cell) * 1.7))',
+                // The band's run capacity, from the round's own longest column
+                // clue — see `railSlots` above. The row rail needs no inline
+                // value at all: its track is `max-content`, so the browser sizes
+                // it from the real glyphs and a row clue is never truncated.
+                '--rail-slots': String(railSlots),
               } as CSSProperties
             }
             onPointerDown={(event) => {
