@@ -15,16 +15,22 @@ import { DEFAULT_LOCALE, getCopy } from '../copy'
  * stylesheet, and visible only here and in a screenshot. So the assertions are on
  * the children the board renders, in the order the board renders them.
  *
- * Three things are proved:
+ * Four things are proved:
  *
  *   1. every rail swatch that claims a line state carries the board's own glyph span,
- *      with the character that state draws, and the span is the FIRST child, because
- *      ClueCell's is. A legend that taught the edge without the bar is the defect.
+ *      with the character that state draws, and the span is the first child — none of
+ *      those three entries carries a tape, and ClueCell's first child is the glyph. A
+ *      legend that taught the edge without the bar is the defect.
  *   2. the two hint-layer entries say so, with the switch's own label, and the other
  *      ten do not. A gate that grows is a bug: the run highlight and the line's ✓ are
  *      the acknowledgement of the player's marking, not hints.
  *   3. the swatch is hidden from assistive technology, so the literal `3 ✕` is not
  *      read out as a fourth sentence beside an entry that already has two.
+ *   4. the CLOSED run's tape — the one tape the board paints at BOTH settings — is
+ *      keyed on the entry that already names the closed run, in the form the board
+ *      paints (`data-run="complete"`), and on no other entry. It is the shape a
+ *      2px confirm line on the board has to come from, and `runTape`'s pill saying
+ *      提示 beside a solid line is the vocabulary the key used to get wrong.
  */
 
 const RAIL_GLYPHS: ReadonlyArray<readonly [string, string, string, string]> = [
@@ -84,7 +90,10 @@ describe('Legend', () => {
       const swatch = item(entry).querySelector<HTMLElement>('.mg-legend__swatch.mg-rail-cell')
       expect(swatch).not.toBeNull()
       expect(swatch?.getAttribute('data-line-state')).toBe(state)
-      /* Same children as ClueCell, in the same order: the glyph span, then the clue. */
+      /* The glyph first, then the clue — ClueCell's order, and the whole child list
+         for these three: they assert an OPEN run, whose tape is the gated shape and
+         has a row of its own. `runComplete` carries the closed tape and is checked
+         separately, because a swatch's first child is a claim about that too. */
       expect(swatch?.firstElementChild?.className).toBe('mg-rail-cell__glyph')
       expect(swatch?.querySelector('.mg-rail-cell__glyph')?.textContent).toBe(glyph)
       expect(swatch?.querySelector('.mg-rail-cell__clue')).not.toBeNull()
@@ -96,11 +105,59 @@ describe('Legend', () => {
 
   it('renders the glyph span even where the entry asserts a run and not a line', () => {
     const swatch = item('runComplete').querySelector<HTMLElement>('.mg-legend__swatch.mg-rail-cell')
-    expect(swatch?.firstElementChild?.className).toBe('mg-rail-cell__glyph')
-    /* Empty, because the board's is empty here: the strip is what clues.css fills, and
-       a missing span would leave the entry unable to show a strip at all. */
+    /* Deliberately not "the first child": this swatch also carries the closed run's
+       tape, which comes first. What this test is about is the SPAN — a missing span
+       would leave the entry unable to fill the strip clues.css paints for it. */
+    expect(swatch?.querySelector('.mg-rail-cell__glyph')).not.toBeNull()
+    /* Empty, because the board's is empty here: the strip is what clues.css fills. */
     expect(swatch?.querySelector('.mg-rail-cell__glyph')?.textContent).toBe('')
     expect(swatch?.hasAttribute('data-line-state')).toBe(false)
+  })
+
+  /* The closed run's tape is a second mark of the fact `runComplete` already names —
+     the board's own cue calls it 「该段下方为实线下划线」 — so it is a CHILD of that
+     swatch and not a thirteenth row. The order is a reading order: the tape is the
+     underline the board draws, the numeral is what sits in the rail, and the player
+     meets the underline first. It is not a paint order — the tape is absolutely
+     positioned and out of flow, so it paints above the in-flow children either way. */
+  it('keys the CLOSED run\'s tape on the entry that owns it, first in the swatch, in the board\'s own form', () => {
+    const swatch = item('runComplete').querySelector<HTMLElement>('.mg-legend__swatch.mg-rail-cell')
+    expect(swatch).not.toBeNull()
+    const tape = swatch?.querySelector<HTMLElement>('.mg-run-tape') ?? null
+    expect(tape).not.toBeNull()
+    /* `complete`, never `tape`: the open form is the gated shape, and this entry is
+       not a hint. Getting this backwards is the failure the gate named. */
+    expect(tape?.getAttribute('data-run')).toBe('complete')
+    /* The same two attributes `runTape`'s tape carries, minus the orientation a
+       legend tape cannot own. */
+    expect(tape?.getAttribute('data-cap')).toBe('only')
+    expect(tape?.hasAttribute('data-orientation')).toBe(false)
+    /* Tape, glyph, clue. */
+    expect(swatch?.firstElementChild).toBe(tape)
+    expect(swatch?.children[1]?.className).toBe('mg-rail-cell__glyph')
+    expect(swatch?.children[2]?.className).toBe('mg-rail-cell__clue')
+    /* One tape, so the shape is not printed twice. */
+    expect(swatch?.querySelectorAll('.mg-run-tape')).toHaveLength(1)
+  })
+
+  /* The cut that decides the layer: `run.complete` is derived from the PLAYER's marks
+     and `run.invariant` from the solution, and only the second is the machine talking.
+     `RunGuides` therefore returns the closed tape at `hints === false`, so the key has
+     to place it on an UNGATED entry — and to place the open one, and only the open one,
+     on the gated row. */
+  it('puts the closed tape on no other entry, the open tape on no other entry, and no gate on the run', () => {
+    const carriers = (run: string): (string | null)[] =>
+      legendItems()
+        .filter((entry) => entry.querySelector(`.mg-run-tape[data-run=${run}]`) !== null)
+        .map((entry) => entry.getAttribute('data-legend'))
+    expect(carriers('complete')).toEqual(['runComplete'])
+    expect(carriers('tape')).toEqual(['runTape'])
+    /* Not a hint: no pill, and no gate attribute. */
+    expect(item('runComplete').hasAttribute('data-legend-gate')).toBe(false)
+    expect(item('runComplete').querySelector('.mg-legend__gate')).toBeNull()
+    /* And there is no switch to turn inside the legend at all — `data-hints` belongs
+       to the stage, and a legend that grew its own would be a second way to say it. */
+    expect(container.querySelector('[data-hints]')).toBeNull()
   })
 
   it('hides the swatch from assistive technology', () => {

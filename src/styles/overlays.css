@@ -638,6 +638,18 @@
   border-block-end: var(--clue-run-underline);
 }
 
+/* The rule above is the OPEN form and it is unconditional, so a CLOSED tape inside a
+   swatch would print it too — which is the one thing a legend must not do: the open
+   tape is a hint entry and carries the 提示 pill, and a solid confirm line is not a
+   hint. The closed form is the board's own token rather than a legend's idea of one,
+   so the two cannot drift apart again. `data-cap="only"` rounds the ends on the board
+   through a rule that needs `data-orientation`, which a legend tape does not carry; the
+   open tape beside it is square for the same reason, so the pair is consistent, and the
+   join of the segments is not something a 26px square could show anyway. */
+.mg-legend__swatch .mg-run-tape[data-run='complete'] {
+  border-block-end: var(--clue-run-underline-complete);
+}
+
 /* -----------------------------------------------------------------------------
    8. The header's readouts — the chip row and the score
    The banner's frame is layout.css; these are the two things inside it that

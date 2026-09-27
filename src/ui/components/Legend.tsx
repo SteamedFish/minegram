@@ -57,9 +57,15 @@ const ENTRIES = [
    rather than only a test's expectation — the test asserts this set exactly.
 
    `runTape` here is the swatch for the OPEN run's tape, `data-run="tape"`, which
-   is the same element `RunGuides` renders. The closed run's tape is not a legend
-   entry of its own; it is part of `runComplete`'s swatch, because that is the one
-   the player sees on a finished run and the one that must never be switched off. */
+   is the same element `RunGuides` renders. The CLOSED run's tape is not a legend
+   entry of its own, and it is not missing from the key either: it is the first
+   child of `runComplete`'s swatch, `data-run="complete"`, the same element the
+   board renders. It is keyed there rather than given a row because it is a second
+   mark of the SAME fact the entry already names — the board's cue calls it
+   「该段下方为实线下划线」 / "a solid underline under the run" — and a key that
+   spent a second row on the underline of the thing in the row above would read as
+   though the two were separable. It is drawn in `RailSwatch`, which is where a rail
+   cell's children are assembled; the gate itself lives in `RunGuides`. */
 const HINT_GATED: ReadonlySet<string> = new Set(['contradiction', 'unresolved', 'runTape'])
 
 export function Legend({ t }: LegendProps) {
@@ -118,9 +124,14 @@ function LegendSwatch({ entry }: { readonly entry: (typeof ENTRIES)[number] }) {
         </span>
       )
     case 'runComplete':
-      /* The run completion signal lives ON the numeral now, so the swatch is a
-         rail cell carrying one closed run — the same attributes ClueCell renders. */
-      return <RailSwatch />
+      /* The run completion signal lives ON the numeral, so the swatch is a rail cell
+         carrying one closed run — the same attributes ClueCell renders. It also
+         carries the CLOSED TAPE, which is the other mark a finished run draws: the
+         board paints it under the run's cells, and a legend that showed only the
+         numeral would leave a 2px confirm line on the board that no key explains. It
+         is `complete`, never `tape`, because the OPEN form is the gated shape and
+         this entry is not a hint. */
+      return <RailSwatch tape="complete" />
     case 'lineComplete':
       return <RailSwatch lineState="complete" glyph="✓" />
     case 'contradiction':
@@ -137,14 +148,32 @@ function LegendSwatch({ entry }: { readonly entry: (typeof ENTRIES)[number] }) {
 }
 
 /**
- * One rail clue, built from the SAME children `ClueCell` builds, in the same order:
- * the glyph span first, then the clue, one run, one numeral. The glyph is empty for
- * `runComplete`, which asserts a run and not a line state — the span is still
- * rendered, because on the board it is always rendered and that is what lets
- * clues.css fill its strip.
+ * One rail clue, built from the SAME children `ClueCell` builds: the glyph span, then
+ * the clue, one run, one numeral. The glyph is empty for `runComplete`, which asserts
+ * a run and not a line state — the span is still rendered, because on the board it is
+ * always rendered and that is what lets clues.css fill its strip.
+ *
+ * `tape` adds a child `ClueCell` does NOT have, and the asymmetry is the point. On the
+ * board the closed run's tape is drawn by `RunGuides`, INSIDE a board cell and not
+ * inside a rail cell at all; a legend swatch is a rail cell, so the tape is rendered
+ * as its first child — the same element, the same class, the same `data-run` value the
+ * board renders for a closed run, and nothing else. It is first because it is the
+ * underline the board draws: reading the DOM, the mark that sits under the run comes
+ * before the numeral that sits in the rail, which is the order a player meets them in.
+ * It is not first for painting — the tape is absolutely positioned and out of flow, so
+ * it paints above the in-flow children whichever way round the source is.
+ *
+ * The type admits ONLY `'complete'`. The open tape is the gated shape and it has its
+ * own entry with a cell-shaped swatch, so there is no reading of this component that
+ * wants it; a union would let a future entry print a 1px dotted line on a rail swatch
+ * at `hints=off` with nothing in the key saying it is a hint.
  *
  * `runState` defaults to `complete`, because three of the four rail entries are about
  * a finished run; the two annotations pass `open` themselves.
+ *
+ * No `data-orientation`, following `runTape`'s tape: overlays.css gives a legend tape
+ * its own edge rule because board.css's two orientation rules are keyed on that
+ * attribute, and a square has no sides to be wrong about.
  *
  * The whole swatch is `aria-hidden`, where the board hides only the glyph and the
  * clue: a rail cell on the board carries an `aria-label` that spells the state, so
@@ -156,10 +185,13 @@ function RailSwatch({
   lineState,
   runState = 'complete',
   glyph = '',
+  tape,
 }: {
   readonly lineState?: 'complete' | 'contradiction' | 'unknown'
   readonly runState?: 'complete' | 'open'
   readonly glyph?: string
+  /** The closed run's tape, or nothing. See the comment for why `tape` is not a value. */
+  readonly tape?: 'complete'
 }) {
   return (
     <span
@@ -167,6 +199,9 @@ function RailSwatch({
       aria-hidden="true"
       data-line-state={lineState}
     >
+      {tape === undefined ? null : (
+        <span className="mg-run-tape" data-run="complete" data-cap="only" />
+      )}
       <span className="mg-rail-cell__glyph" aria-hidden="true">
         {glyph}
       </span>
