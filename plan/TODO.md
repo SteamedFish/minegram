@@ -306,21 +306,54 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
   user pays the whole cost for a benefit only a finger can use (44 → 29px at
   1440×880 with the gate lifted).
 
-- [ ] **Defect 1c — the band has a one-pixel cliff, and a new instrument is what
-  found it.** OPEN, with des-5. The band is gated on `height < 56rem` = 896px,
-  and the ceiling is 896: 1440×880 is inside the band and 1440×896 is outside it,
-  and the difference is the app's worst state. Measured coarse at 24×24:
-  1440×880 gives `vPageScroll` 0, +117px of slack and a 12px numeral; 1440×896
-  gives `vPageScroll` **780px**, **−86px** of slack (board below the fold) and a
-  **10px** numeral. 1440×896 is a real viewport class — a 1440×900 panel with
-  browser chrome, or a tablet at 1440p in a fullscreen browser. The only evidence
-  in the file for a *height* condition is the pane collapsing to 0px at 1024×768
-  and 960×600, and both are **below 74rem**, so the width floor already excludes
-  them — which makes the height ceiling a magic number that is not yet known to
-  be doing work. The brief asks for a measurement of the band with the condition
-  removed at 1184×900 (the width floor itself), 1280×1024, 1440×1200 and
-  1440×1600, with the two collapsing cases as controls. A cliff is acceptable; an
-  unexamined magic number is not.
+- [x] **Defect 1c — the band had a one-pixel cliff, and a new instrument is what
+  found it. CLOSED in `928ad35` by removing the condition that made it a cliff.**
+  How it was found: the band's `height < 56rem` = 896px ceiling WAS the cliff, and
+  the survey had been reading the app's worst state at 1440×896 (`vPageScroll` 780px,
+  −86px of slack, 10px numeral) next to its best at 1440×880 (0, +117px, 12px).
+  The height condition is GONE from all four carriers, which now all read
+  `@media (pointer: coarse) and (width >= 74rem)` (`layout.css:708`, `board.css:193`,
+  `overlays.css:118`, `forms.css:801`). Measured `vPageScroll` before → after:
+  **776→0** @1184×900, **652→0** @1280×1024, **780→0** @1440×896, **476→0**
+  @1440×1200, **76→0** @1440×1600, 0→0 at 1280×800/1280×880/1440×880. There is
+  now no height at which the band stops being correct.
+  **The second cause of the cliff was NOT the media condition, and this is the part
+  worth keeping.** Measured with the ceiling dropped at 1184×900: the settings
+  sheet's **Generate** button sat at content-y 1445 of a 900px window with
+  `visible: true`, `insideApp: true`, `inViewportNow: false`,
+  `reachByScrolling: false` — a primary action that exists and cannot be reached.
+  `align-items: stretch` in a `100dvh` shell makes the middle grid row a DEFINITE
+  height, and an aside taller than its row with `overflow: visible` neither shrinks
+  nor scrolls: its content runs past the row and past the app's own box, and since
+  the app is exactly `100dvh` there is no page scroll left to give it. The height
+  ceiling had been silently holding this up. The band now bounds each aside with
+  §6c's exact four properties (`layout.css:758-763`: `max-block-size: calc(100dvh -
+  var(--sp-4) - var(--sp-5)); overflow-y: auto; overscroll-behavior: contain;
+  min-block-size: 0`).
+  **The band DROPS the pane's cap rather than raising it**, because
+  `fitCellAt` computes `available = Math.max(paneBlock, paneBlockCap) -
+  blockChrome - railBlock` — a cap is a FLOOR for the pane, never a ceiling, so
+  "raise the cap to buy fold space" buys the opposite of space. The cap is made
+  `max-block-size: none` inside the band on the ground that a cap on a pane the
+  grid is already sizing "is a second, stale answer to a question the layout has
+  answered".
+  The cost is named and confined: at 1440×896 — the window the old ceiling
+  excluded, so the band is at its most expensive there — pane 613→490, cell
+  36→28, and a 24×24 pans in the block axis (pane 490 vs a 706px stage). At
+  1440×1200/×1600 it costs nothing (panes 794/1194, no pan, cell 40). At the
+  extreme (1280×600, 1184×600, 1440×400) it degrades to a letterbox rather than a
+  defect: the cell sits on its 24px floor, the pan is armed, 124/124 and 300/300
+  runs stay readable, and every control is reachable. Height is a GRADIENT, not a
+  second cliff: the pane is the leftover after ~320px of chrome.
+  Two boundaries are load-bearing and both are pinned by measurement: `pointer:
+  coarse`, because a mouse user pays 44→29px cells at 1440×880 for a benefit only a
+  finger can use; and the `74rem` width floor, because below it the panels are rows
+  and injecting the band collapsed the pane to **0px** at 1024×768 and 960×600.
+  One consequence recorded in `BoardSurface.tsx:354-362`: the fit's block-axis
+  fallback `const byHeight = available > 0 ? Math.floor(available / rows) : byWidth`
+  answers a zero-tall pane FROM ITS WIDTH, so a collapsed shell would paint
+  oversized cells in a box with no height. The band's width floor is what prevents
+  that, not the fit.
 
 - [ ] **Defect 6 — below ~750px wide the control strip wraps to three rows and the
   chrome is most of the screen.** OPEN, with des-5. Measured coarse, 11 controls,
@@ -343,6 +376,40 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
   brief: a toolbar that hides controls behind a horizontal scroll the player has
   to discover, on the same WCAG 2.5.1/2.5.7 reasoning already in force for board
   drags, and any answer that buys chrome by making the board smaller.
+
+  **The strip half CLOSED in `928ad35`; the banner half stays open.** The strip's
+  own content box decides, not the window, and the two disagree: 1184×900 gives a
+  1184px window but a **436px** strip, because the `>= 74rem` template spends 640px
+  on two 20rem panels. Strip widths: 277 @360×800, 329 @412×915, 436 @1184×900,
+  517 @600×960, 692 @1280×800 and @1440×896, 852 @1440×880, 845 @960×600,
+  909 @1024×768 (±2px between runs). Group arithmetic untrimmed at 800×1280 (strip
+  683, the trim inert): mode **195** + gap 16 + zoom **366** = **577**; trimmed to
+  `--sp-1`: **150** + 16 + **307** = **473**. So `36rem` = 576 is the measured width
+  at which the untrimmed pair stops fitting — 577, to the pixel — and
+  `(width < 36rem)` reaches that region and nothing above it. Implemented as a
+  CONTAINER query (`forms.css:507` `container: toolbar / inline-size`, plus §6a
+  `@container toolbar (width < 36rem)` at `:611`) rather than a media query,
+  because the strip's width is decided by the grid, not the window, and a media
+  query would have to be re-derived at every template. Results: 600×960 **3 rows /
+  166px → 2 rows / 114px**; 412×915 3 rows/214px with the zoom group a **329×92**
+  box → 3 rows/**166** with the group **307×44**; 360×800 unchanged (the group's
+  own 307 exceeds a 275 strip, and zero padding would "reach" one row at 328
+  against a 327 strip — a rounding accident that would also make the pills touch);
+  1184×900 unchanged (473 > 436). The expensive half was the second loss: a group
+  wider than the strip does not become one clipped row, it WRAPS INSIDE ITS OWN ROW
+  SLOT — 92px of box for a 44px row and 48px of nothing. Rejected with arithmetic:
+  horizontal scroll (NOT-ACCEPTABLE, WCAG 2.5.1/2.5.7), micro type (buys no row),
+  `flex-wrap: nowrap` (binds only below 286px of strip). Not pointer-gated — and
+  that was checked with a fine pointer rather than assumed: the same 517px strip
+  gives untrimmed 574, trimmed 436, two rows at 90px instead of 114px. Nothing is
+  hidden by trimming padding, because each pill's text IS its label and each
+  group's name comes from `aria-label` on the `role="radiogroup"`.
+  §8a also MOVED to sit immediately after §8 (`forms.css:765`), because §8 is a
+  `(pointer: coarse)` block that owns `.mg-toolbar__mode`; a future `.mg-toolbar`
+  line inside §8 would otherwise win on source order and silently stop the trim.
+  **STILL OPEN: the banner**, 226/226/178/126/100px at 360/412/600/800/1184, which
+  charges the player a second time for the same narrowness. It lives in `App`'s
+  banner markup, which the lane's write scope excluded, so it was not touched.
 
 - [x] **Defect 2, in the part that is reachable — no touch target reaches 44×44,
   and the board cells cannot.** 251 of 259 targets at 15×15 and 602 of 610 at
@@ -435,3 +502,52 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
 - **A media query is a property of the DEVICE, and a viewport override does not set it — so a survey of a phone can be a survey of a mouse.** The third instance of this family and the most consequential, because it invalidates the instrument rather than one reading. `Emulation.setDeviceMetricsOverride` sets the viewport and nothing else: it does not touch `pointer`, `hover` or `any-pointer`, which are **features** describing the input device, and `maxTouchPoints` is a property of the navigator. So every "small screen" number in `.tmp/` before this round — the 241/241 sub-44px targets, the landscape fold at −151px, the 10px numerals, the 13×13 checkboxes — was taken with `pointer: fine`, `hover: hover` and a mouse, at a window the size of a tablet, and the app's entire `pointer: coarse` branch was **off in all of them**. `Emulation.setTouchEmulationEnabled` is what flips the features. The fix is one call, and the rule that came with it is the part worth keeping: **read the media features back out of the page (`matchMedia('(pointer: coarse)').matches`) and print them on every row, rather than printing the CDP call that asked for them** — a request that silently did nothing leaves both readings false and the report is then indistinguishable from a report of a broken app. This is the same shape as the persisted-flag leak, the hidden-element boolean and the three wrong-element reads, and the generalisation is worth stating once for all of them: **a number is evidence about a state, and the state has to be part of the report or the number is unattached.** A viewport is not a state; a viewport plus a pointer is.
 - **A band gated on a rem threshold is a cliff, and a cliff needs a measurement behind it or it is a preference.** The short-landscape band is gated on `height < 56rem`, and 56rem is 896px, so 1440×880 is inside it and 1440×896 is outside — the best state the app has (page scroll 0, board wholly in the fold, 12px numerals) one pixel above the worst (page scroll 780px, the board 86px below the fold, 10px numerals). What made this a cliff rather than a boundary is that the threshold had **no evidence behind it**: the only measurement in the file that could justify a height condition (the pane collapsing to 0px at 1024×768 and 960×600) is already excluded by the width floor, because both viewports are below 74rem. So the condition is doing nothing yet shown, while changing the answer at an arbitrary coordinate. The generalisation covers every responsive boundary in the app, of which there is now one width breakpoint and two height ones: **a threshold that selects a behaviour needs either a measurement of what breaks on the far side of it, or a rationale that is not a round number** — and `74rem` is defensible precisely because it is the ≥74rem template's own literal, while `56rem` is defensible only if something is actually measured at 896. A boundary is allowed to be a cliff. A boundary that is a cliff *because nobody checked either side* is the defect, and the instrument that finds it is a matrix that straddles the threshold on purpose rather than one that sits inside it.
 - **A refusal to act must be checked against which TERM binds, not against whether the lever is the right shape.** des-5 declined to lower `--board-cap` in the landscape band, reasoning "a cap cannot buy space, only the chrome can" — a correct statement about the page and an irrelevant one about the pane, because the pane is `max-content` under a `max-block-size`. At 1280×800 the pane measured 672px against a 688px cap: the cap was 16px short of binding, and the stage's content was what set the height. So `--board-cap` was not a slack ceiling there at all; lowering it would have become the binding term on the next measure, and `fitCellAt` reads it as `Math.max(paneBlock, paneBlockCap)` precisely so that it can. The refusal was a correct principle applied to the wrong term, and it survived because the evidence column was `vPageScroll` — a metric perfectly compatible with the board being cut off, and in a portrait layout dominated by content below the board. **Where a "max" is documented as a ceiling, measure the gap between the ceiling and the content before concluding the ceiling does nothing; a bound that is not currently binding is still a bound, and the regime in which it starts to bind is the one the design has to survive.** The second half is a scoring rule: **a report's headline number should be the one that would go red if the defect were fixed**, and `vPageScroll` is not that number in either orientation. The cap was then made *literally* a non-constraint in the one place it conflicted with the layout — `max-block-size: none` inside the band — because a cap on a pane whose height the grid is already deciding is a second, stale answer to a question the layout has answered.
+- **A stretch mode in a scroll container is not overflow, so a whole class of
+  reachability metric is uncomputable from the outside — and the honest answer is
+  `scrollIntoView`, not a bigger number.** `overflow-y: auto` means a box that
+  spills does not overflow: it scrolls. So `scrollHeight > clientHeight`, the
+  relation every other check in this project uses, is `false` for a perfectly
+  scrollable aside, and the two halves of the metric disagree in opposite
+  directions — the *block* half answers "is it out of reach" for an element
+  beyond the fold when it is merely scrolled to, and the *inline* half cannot
+  answer anything at all, because a stretched grid item has no inline overflow of
+  its own to report and the offending ancestor is not reachable from the
+  measurement function. My `REACH` reported a 12.05× "unreachable" ratio at
+  1184×900 and a **0.63×** "over-budget" ratio in the same run, and both were
+  artefacts of the same missing reachability model. The check that actually holds
+  is `el.scrollIntoView()` followed by a re-measured `getBoundingClientRect()`,
+  because that is the only operation that answers "can a player get there" without
+  a hand-written reachability graph. The instrument stays in `.tmp/`, marked, and
+  was explicitly excluded from a specialist's brief rather than quietly passed on.
+
+- **A container query is the right tool when the thing that decides the layout is
+  a box, and a media query is the right tool when it is the device — the two are
+  not interchangeable and the mistake is silent.** The control strip's own content
+  box decides whether it needs trimming, and at 1184×900 that box is **436px**
+  inside a 1184px window because the `>= 74rem` template spends 640px on two 20rem
+  panels. A media query would have had to be re-derived at every template and
+  would have been wrong at 1184×900 by construction. The same reasoning retires
+  the other direction: the `pointer: coarse` gate IS a device property, so it
+  stays a media query, and it was checked with a fine pointer rather than assumed
+  (the trim helps there too: 114px → 90px at the same 517px strip). And the
+  numeric that made the boundary legible is the reason to prefer this instrument:
+  `36rem` = 576 is the measured width at which the untrimmed groups stop fitting
+  (577, to the pixel), not a round number that looked tidy.
+
+- **A grid row that stretches is a DEFINE; an item taller than its row does not
+  shrink and does not scroll, and the page cannot rescue it either.** In a
+  `block-size: 100dvh` shell, `grid-template-rows: auto minmax(0,1fr) auto` plus
+  `align-items: stretch` gives the middle row a definite height, and a child with
+  `overflow: visible` that exceeds it runs past the row, past the app's own box,
+  and out of the document's scrollable area — `document.scrollingElement` is
+  exactly as tall as the app, so the overflow has nowhere to go. This is the
+  mirror image of the fit's own trap (`BoardSurface.tsx:354-362`, where a zero-tall
+  pane is answered from its width): both are the same mistake, that a box which
+  has been given a size by its parent can be treated as having no size
+  constraint. The measurement that finds it is not "did the page scroll" but
+  "for each control, scroll it into view and re-measure" — at 1184×900 that puts
+  the settings sheet's **Generate** button at content-y 1445 with
+  `reachByScrolling: false`. The remedy is four properties, and the fourth is the
+  one that matters: `max-block-size: calc(100dvh - …)`, `overflow-y: auto`,
+  `overscroll-behavior: contain`, and **`min-block-size: 0`**, since a grid item's
+  automatic minimum size is its content size and defeats the bound on its own.
