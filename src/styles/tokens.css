@@ -275,15 +275,19 @@
      would make one line taller than the other and the column rail's bottom edge
      would no longer be a straight line of baselines.
 
-     The numeral SCALES with the board — 0.3 of the cell — floored and capped.
-     10px remains the stated legibility floor, and it is still MEASURED rather
-     than assumed: the mono rail figures are 6.00px of advance at that size, 0.6
-     of the font-size, checked in a real browser, and below 9px the bowls start
-     to fill in. So the two small cells (26px, 32px) still read 10px, 40px reads
-     12px, 56px reads 16.8px, and 20px is a HARD ceiling rather than a rounding
-     of the 72px cell, so `--rail-col` has a constant top however far the zoom
-     step pushes. One numeral in three tenths of a cell is still subordinate: the
-     rail is read, the board is played.
+     The numeral SCALES with the board — 0.34 of the cell — between a floor that
+     is itself a ramp in the window's height and a hard ceiling. 10px remains
+     the stated legibility floor, and it is still MEASURED rather than assumed:
+     the mono rail figures are 6.00px of advance at that size, 0.6 of the
+     font-size, checked in a real browser, and below 9px the bowls start to fill
+     in. (The ratio was 0.3 until this revision; the two number-sized bands that
+     raised it to 0.34 are gone, so 0.34 is now the single app-wide ratio and a
+     40px cell reads 13.6px where it used to read 12px. A 56px cell — the `xxl`
+     zoom step — reads 19px rather than 16.8px, still under the ceiling.) So
+     20px is a HARD ceiling rather than a rounding of the 72px cell, and
+     `--rail-col` has a constant top however far the zoom step pushes. One
+     numeral in a third of a cell is still subordinate: the rail is read, the
+     board is played.
 
      This paragraph used to hold the numeral FLAT on purpose. The reason is worth
      keeping, because its opposite is why the player reported that enlarging the
@@ -298,21 +302,49 @@
      it did not converge on. */
   --rail-num: clamp(var(--rail-num-floor), calc(var(--cell) * var(--rail-num-ratio)), 20px);
 
-  /* The two numbers the clamp above spends are TOKENS, not literals, so a
-     display band can retune the trade without either the theme block or the
-     stage having to restate the formula. That matters because the report was
-     precise and measured: 「放大游戏区域不放大数字格子」 — the board grew, the
-     digits did not. The trade was a FLOOR written as a constant while the ratio
-     beside it sat at 0.3, so on any board that fits inside a tablet's height the
-     solve lands the cell at or under 33px, the ratio's own contribution is under
-     10px, and the clamp therefore returns its constant EVERY time. The floor
-     goes to 12px and the ratio to 0.34 in the small-screen bands (BAND, end of
-     file): 12px is the smallest rail numeral that still reads as a numeral
-     rather than a mark, and 0.34 keeps it at roughly a third of its cell while
-     the wider rail is paid for by the fit, which already counts `--rail-digit`
-     when it asks for `--cell`. */
-  --rail-num-floor: 10px;
-  --rail-num-ratio: 0.3;
+  /* The two numbers the clamp above spends are TOKENS, not literals, so neither
+     the theme block nor the stage has to restate the formula. Both are now
+     CONTINUOUS functions, and the two were a 56rem cliff between them.
+
+     The floor is a function of the block space the window actually has, because
+     that is the only thing a numeral's size can honestly be a function of. It
+     was a constant with a band on either side of it, and the band's edge was at
+     `height < 56rem`: a window one pixel TALLER lost the band and the numeral
+     fell from 12px to 10px. Measured on the same 15x15, coarse: 1440x880 ->
+     12px and a 29px cell, 1440x896 -> 10px and a 28px cell. Sixteen pixels of
+     window cost two pixels of digit, for no reason a player could see.
+
+     The ramp is measured, not chosen. Pinning the floor and re-solving at each
+     height (15x15, coarse, the pin charged through the same ResizeObserver the
+     fit uses) gives: at 700px and 780px of window a 12px numeral costs ZERO
+     visible cells at both 1184 and 1440 wide — 135/135 and 180/180 at 1184,
+     165/165 and 210/210 at 1440 — because the pane is already shorter than the
+     board there and the extra 11px of band is spent off-screen. At 650px and
+     below it costs 15 cells, one row: 105 -> 90 at 1440x600, 75 -> 60 at
+     1184x600. So the ramp runs 10px at 600px of window up to 12px at 700px,
+     which is 0.02px of numeral per px of window, and 10px is a floor rather
+     than a third stop because below 600px the pane is 194px tall and the board
+     is dragged through it whatever the type does. At 650px the ramp reads 11px
+     and keeps ~120 cells, between the 105 of a 10px floor and 90 of a 12px one.
+
+     The one honest caveat: `100dvh` moves when a mobile browser's chrome moves,
+     and the ramp's live range is 100px wide, so in that one band the numeral
+     can follow the chrome. It re-fits either way, and 12px is the size at
+     which the clue is readable at all, so tracking the space the board really
+     has is the right answer to a window that is genuinely changing height.
+
+     The ratio is 0.34 app-wide and no band touches it. It used to be 0.3 at the
+     root and 0.34 in the two small-screen bands, which meant the WIDTH also
+     stepped: 800x1280 painted 13.6px while 1184x900 painted 10px, a narrower
+     window with a larger digit. With the bands gone the numeral is
+     `clamp(floor(window height), 0.34 x cell, 20px)` — two inputs, both
+     monotone, no media query anywhere in it. What 0.34 costs: at 1440x1200 the
+     numeral goes 12 -> 13.6px and the rail's first track 687 -> 693 inside a
+     700px pane, so nothing is lost; at 1440x1024 it goes 10.8 -> 12px inside a
+     700px pane. 0.34 is also what keeps a 56px cell (the `xxl` zoom step) at
+     19px rather than 16.8px, still under the 20px ceiling. */
+  --rail-num-floor: clamp(10px, calc(10px + (100dvh - 37.5rem) * 0.02), 12px);
+  --rail-num-ratio: 0.34;
   --rail-lh: 0.95;
   --rail-step: calc(var(--rail-num) * var(--rail-lh) + var(--rule-w));
   --rail-badge: var(--rail-num); /* the line-state glyph's strip, one numeral tall */
@@ -978,48 +1010,62 @@ html[data-theme='light'] {
   --key-cap: 60dvh;
 }
 
-/* PHONE: the band below layout.css's own collapse to one column, where the board
-   is fitted into 345-437px of pane and `--cell` lands on or near the 24px floor.
-   The two tablet bands below were 12px / 0.34, and this one was NOT — so the
-   600x960 and 412x915 viewports, the two a large phone and a small tablet both
-   report, painted a 10px numeral: measured 10.00px at 600x960 and 412x915 against
-   13.60px at 800x1280 on the same 15x15. That is the 「放大游戏区域不放大数字格子」
-   defect with the arithmetic backwards — the SMALLER board got the smaller numeral,
-   which is also the one case where the numeral is the only thing standing between
-   the player and the clue. The floor is 12px here for the same reason it is 12px
-   above: it is the smallest size that still reads as a numeral, and it costs the
-   fit `0.62 x 2px` per column of rail, which the fit already counts. */
-@media (width < 48rem) {
-  :root {
-    --rail-num-floor: 12px;
-    --rail-num-ratio: 0.34;
-  }
-}
+/* TWO BANDS THAT USED TO SPEND THE NUMERAL ARE GONE, and this is where they
+   stood. `width < 48rem` (below layout.css's own collapse to one column, where
+   the board is fitted into 345-437px of pane and `--cell` lands on or near its
+   24px floor) and `48rem <= width < 74rem` each spent exactly two declarations,
+   and both of them were the numeral's floor and ratio: 12px and 0.34.
 
-/* TABLET AND LARGE PHONE, PORTRAIT OR TALL: the band between a large phone and the
-   desktop template, i.e. exactly the widths layout.css already stacks in one
-   column. The numeral floor is the whole of the change. */
-@media (width >= 48rem) and (width < 74rem) {
-  :root {
-    --rail-num-floor: 12px;
-    --rail-num-ratio: 0.34;
-  }
-}
+   They were the fix for 「放大游戏区域不放大数字格子」 — a phone painting a 10px
+   numeral while a tablet painted 13.6px, the SMALLER board getting the smaller
+   numeral, measured 10.00px at 600x960 and 412x915 against 13.60px at 800x1280
+   on the same 15x15. The answer they gave was right (12px is the smallest size
+   that still reads as a numeral, and the ramp below hands out 12px from 700px
+   of window up, which is every portrait phone there is). The instrument was
+   wrong: both reached it with a WIDTH literal, so a step keyed on a dimension
+   the player's eye does not read as continuous sat in the middle of a quantity
+   that is continuous — the same family as the 56rem cliff above, and it was the
+   reason 800x1280 painted 13.6px while 1184x900 painted 10px.
+
+   Both are now one function of the two things that actually decide it
+   (tokens.css, `--rail-num-floor` and `--rail-num-ratio`), and these bands have
+   nothing left to say. If a band ever needs to own the numeral again the honest
+   form is a gradient that crosses it rather than a literal that replaces it on
+   one side of an edge. `.tmp/style-check.mjs` section 17 fails if either band
+   reappears, or if any band anywhere spends the numeral. */
 
 /* TABLET LANDSCAPE: WIDE AND SHORT — the one band where a three-column page is
-   still the right layout, so the columns stay and the page's own scroll does not.
-   A 15x15 board needs about 900px of height for the largest cell the cap allows,
-   and this window has under 896; the two side panels and the app's 354px of
-   chrome cannot both be honoured, so the panels are narrowed to 15rem and made
-   to scroll INSIDE their own box (layout.css) while the board keeps the height
-   it is owed. The height boundary is 56rem because that is a laptop edge: a
-   tablet's landscape is 768-820px tall, a desktop window's is not, and a
-   one-pixel difference must not flip a numeral from 12px to 10px. */
+   still the right layout, so the columns stay and the page's own scroll does
+   not. A 15x15 board needs about 900px of height for the largest cell the cap
+   allows, and this window has under 896; the two side panels and the app's
+   354px of chrome cannot both be honoured, so the panels are narrowed to 15rem
+   and made to scroll INSIDE their own box (layout.css) while the board keeps
+   the height it is owed. The height boundary is 56rem because that is a laptop
+   edge: a tablet's landscape is 768-820px tall, a desktop window's is not.
+
+   The numeral is not one of the things this band decides, and it used to be:
+   the band's own last line was a promise that "a one-pixel difference must not
+   flip a numeral from 12px to 10px", and the promise was FALSE at its own edge
+   — 1440x880 painted 12px, 1440x896 painted 10px. The numeral has left this
+   band (see the deleted band above and the ramp at `--rail-num-floor`), so the
+   promise is now kept by the thing that replaced it. What stays are the two
+   values that are about the PANELS, and both steps run in the direction that
+   helps: at a fixed 1440 the shorter window hands the board a wider main column
+   (measured 888px at 880, 728px at 896, the 240px coming back out of the two
+   20rem panels as they go 320 -> 240), and at a fixed 1280 the same step reads
+   728 -> 888. A window too short to hold three columns gives its space to the
+   board; nothing in here grows a panel as the window shrinks.
+
+   The other value, `--board-cap: 86dvh` against the root's `min(70vh, 46rem)`,
+   IS a step and it IS downward: at 1440x880 the band says 757px and at 1440x896
+   the root says 627px, a 130px fall for a 16px rise. It is left alone because
+   it does not bind at either side of its own edge — the pane measured 522px at
+   880 and 490px at 896, both well under the smaller of the two caps — so no
+   change to it could be shown to do anything. It is named here so that the next
+   person to read this band learns it is a debt, not a decision. */
 @media (orientation: landscape) and (height < 56rem) and (width >= 48rem) {
   :root {
     --side-col: 15rem;
     --board-cap: 86dvh;
-    --rail-num-floor: 12px;
-    --rail-num-ratio: 0.34;
   }
 }

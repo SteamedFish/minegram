@@ -563,10 +563,12 @@
                 329x92 -> 307x44; still three rows, and three is the honest
                 count there
 
-       360x800  strip 277  3 rows 214 -> 214  UNCHANGED
+       360x800  strip 277  3 rows 214 -> 214  UNCHANGED BY 6a
                 473 > 277, so six pills still cannot take one line at a
-                360px window, and they keep their air rather than going to
-                the border
+                360px window, and 6a keeps their air rather than going to
+                the border. 6b, below, then spends 48px of the rest of it
+                and leaves the pills' air at 2px, which is a different
+                decision and is argued there
 
       1184x900  strip 436  3 rows 150 -> 150  UNCHANGED
                 the trim reaches this width and cannot finish the job,
@@ -583,17 +585,26 @@
    277x92 inside a 303px one. That is a bug rather than a layout, and at
    412x915 the cause is the padding, which is air: a 44px target is 44px
    TALL, and 8 of those 44 are padding, so 6a closes the wrap there (307 in a
-   327 strip). At 360x800 it does not close, and the comment would be lying
-   if it said it did: the zoom group's own width is 307 against a 275 strip,
-   so it still wraps at 92px. Zero padding would reach one row (measured 328
-   against a 327 strip, which is not one row but a rounding accident) and the
-   pills would touch, so 3 rows of air at that width is the answer this sheet
-   gives rather than the answer it manufactures.
+   327 strip). At 360x800 6a does not close it, and this comment is marked
+   where that used to be the sheet's final answer. It read: the zoom group's
+   own width is 307 against a 275 strip, so it still wraps at 92px; zero
+   padding would reach one row (measured 328 against a 327 strip, which is not
+   one row but a rounding accident) and the pills would touch, so 3 rows of
+   air at that width was the answer this sheet gave rather than the answer it
+   manufactured. The first half of that is still true and 6b acts on it. The
+   second half was wrong about the shape of the problem: 2px of padding and 2px
+   of gap reach 273 against a 277 strip, which is one row, and at 2px the pills
+   do not touch — a label centred in a box keeps its own side bearings inside
+   it, so what 6b closes is the GAP, not the air inside a pill. Zero padding
+   was never needed.
 
    So the trim buys 52px at 600x960 and 48px at 412x915, and nothing anywhere
    else. That is a small win and it is stated in full, because a comment that
    listed only the widths it improved would be a comment about a different
    sheet.
+
+   The last two paragraphs below were the answer this sheet gave for 360x800,
+   and 6b has since changed it. The 360 clause is marked where it now reads.
 
    Nothing is hidden. The pills are their own labels — each button's text is
    the mode name or the zoom step, and each group's name comes from
@@ -612,6 +623,108 @@
   .mg-toolbar__mode,
   .mg-toolbar__zoom {
     padding-inline: var(--sp-1);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   6b. A strip that cannot hold the pills: they stop being six pills
+   -----------------------------------------------------------------------------
+   6a ends where the arithmetic of one row ends. Below that the toolbar is three
+   rows, which the four demands make unavoidable — 150 for the mode group, 307
+   for the zoom group, 141 for the finger switch and 88 for Generate cannot be
+   packed into two rows of a 277px strip, because the two largest alone need
+   150 + 16 + 307 = 473. Three rows is the floor at 360x800 and nothing here
+   argues with that.
+
+   What 6a left is not the row count but a ROW THAT IS NOT A ROW. A group
+   wider than the strip does not become one clipped line, it wraps inside its
+   own row slot: 92px of box holding 44px of pills and 48px of nothing. Measured
+   with a coarse pointer on a 15x15, the zoom group is 277x92 inside a 303px
+   toolbar at 360x800 while the same group is 307x44 inside a 355px one at
+   412x915. That difference is 48px of chrome the player pays for and reads
+   nothing in, and it is the one number this rule is about.
+
+   Closing it costs 32px of the group's 307, and there are only two places to
+   take it from, because the LABELS are content: six of them, 227px of text at
+   13px in a sheet whose type this rule does not touch. The air is the other
+   80, and it is 12px of inline padding plus 20px of gap — and the padding is
+   only 12 and not 24 because three of the six pills are already sitting on
+   `--target-min` with 4px of padding they cannot spend. So:
+
+       307  the group as 6a leaves it, measured at 412x915
+     - 12  padding-inline 4 -> 2 on the zoom pills, and only the three
+           long labels have any padding to give: the other three are
+           already at `--target-min` and do not move
+     - 20  column-gap 4 -> 0 inside every group, five gaps a group
+     = 275  measured, against a 279px content box at 360x800: 4px of slack
+
+   A zero gap is not "the pills touch", which is the failure 6a declined to
+   ship, and the difference is worth being exact about: what meets is two 1px
+   BORDERS, not two words. A label centred in its box keeps the typeface's own
+   side bearings inside it, so the glyphs still stand off each other. Measured
+   with `Range.getClientRects()` on each label, coarse pointer at 360x800, the
+   ink-to-ink gap along the group is 13.3, 6, 6, 17.2 and 24.5px against
+   19.3, 14, 14, 23.2 and 28.5px at 412x915 where this rule is inert. So the
+   tightest pair of words in the app under this rule is 6px apart, which is
+   3px a side, and it is 6px and not 0 because a centred label carries the
+   typeface's side bearing inside a box that is 4px wider than the word. Six
+   bordered boxes edge to edge with 6px between the words that face each other
+   is a segmented control, and a segmented control is the honest shape of six
+   buttons of which one is chosen. The six pills measure 44, 45, 53, 45, 44
+   and 44 wide under the rule, so not one is narrower than 6a left it.
+
+   The gate is 20rem, and like 6a's it is arithmetic rather than a round
+   number. A container query reads the container's CONTENT box, which is what
+   6a's figures are too (its 436 is 6a's strip content box at 1184x900, not
+   the 454px strip). So the boundary is the demand 6a leaves: a 307px group
+   stops wrapping once the content box is 307, and 20rem is 320 — the next
+   whole rem above it, in the direction of NOT tightening. Measured content
+   boxes either side of it: 279 at 360x800 and 254 at 320x800 wrap and fire,
+   and 331 at 412x915 is 11px clear of the gate and keeps its 4px gaps, which
+   is where it should be, because at 331 the group already fits on one line and
+   nothing is forcing the segmented shape. An earlier draft of this rule gated
+   at 21rem and did reach 331, tightening a toolbar that was already correct;
+   the gate is where the wrap is, not where the rule is most comfortable.
+
+   So the price, in full: three of the six pills are 4px narrower than 6a left
+   them, so no target goes below 44x44 and no name changes and nothing is
+   hidden. The toolbar's own block padding and row gap are untouched, for the
+   reason in the last paragraph.
+
+   What it does NOT close, rather than pretending otherwise: at 320x800 the
+   strip's content box is 254 and the group is 275, so it still wraps there
+   and this rule buys nothing at that width. Closing 254 would mean the pills
+   at zero inline padding, which no screenshot was asked to justify; 320x800 is
+   also the width `body`'s 320px `min-inline-size` floor was written for, and
+   the one case where the page pans instead of compressing.
+
+   Two things this rule cannot do, both recorded because they look available
+   and are not. It cannot spend the strip's OWN air: a container query never
+   matches the element that establishes the container, so
+   `.mg-toolbar { padding-block }` written inside `@container toolbar` is
+   inert, and the strip's 8px of block padding and 8px row gap would have to
+   come from a container higher up — `.mg-main`, which is 36px wider than the
+   strip at every width measured, and moving it would also move 6a's gate off
+   the strip onto the main column. 6a's gate is the one that was measured, so
+   6b leaves it where it is. And it cannot shorten a label: the type is 13px in
+   6a's arithmetic and stays 13px here, because 6b is about what happens
+   between the labels, not to the labels.
+
+   Measured result, coarse pointer, 15x15, both panels open, before -> after:
+   the toolbar at 360x800 214 -> 166 and the zoom group 277x92 -> 275x44; at
+   320x800 both unchanged at 214 and 252x92; at 412x915 the toolbar stays 166
+   and the group stays 307x44, the rule inert, which is the point of the
+   gate. Screenshots of the strip at 320x800, 360x800 and 412x915 are in
+   `.tmp/shots/narrow-*.png` (gitignored, not part of the deliverable, and not
+   a check). */
+
+@container toolbar (width < 20rem) {
+  .mg-toolbar__group {
+    column-gap: 0;
+  }
+
+  .mg-toolbar__zoom {
+    padding-inline: 2px;
   }
 }
 

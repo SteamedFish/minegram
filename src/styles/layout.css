@@ -144,6 +144,20 @@
   box-shadow: var(--shadow-panel);
   /* The banner is sticky and the toolbar is not, so their edges must not share a
      transition or the one that moves gets a trailing ghost. */
+  /* The banner is its own container, for the same reason the toolbar's is
+     (forms.css section 6a) and not the same reason: a viewport query cannot
+     describe the banner, because the banner's CONTENT width is not the window's
+     width and does not track it. The app's own inline padding is 8px at 360 and
+     16px at 700 and 12px at 1184, and the banner spends `--sp-4` (16px) inside
+     that, so one banner content width is three different numbers at three
+     different window widths. `inline-size` only: the banner's height is its
+     content, and `size` would contain the block axis too.
+     Measured safe to contain (coarse pointer, 15x15, both panels open): the
+     banner has no absolutely positioned descendant at 360x800, 412x915,
+     600x960, 800x1280 or 1184x900, so layout containment cannot re-parent a
+     thing that was reaching for something else, and nothing inside it is
+     sticky or stacked above its own section. */
+  container: banner / inline-size;
 }
 
 .mg-banner__wordmark {
@@ -212,6 +226,98 @@
   color: var(--accent-ink);
   background-color: var(--accent);
   border-color: var(--accent);
+}
+
+/* -----------------------------------------------------------------------------
+   2a. A narrow banner: the sentence it can no longer afford
+   -----------------------------------------------------------------------------
+   The banner grows as the window narrows, and every part of that growth was
+   measured term by term with a coarse pointer on a 15x15 with both panels open
+   (a fine pointer would have measured a desktop window of the same size, and
+   the `pointer: coarse` band below would have been off in all of it):
+
+       1184x900   100   padding 8/16   gap 12   wordmark 26   row 44
+       800x1280   126   padding 12/16  gap 12   wordmark 44   row 44
+       600x960    178   padding 12/16  gap 12   wordmark 44   row 96
+       480x900    160   padding 12/16  gap 12   wordmark 44   row 78
+       412x915    226   padding 12/16  gap 12   wordmark 58   row 130
+       360x800    226   padding 12/16  gap 12   wordmark 58   row 130
+       320x800    208   padding 12/16  gap 12   wordmark 58   row 112
+       280x800    208   -- 280 is under `body`'s 320px floor, so the app is the
+                        -- 320px app and this row is the 320x800 row again
+
+   Every row adds up, including the 2px of border, and that was checked rather
+   than assumed: 24 + 12 + 58 + 130 + 2 = 226 at 360x800 and 24 + 12 + 44 + 44
+   + 2 = 126 at 800x1280. Three terms, one of which is content and two of which
+   are air:
+
+     24px  the banner's own block padding, 12 above and 12 below
+     12px  the gap between the wordmark and the row
+     28px  the tagline on two lines, 14px on one
+
+   The tagline is the only term that is CONTENT rather than air, and it is the
+   only one the 24rem gate can spend — for a reason that arrives at the end of
+   this comment. Its own demand was measured rather than assumed:
+   "A mine-run puzzle printed one round at a time." at `--fs-micro` (11px on a
+   14px line box, read off the computed style) with `--track-micro` needs 349px
+   on one line. The banner's own content box is 270, 295, 347, 415, 535 and
+   703px at a 320, 360, 412, 480, 600 and 800px window, so the sentence is one
+   line from 480px of window up and two at 360 and 412, and this gate is INERT
+   at 480 (measured 160 to 160 with the rule in place and with the sentence
+   pinned back on). 24rem is 384: above the 349px demand, and below the 415px
+   the first width that fits the sentence comfortably, so the rule this states
+   is "the sentence is shown only where it costs one line and the chrome is not
+   competing with the board for the screen".
+
+   That is not a new idea in this app. The touch band below already deletes the
+   tagline for the same reason and names it the least informative pixels it
+   owns; the empty-state sheet says the same sentence. This gate puts the other
+   end of the same rule in place, so the tagline now exists only in the middle
+   where it fits.
+
+   So the rule spends one declaration and buys 32px: the tagline's 28px plus
+   the 4px gap the wordmark holds open between the title and the sentence, which
+   exists only while the sentence is there. Measured with the rule in place and
+   then with the tagline pinned back on in the same page, the banner reads
+   226 -> 194 at 360x800 and 412x915 and 208 -> 176 at 320x800 and 280x800, and
+   the parts show it is the tagline and nothing else — the wordmark 58 -> 26,
+   the row unchanged at 130, the padding still 12/12, the gap still 12. The
+   gate's INERT side is measured too: 480x900 reads 160 to 160, because 415 of
+   content clears the 384 the gate asks for.
+
+   One earlier reading of this number was wrong and is worth recording, because
+   the mistake is the kind that survives into a comment unchallenged: two rounds
+   of this survey wrote the tagline as "14 on one line and 28 on two" and then
+   this comment was revised to "16 and 32" while the window was 32. The box is
+   14 and 28 — 11px of type on a 14px line box — and the 32 is the tagline
+   PLUS the 4px the wordmark spends on it. The line-height was never measured
+   before it was quoted; it has been now, and the gate's arithmetic rests on the
+   measured value.
+
+   The 24px of block padding and the 12px of gap are the other two terms, and
+   this rule CANNOT spend them, which is worth writing down because the obvious
+   version of it does not work: a container query never matches the element
+   that establishes the container, so `.mg-banner { padding-block; gap }`
+   written inside `@container banner` is inert, and the measured parts prove it
+   — after the rule the banner's padding is still 12px 16px and its gap still
+   12px. The two declarations were written, measured at zero effect and removed
+   rather than left in as a claim. Reaching them needs the container higher up,
+   and the only candidate is `.mg-app`, which would make the query a viewport
+   query wearing a container's name — the same thing this sheet's comment
+   above the `container` declaration refuses to do. 16px is left on the table,
+   and saying so is cheaper than a rule that does nothing.
+
+   The board is not what the 32px buys, and that is worth saying plainly: at
+   360x800 and 412x915 the board pane is 450px and content-sized, and the fit
+   has already put the cell on its 24px floor, so 440px of board stands in a
+   450px pane and the pane is not short. What it buys is the FOLD — the board's
+   bottom edge is 185px below it at 360x800 and 19px at 412x915 before this,
+   and 32px is 17% of the first figure and more than half of the second. */
+
+@container banner (width < 24rem) {
+  .mg-banner__tagline {
+    display: none;
+  }
 }
 
 /* -----------------------------------------------------------------------------
