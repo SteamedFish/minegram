@@ -194,6 +194,75 @@ than a complaint: 「段落位置已定 这个应该也属于提示？」 and �
   not the largest, because the budget's 3px leading constant does not scale — which
   is the opposite of the assumption the old flat value encoded.
 
+## Player-reported fixes — round 5 — Android tablet / small screen
+
+One report, and it is a brief rather than a defect: 请优化一下 android pad
+（小屏幕）的体验 — optimise the Android tablet (small screen) experience. So
+this round opens by MEASURING what the layout does at real tablet viewports,
+because an optimisation brief with no measurement in it is a redesign by
+taste. `.tmp/small-probe.mjs` drives headless Chromium over CDP; `maxBlock` is
+`.mg-board-scroll`'s `max-block-size: min(70vh, 46rem)`.
+
+| viewport | cell | numeral | in view | page v-scroll | maxBlock | pane | left panel |
+|---|---|---|---|---|---|---|---|
+| 800×1280 (10" portrait) | 41px | 12.3px | 225/225 | 0 | 736px | 726 | 0px |
+| 800×1100 (portrait + browser chrome) | 40px | 12px | 225/225 | 34px | 736px | 711 | 0px |
+| 1280×800 (10" LANDSCAPE) | 32px | 10px | 225/225 | **163px** | 560px | 1191 | 0px |
+| 600×960 (8" portrait / split) | 30px | 10px | 225/225 | 13px | 672px | 543 | 0px |
+| 412×915 (phone floor check) | 24px | 10px | 165/225 | 102px | 640.5px | 355 | 0px |
+
+24×24: 800×1280 → 25px cells, 576/576 in view, no scroll. 800×1100 → 25px,
+65px page scroll. 600×960 → **420/576 in view, the pane scrolls in BOTH axes.**
+412×915 → 192/576, pane scrolls in both axes.
+
+Touch targets (`button, [role=switch], [role=button], .mg-cell, a[href],
+input, select`): under 44×44 — **241 of 241** at 15×15 and **592 of 592** at
+24×24, at EVERY viewport. Under 24×24 — 2, both `INPUT`s at 13×13.
+
+The app has exactly one width breakpoint: `src/styles/layout.css:83
+@media (width >= 74rem)` and `:353 @media (width < 74rem)`. 74rem is 1184px, so
+"narrow" spans 320px–1183px and a 400px phone takes the identical branch to an
+800px tablet. There is no tablet-specific design in the app at all.
+
+- [x] **Survey the small-screen layout before designing for it.** Done; the
+  numbers are above. The board is NOT the problem in portrait — 800×1280 gives
+  41px cells and 12.3px numerals, better than the 1440×900 desktop. The damage
+  is elsewhere, which is the reason measuring first was worth it: three of the
+  five defects below are invisible at the desktop viewport I had been tuning
+  against, and the worst one only appears when the device is rotated.
+
+- [ ] **Defect 1 — landscape is worse than portrait, and self-contradictory.**
+  At 1280×800 the page scrolls 163px while the cap has ALREADY reserved 240px
+  (30% of the viewport) for chrome, so the reservation is both too large and not
+  large enough. The board also SHRINKS on rotation (41px/12.3px → 32px/10px)
+  while 1191px of width sits ~80% idle: `byWidth` computes ≈74px and `byHeight`
+  binds at ≈32px. A 10" tablet in landscape is the most natural way to hold a
+  game and it is the worst case measured. Biggest win available. IN PROGRESS.
+
+- [ ] **Defect 2 — no touch target reaches 44×44**, including the board cells
+  (best 41px), so WCAG 2.5.5 AAA is unmet everywhere; the two `INPUT`s are
+  below even 2.5.8 AA. This is a TRADE-OFF, not a slider: 15×15 at 44px needs
+  660px of grid plus ~209px of rail chrome, which does not fit an 800px portrait
+  tablet. Whatever is chosen has to be legible in the result, not papered over.
+
+- [ ] **Defect 3 — below ~700px the numeral is back on its 10px floor**
+  (`clamp(10px, calc(var(--cell) * 0.3), 20px)`), so round 4's 「数字实在太小了」
+  is still present on an 8" tablet at default fit (600×960 → 30px cell → 10px).
+  Portrait at 800px is fine at 12.3px; the floor bites at 600px and 1280×800.
+
+- [ ] **Defect 4 — 24×24 on a small screen scrolls in two axes inside a page
+  that also scrolls** (600×960: pane scrolls X and Y, 420/576 in view). Nested
+  scroll containers on a touch device: a flick cannot tell the player which
+  surface will move.
+
+- [ ] **Defect 5 — the left panel is 0px at every tablet width.** Settings and
+  the legend are reachable only through the two `.mg-banner__panel-toggle`
+  controls in the banner (`src/ui/components/AppBanner.tsx:181`). The panel has
+  a persisted hide toggle, so on a tablet the player's settings vanish and two
+  icons bring them back. Decide the small-screen information architecture, and
+  make it discoverable without a tutorial without stealing the board's space.
+
+
 ## Lessons
 
 - **A measurement probe that reads the WRONG element will report a defect that does not exist — and the fix is to print the element, not just the count.** The first run of this round's probe reported `openTapes=1` with the layer off and I was one step from calling it a leak. The one surviving tape is the LEGEND's own key: the legend deliberately carries no `data-hints` so it always teaches the true shape, and its swatch is literally `<span class="mg-run-tape" data-run="tape" data-cap="only">`, which a document-wide `.mg-run-tape[data-run="tape"]` selector matches. Scoped to the board stage the count is 0 → 34 → 0 as designed. This is lesson (1) from the Phase 4 round recurring in its sharpest form: the same shape of mistake, three rounds apart, in a file I wrote myself. The generalisation: **when a count disagrees with a design claim, dump `outerHTML` of the offender before theorising** — a two-line diagnostic that would have cost thirty seconds and is now built into the probe permanently (`offenders`).
