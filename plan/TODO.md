@@ -138,34 +138,67 @@ than a complaint: 「段落位置已定 这个应该也属于提示？」 and �
   `AGENTS.md`. Note the previous grounding — the word 提示 occurring in exactly two
   legend cues — reached the right answer for the wrong reason and would have kept
   the tape outside the layer permanently; see the lesson below.
-- [ ] Gate the position tape behind `data-hints`, in React. `RunGuides` takes
+- [x] Gate the position tape behind `data-hints`, in React. `RunGuides` takes
   `hints` and renders nothing for an open run at off, while a complete run renders
   at both settings. React rather than CSS because a committed vitest test cannot
   observe `display: none` in jsdom, so a CSS-only switch ships unguarded — and this
   is the standing residual on this project. `runTape` joins the legend's gated set
   so its row carries the 提示 pill; the legend swatch itself keeps the true form,
-  because a key must teach the shape.
-- [ ] **Make the rail numerals scale with the board.** 「数字太小」. `--rail-num` is a
+  because a key must teach the shape. Shipped as the withhold
+  `if (hints === false && !run.complete) { return null }`, placed AFTER the existing
+  `run.invariant` guard, so the order of the two guards encodes the two answers:
+  no pinned window paints nothing regardless, and a pinned window stays silent at
+  off unless the player has already closed it. Measured on the BUILT bundle in both
+  themes: open tapes 0 → 34 → 0 across off/on/off, with the numerals, glyphs and
+  all 30 aria-labels byte-identical across the three phases. The one tape that
+  survives a document-wide count is the LEGEND's own key, which carries no
+  `data-hints` on purpose — see the lesson about believing what a selector counts.
+- [x] Fix the zoom steps never painting, found while measuring the scaling. The
+  fit's own probe leaves its LAST candidate on the stage, React then sees the value
+  it already holds and bails out of `setState`, and nothing re-renders. So the six
+  zoom steps all painted 32px with 10px numerals — the player's complaint surviving
+  its own fix. The fit effect now returns early when the stage is not in fit mode.
+  Measured after: `--cell` paints 32/26/32/40/56/72px across the six steps and the
+  numeral 10/10/10/12/16.8/20px.
+- [x] Fix the 3px chrome bias in the fit, found by the same measurement. The fit
+  charged `pane - grid`, which never pays for the stage's own chrome: two 1px
+  borders plus the rails row's 1px `border-block-end`, all outside the corner
+  cell's box. On a 1×1 board that 3px bias ratcheted 32 → 35 → 38 → … → 56, so the
+  fit could never settle on a small board. `stageChrome` now reads those PARTS
+  (computed border/padding on the stage, plus `railsRow.offsetHeight -
+  corner.offsetHeight`) rather than inferring them, and 1×1 paints 32px where the
+  old one-pass solve painted 35px.
+- [x] **Make the rail numerals scale with the board.** 「数字太小」. `--rail-num` is a
   flat `10px` **by design**, and the recorded reason is that a flat value "closes
   the fit loop on paper" so the host's fit measure cannot chase its own output
   (`tokens.css`, the `--rail-num` block). That is a convenience, not a proven
   necessity: `--cell` is `clamp(--cell-min, floor((scrollerInline - --rail-col) /
   cols), --cell-max)`, `--rail-col` grows ≈0.6px per px of cell, so the map's slope
-  is ≈ −0.6/cols and a bounded fixed point exists. Scale `--rail-num` under a hard
-  upper clamp (so the rail cost has a constant ceiling and the fixed point is
-  provably reachable) and make the fit measure iterate to a verified stable cell.
-  The trap to close rather than repeat: `--rail-digit: 6.2px` is a **measured**
-  constant, 0.62em at 10px. Scale `--rail-num` and leave `--rail-digit` alone and
-  the budget under-counts the ink — and because the row rail is `flex-end`, all the
-  slack sits in FRONT of the first numeral, the one the player reads first and the
-  one `overflow: hidden` kills first. `--rail-digit` must become a function of
-  `--rail-num` and the 0.2px margin must be re-derived AT THE NEW SIZE. Re-measure
-  the worst case (24×24, a hand-built 12-single-digit-run clue) in a real browser in
-  both themes and report the first numeral's clearance in px; the current figure is
-  2.38px, and 6.0px leaves exactly 0.00px.
+  is ≈ −0.6/cols and a bounded fixed point exists — a monotone CONTRACTION, not a
+  feedback loop with no fixed point, and the comment saying otherwise has been
+  superseded in place rather than deleted. Shipped as
+  `--rail-num: clamp(10px, calc(var(--cell) * 0.3), 20px)` with
+  `--rail-digit: calc(var(--rail-num) * 0.62)`, `--rail-badge: var(--rail-num)`, all
+  four re-declared on `.mg-board-stage` because a custom property substitutes its
+  own `var()`s **where it is declared** (at `:root`, `--cell` is still 32px and the
+  re-declaration would be a no-op). The fit now iterates to a verified fixed point
+  over at most `FIT_PASSES = 4` and paints nothing at all when it has not
+  converged, rather than painting a value it is still arguing with.
+  The trap was closed rather than repeated: `--rail-digit` is a **function** of
+  `--rail-num`, not a scaled constant, and the per-digit margin is now 0.20/0.24/
+  0.34/0.40px and GROWING with the numeral, because the advance is exactly 0.6em at
+  every size. Re-measured on the built bundle, the 12-single-digit-run case a
+  24-cell line can hold clears by 2.40px at the smallest step (fit/s/m, numeral
+  10px) and 2.88/4.03/4.80px at l/xl/xxl, against a pre-change figure of 2.38px
+  and a 0.00px landing at a 6.0px digit. The worst case is now the SMALLEST numeral,
+  not the largest, because the budget's 3px leading constant does not scale — which
+  is the opposite of the assumption the old flat value encoded.
 
 ## Lessons
 
+- **A measurement probe that reads the WRONG element will report a defect that does not exist — and the fix is to print the element, not just the count.** The first run of this round's probe reported `openTapes=1` with the layer off and I was one step from calling it a leak. The one surviving tape is the LEGEND's own key: the legend deliberately carries no `data-hints` so it always teaches the true shape, and its swatch is literally `<span class="mg-run-tape" data-run="tape" data-cap="only">`, which a document-wide `.mg-run-tape[data-run="tape"]` selector matches. Scoped to the board stage the count is 0 → 34 → 0 as designed. This is lesson (1) from the Phase 4 round recurring in its sharpest form: the same shape of mistake, three rounds apart, in a file I wrote myself. The generalisation: **when a count disagrees with a design claim, dump `outerHTML` of the offender before theorising** — a two-line diagnostic that would have cost thirty seconds and is now built into the probe permanently (`offenders`).
+- **A `waitFor` that swallows exceptions will report a bug in its own predicate as a page that will not load.** This round's probe timed out at 60s pointing at `document.readyState === 'complete'`, which is the canonical "the page is dead" signature. The page was fine. The cause was mine: the module declared `const URL = 'http://localhost:4173/minegram/'`, which **shadows the global `URL` constructor** for the whole file, so `new URL(URL).origin` threw a `TypeError` inside the predicate, `waitFor`'s `catch {}` ate it, and the loop spun to timeout with no diagnostic. Two independent lessons: (a) never `catch {}` inside a polling predicate without recording why — `waitFor` now keeps the last failure reason and puts it in the timeout message, so this class of failure can never again masquerade as an unreachable server; (b) a `const URL` / `const fetch` / `const crypto` at module scope is a shadowing bug waiting for the first call that needs the global, and in a probe the only symptom is a timeout.
+- **A constant justified by an INCONVENIENCE will read as a CONSTRAINT forever, and the fit loop is exactly where the difference shows.** `--rail-num` was flat at 10px with a recorded reason that a flat value "closes the fit loop on paper" so the host's measure cannot chase its own output. That is a real concern about a real cycle, answered by a blunt instrument. The cycle's map has slope ≈ −0.6/cols, so it is a monotone **contraction** with a bounded fixed point — the loop was always convergent and the flat value was a convenience traded for certainty. Scaling the value was correct, and it is worth recording *why* the original reasoning felt airtight: a 1.62×–3.6× overcount reads like a mechanism rather than an estimate, and nothing in the code would ever contradict it. The generalisation: **when a constant carries a prose justification, check whether the prose is a proof or a workaround, and record which.** A workaround that has hardened into a stated constraint will keep dictating the design long after the reason stopped applying.
 - **The rule that decides a membership question must be a fact about the CODE, not a fact about the WORD the player used — and the two are not substitutes.** Round 3 grounded the hint layer on the word 提示 occurring in exactly two legend cues, and that grounding was correct about those two and silent about everything else. It was a *search* result, not a *rule*: it could enumerate what already matched and had no way to say what else belonged. Round 4 the player asked whether 段落位置已定 was a 提示 too, and under the search-result reading the honest answer would have been "no, the word is not there" — while the right answer was yes, because `RunGuides` returns `null` unless `run.invariant`, so that tape reports a deduction the solution made and the player did not. The generalisable form: **quote the artifact to find the candidates, then apply a code-grounded test to each one.** A word tells you what the player is pointing at; it cannot tell you where the boundary is. Here the boundary is inference versus acknowledgement — name what the machine deduced, or name what the player finished — and that cut is legible in the components, survives a new candidate appearing, and would have answered the player's question before it was asked. The corollary is about my own record-keeping: the round-3 entry in this file still reads as a completed justification, and a completed justification is exactly what stops the next question from being asked properly. Record the *rule* a decision was reached by, not only the decision.
 
 - **A probe that cannot reach the server will report a product defect that does not exist.** `vite preview` bound `[::1]:4173` only, so every probe's hardcoded `http://127.0.0.1:4173/minegram/` got a connection-refused page. The failure was invisible because `document.readyState === 'complete'` is just as true on `chrome-error://chromewebdata/` as on `about:blank` — the probe's readiness wait passed instantly on an error page, then timed out sixty seconds later waiting for a board that was never on screen. Two probes failed this way and neither failure was a product bug. The two defences: have a probe **print the URL it actually landed on** and assert the origin, and never treat a `waitFor` timeout as a defect until `location.href` has been read. Always drive the app at `localhost`, never `127.0.0.1`.
