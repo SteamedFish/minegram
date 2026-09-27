@@ -46,11 +46,21 @@ const ENTRIES = [
   'revealed',
 ] as const
 
-/* The hint layer, as the legend states it. Two entries, and no third: the run's
-   highlight and the line's ✓ are the acknowledgement of work the player did, and
-   calling them a hint is the error the player corrected. A gate that grows is a
-   bug, so this is a named list rather than a test's expectation. */
-const HINT_GATED: ReadonlySet<string> = new Set(['contradiction', 'unresolved'])
+/* The hint layer, as the legend states it, and the cut is INFERENCE against
+   ACKNOWLEDGEMENT: a member says something the MACHINE worked out that the player
+   has not done, a non-member says something the PLAYER has done. So the two
+   annotations are in it, and now so is the run's position tape — the player's own
+   question decided that (「段落位置已定 这个应该也属于提示？」), because an open run's tape is
+   the machine placing the run for them. What is NOT in it, and must not be: the
+   CLOSED run's tape, the filled numeral and the line's ✓, all of which are keyed
+   off the player's own marks. A gate that grows is a bug, so this is a named list
+   rather than only a test's expectation — the test asserts this set exactly.
+
+   `runTape` here is the swatch for the OPEN run's tape, `data-run="tape"`, which
+   is the same element `RunGuides` renders. The closed run's tape is not a legend
+   entry of its own; it is part of `runComplete`'s swatch, because that is the one
+   the player sees on a finished run and the one that must never be switched off. */
+const HINT_GATED: ReadonlySet<string> = new Set(['contradiction', 'unresolved', 'runTape'])
 
 export function Legend({ t }: LegendProps) {
   return (

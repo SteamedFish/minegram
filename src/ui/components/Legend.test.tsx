@@ -109,9 +109,13 @@ describe('Legend', () => {
     }
   })
 
-  it('names the hint layer on exactly the two annotations, in the switch\'s own words', () => {
+  /* The layer is the annotations keyed off MACHINE INFERENCE — the two rail
+     annotations and the open run's position tape — and the order here is the
+     legend's own, so a fourth member cannot slip in at the end unnoticed. */
+  it('names the hint layer on exactly the two annotations and the position tape, in the switch\'s own words', () => {
     const gated = legendItems().filter((entry) => entry.hasAttribute('data-legend-gate'))
     expect(gated.map((entry) => entry.getAttribute('data-legend'))).toEqual([
+      'runTape',
       'contradiction',
       'unresolved',
     ])
@@ -120,9 +124,10 @@ describe('Legend', () => {
       /* The switch's own label, not a second spelling of it. */
       expect(entry.querySelector('.mg-legend__gate')?.textContent).toBe(t.settings.hints.label)
     }
-    /* And nothing else claims to be a hint: the run highlight and the line's ✓ are
-       the acknowledgement of the player's marking, and the player called that
-       必须做的. A gate that grows is a bug. */
+    /* And nothing else claims to be a hint: the CLOSED run's tape, the filled
+       numeral and the line's ✓ are the acknowledgement of the player's own marking,
+       and the player called that 必须做的. A gate that grows is a bug — which is why
+       this list is the assertion and not a comment. */
     for (const entry of legendItems()) {
       if (entry.hasAttribute('data-legend-gate')) continue
       expect(entry.querySelector('.mg-legend__gate')).toBeNull()

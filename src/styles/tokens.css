@@ -275,20 +275,31 @@
      would make one line taller than the other and the column rail's bottom edge
      would no longer be a straight line of baselines.
 
-     The numeral is a FLAT 10px, and that is the design decision, not a shortcut.
-     10px is the stated legibility floor: the mono rail figures measure 6.00px of
-     advance at that size — 0.6 of the font-size, checked in a real browser rather
-     than assumed from the stack — which still leaves a bowl you can read, and
-     below 9px they start to fill in. Keeping it flat also closes the fit loop on
-     paper: `--rail-band` and `--rail-col` are then a function of the round's
+     The numeral SCALES with the board — 0.3 of the cell — floored and capped.
+     10px remains the stated legibility floor, and it is still MEASURED rather
+     than assumed: the mono rail figures are 6.00px of advance at that size, 0.6
+     of the font-size, checked in a real browser, and below 9px the bowls start
+     to fill in. So the two small cells (26px, 32px) still read 10px, 40px reads
+     12px, 56px reads 16.8px, and 20px is a HARD ceiling rather than a rounding
+     of the 72px cell, so `--rail-col` has a constant top however far the zoom
+     step pushes. One numeral in three tenths of a cell is still subordinate: the
+     rail is read, the board is played.
+
+     This paragraph used to hold the numeral FLAT on purpose. The reason is worth
+     keeping, because its opposite is why the player reported that enlarging the
+     board did not enlarge the numbers. A flat value closed the fit loop ON
+     PAPER: `--rail-band` and `--rail-col` were then a function of the round's
      clues alone, so the host's fit measure — which reads this rail's two costs
-     back off the corner cell — cannot chase its own output. The trade is that
-     the rail stops growing with the board, which is right for a reference the
-     player reads rather than clicks. */
-  --rail-num: 10px;
+     back off the corner cell — could not chase its own output, and it did not
+     have to. Flat was correct arithmetic and wrong design: a numeral that never
+     grows is illegible at every size above the default, which is the same defect
+     as an unreadable one, only quieter. So the loop is closed BY THE HOST
+     instead, which re-solves `--cell` until it stops moving and paints nothing
+     it did not converge on. */
+  --rail-num: clamp(10px, calc(var(--cell) * 0.3), 20px);
   --rail-lh: 0.95;
   --rail-step: calc(var(--rail-num) * var(--rail-lh) + var(--rule-w));
-  --rail-badge: 10px; /* the line-state glyph's strip, one step tall at the floor */
+  --rail-badge: var(--rail-num); /* the line-state glyph's strip, one numeral tall */
   --rail-run-gap: 5px; /* the gutter BETWEEN runs — what makes two digits two runs */
   /* `--rail-digit` is one numeral's advance, MEASURED, not assumed. In the face
      the mono stack actually resolves to (`ui-monospace`, then SF Mono, Cascadia
@@ -312,8 +323,19 @@
      resolves even a fraction wider than the measured one takes it. Drop the
      budget to 5.3px (track 134.59) and the first numeral is 5.42px outside the
      cell with one run clipped, which is the failure this constant exists to
-     prevent. Do not round it down to the measured advance. */
-  --rail-digit: 6.2px;
+     prevent. Do not round it down to the measured advance.
+
+     And do not leave it at 6.2px either, which is what a scaling numeral
+     requires it NOT to be. 0.6 is the FACE's ratio — an advance in ems — so it
+     holds at every size by definition, and only the 2% on top of it is ours to
+     choose; 0.62 is that choice, written as a function of the numeral instead of
+     a constant, so the margin GROWS with the ink rather than shrinking out of
+     the budget: 2.4px of clearance for 12 numerals at a 10px numeral (2.38px
+     measured), 4.1px at 16.8px, 4.8px at the 20px cap. A 12-run rail at the cap
+     asks `3 + 20 + 12 x 12.4 + 11 x 5 = 226.8px`, so the worst clue a 24-cell
+     line can hold is still the one the budget is tuned for, and it is now tuned
+     for it at every zoom step rather than at the smallest one. */
+  --rail-digit: calc(var(--rail-num) * 0.62);
   /* The `3px` opening `--rail-col` is 1px of cell padding on each side PLUS the
      one pixel of border a settled or contradicted line spends on its own edge:
      §1 draws that edge as `border-inline-end`, which comes out of the content
@@ -341,7 +363,17 @@
      instead. That is the intended trade (a scrolled board beats a 10px grid),
      and 1x1 hits the ceiling, centred. The two largest steps are meant to
      overflow: the pane caps its own height and scrolls, so an oversized board
-     never traps the page. A 15x15 default at M is 480 + --rail-col. */
+     never traps the page. A 15x15 default at M is 480 + --rail-col.
+
+     One line of that formula is now ITERATIVE rather than a single pass:
+     `--rail-col` counts `--rail-digit`, `--rail-digit` is a function of
+     `--rail-num`, and `--rail-num` is a fraction of `--cell` — so a bigger cell
+     asks for a wider rail, which hands back a smaller cell. The host therefore
+     re-solves until `--cell` stops moving and paints nothing it did not
+     converge on: the round appears at the size the board is actually settled
+     at, never at one it is about to leave. Only the two largest zoom steps can
+     make that matter, because only there does a wider rail change the answer.
+     */
 
   /* ===========================================================================
      6. Motion — one budget, no bounce, nothing that moves a cell's box (§7.3)

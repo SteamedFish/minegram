@@ -94,6 +94,197 @@ const FIT_FLOOR_PX = 24
 const FIT_CEILING_PX = 56
 
 /**
+ * How many times the fit solve may re-solve before it gives up.
+ *
+ * The solve used to be one pass, and one pass was enough while the rail was a
+ * constant: `--rail-col` and `--rail-band` were a function of the round's clues
+ * alone, so the number the measure produced could not change the numbers it had
+ * read. That is no longer true and cannot be made true again, because the
+ * numeral now scales with the cell (tokens.css §5): `--rail-col` counts
+ * `--rail-digit`, which is 0.62 of `--rail-num`, which is 0.3 of `--cell`. A
+ * bigger cell therefore asks for a wider rail, and a wider rail hands back a
+ * smaller cell — a real fixed point, and a cheap one, but it has to be walked to.
+ *
+ * Four is not a guess about how long it takes. The chain is monotone, and each
+ * link is shallow: the block axis moves `--cell` by at most
+ * `0.3 x 0.95 x slots / rows` px per pass (0.05px for the worst clue a 24-row
+ * board can hold) and the inline axis by 0.03px, so two passes settle anything
+ * that is not already sitting on a floor or a ceiling. Four leaves room for the
+ * pane's own box to move under the measure — a scrollbar appearing is a second
+ * observation, not a second link — and is still bounded, which is the property
+ * that matters: a solve that cannot terminate would hang a frame.
+ */
+const FIT_PASSES = 4
+
+/**
+ * What the pane and its rail cost at ONE candidate cell size, read live.
+ *
+ * A function of `cell` rather than a snapshot, because that is the whole shape
+ * of the fix: the caller writes the candidate onto the stage and then reads the
+ * two costs back, so the costs are always the ones that candidate actually
+ * produced. The board, the pane and the rail are three nested boxes and CSS will
+ * not tell us the answer without being asked.
+ */
+export type FitProbe = (cell: number) => {
+  readonly paneInline: number
+  readonly paneBlock: number
+  readonly railInline: number
+  readonly railBlock: number
+  /**
+   * What the stage spends on itself on each axis, and nothing else.
+   *
+   * Read from the stage's parts, never from `pane - grid`, because a stage that
+   * ever STRETCHED to the pane would hand its slack back as chrome and the solve
+   * would subtract the same pixels twice. The parts are structural and small: the
+   * stage's own border and padding, plus the rails ROW's border and padding, which
+   * the corner does not cover. `.tmp/style-check.mjs` pins the CSS shape this
+   * relies on; a stretch would be a layout decision, and the layout is `max-content`
+   * on both axes in board.css §2.
+   */
+  readonly inlineChrome: number
+  readonly blockChrome: number
+}
+
+export type FitOutcome = {
+  /** The size the board should paint at. Never outside the floor and the ceiling. */
+  readonly cell: number
+  /** How many solves it took, counting the one that found the answer. */
+  readonly passes: number
+  /** False when the budget ran out, which the caller treats as "paint nothing". */
+  readonly converged: boolean
+}
+
+/**
+ * What the stage spends on itself, on both axes, measured from its parts.
+ *
+ * The pane measures the stage's border box, and the stage's border box is this
+ * chrome plus the rail track plus `columns x cell`. The solve charges the band and
+ * the rail track, so this is the part that would otherwise be charged to neither
+ * and silently handed back as free room — see the block-axis note in `fitCellAt`
+ * for the 3px ramp that omission caused once the solve started walking.
+ *
+ * `getComputedStyle` on the stage, and the rails row's own box against the corner's:
+ * the corner spans the band exactly, and the row it sits in is the band plus the
+ * row's border and padding. Reading it as a difference rather than as a constant is
+ * the point — a 1px row border is 3.2% of a 32px cell and 25% of a 12.8px floor cell,
+ * and neither number is worth writing down twice.
+ */
+function stageChrome(
+  stage: HTMLElement | null,
+  corner: HTMLElement | null,
+): { readonly inline: number; readonly block: number } {
+  if (stage === null) {
+    return { inline: 0, block: 0 }
+  }
+  const cs = getComputedStyle(stage)
+  const num = (value: string): number => {
+    const parsed = Number.parseFloat(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  const railsRow = stage.querySelector<HTMLElement>('.mg-board-row--rails')
+  const rowChrome = railsRow === null || corner === null ? 0 : Math.max(0, railsRow.offsetHeight - corner.offsetHeight)
+  return {
+    inline:
+      num(cs.borderInlineStartWidth) +
+      num(cs.borderInlineEndWidth) +
+      num(cs.paddingInlineStart) +
+      num(cs.paddingInlineEnd),
+    block:
+      num(cs.borderBlockStartWidth) +
+      num(cs.borderBlockEndWidth) +
+      num(cs.paddingBlockStart) +
+      num(cs.paddingBlockEnd) +
+      rowChrome,
+  }
+}
+
+/** One solve at a given candidate, exported so a test can hold the chain still. */
+export function fitCellAt(
+  probe: FitProbe,
+  columns: number,
+  rows: number,
+  cell: number,
+): number {
+  // The rail costs the pane a COLUMN on the inline axis and a BAND on the block
+  // axis, and both come off before the cells divide what is left. Reading them
+  // off the corner cell — which spans exactly the band, and whose width IS the
+  // content-sized rail track — keeps the two axes symmetric and picks up any
+  // change to either without a constant to update here.
+  const {
+    paneInline,
+    paneBlock,
+    railInline,
+    railBlock,
+    inlineChrome,
+    blockChrome,
+  } = probe(cell)
+  const byWidth = Math.floor((paneInline - inlineChrome - railInline) / columns)
+  // The vertical half of Fit, which §1.7's width-only solve never had. A cell has
+  // to fit BOTH axes, so the answer is the SMALLER of the two solves — `max` here
+  // would grow a board straight back out of the pane, which is the defect this
+  // solve exists to remove.
+  //
+  // Reading the pane's OWN box, rather than any board variable, is what keeps the
+  // cap ⇄ cell-size exchange one-directional. The pane is capped by
+  // `min(70vh, 46rem)` in board.css — a value no board can influence, because it is
+  // written in viewport units and in `rem`, and the stage inside the pane is
+  // `max-content`. So the measure's inputs cannot include the board's own output.
+  // THE OTHER HALF OF THAT CLAIM WAS WRONG, and walking the solve is what found
+  // it. On the block axis the pane is NOT always capped: while the board is
+  // shorter than the cap, the pane is tracking the board, so its height IS the
+  // board's output and the two cancel — a no-op, the only correct answer. They did
+  // not quite cancel, because the pane measures the stage's border box and the
+  // solve was only subtracting the band. The stage spends 3px on itself at rest
+  // (1px border above, 1px below, and the rails ROW's 1px `border-block-end`,
+  // which is outside the corner's own 34px), so the solve saw 3px more room than
+  // existed, asked for a cell 3px too big, the pane grew by 3px, and the next pass
+  // saw the same 3px again. Measured on a 1x1 board at `--cell` 32: `pane` 69,
+  // `band` 34, so `byHeight` 35 — and the chain ramped 32 → 35 → 38 → 41 → … to
+  // the ceiling, where it turned around and came back down. The one-pass solve hid
+  // this by painting a single 3px-oversized cell and never looking again; it is
+  // the ITERATION that made the 3px into a non-terminating chain, and the fix is
+  // to charge the chrome to the account that spends it rather than to shorten the
+  // walk. With chrome charged, a tracking pane returns the cell it is already at —
+  // a true no-op, so the chain is one pass — and a capped pane loses the 3px of
+  // chrome that really is spent, which costs a 3-row board one cell of nothing.
+  //
+  // The loop that remains is the rail's, and `settleFitCell` below walks it. A
+  // hidden region measures zero on both axes; the width solve is then the only one
+  // with an answer, and a board that is merely not on screen yet must not be sized
+  // to the floor because of it.
+  const available = paneBlock - blockChrome - railBlock
+  const byHeight = available > 0 ? Math.floor(available / rows) : byWidth
+  return Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, Math.min(byWidth, byHeight)))
+}
+
+/**
+ * Walk the fit solve to its fixed point.
+ *
+ * The chain is monotone and its links are shallow, so this converges; the budget
+ * is there for the case where it does not, because the caller's honest response
+ * to a board that will not settle is to leave the last size it settled on rather
+ * than to paint one it is about to leave. `converged` is what lets it say so:
+ * the effect does not paint an unconverged answer at all.
+ */
+export function settleFitCell(
+  probe: FitProbe,
+  columns: number,
+  rows: number,
+  start: number,
+  maxPasses: number = FIT_PASSES,
+): FitOutcome {
+  let cell = Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, start))
+  for (let passes = 1; passes <= maxPasses; passes += 1) {
+    const next = fitCellAt(probe, columns, rows, cell)
+    if (next === cell) {
+      return { cell, passes, converged: true }
+    }
+    cell = next
+  }
+  return { cell, passes: maxPasses, converged: false }
+}
+
+/**
  * The board region's stable focus destination, exported because `RoundBanner`
  * hands focus to it: a win notice holds focus on its own primary button, and the
  * interlude then unmounts that button, so whatever the browser focuses next is
@@ -122,6 +313,10 @@ export function BoardSurface(props: BoardSurfaceProps) {
   const [roving, setRoving] = useState(0)
   const [focusInside, setFocusInside] = useState(false)
   const [fitCell, setFitCell] = useState(32)
+  // The size the fit effect last SETTLED on, as a ref rather than a dep: the
+  // solve walks from there, and a state read would make the effect depend on its
+  // own output, which is the render loop the note on its deps warns about.
+  const fitSettled = useRef(32)
   const round = snapshot.status.round
   const columns = board?.columns ?? 0
   const rows = board?.rows ?? 0
@@ -309,41 +504,57 @@ export function BoardSurface(props: BoardSurfaceProps) {
     if (node === null || typeof ResizeObserver === 'undefined' || columns === 0) {
       return
     }
+    // An explicit zoom step is not the fit, and the measure cannot be allowed near
+    // it. This is the second half of a clobber the first half explains: the probe
+    // writes each candidate onto the stage's OWN `--cell` to price it, and the last
+    // write is the answer — so when the answer equals the value React already has in
+    // `fitCell`, `setFitCell` bails out, nothing re-renders, and the board keeps the
+    // probe's pixels. Measured at 15x15 in 1440x900: choosing `xxl` painted 32px,
+    // the fit's answer, and the numerals stayed at the resting 10px, because 72 was
+    // written by React and then overwritten by a measure that had no business running.
+    // The earlier reading — that a walk to a fixed point was the fix — was wrong about
+    // this: the walk fixed the ramp, not the clobber, and a walk that ends where it
+    // started is the quietest kind of clobber. So the fit only runs while it is in
+    // charge, and the probe's writes are a measure's private business.
+    if (!isFit) {
+      return
+    }
     const measure = (): void => {
-      // The rail costs the pane a COLUMN on the inline axis and a BAND on the block
-      // axis, and both come off before the cells divide what is left. Reading them off
-      // the corner cell — which spans exactly the band, and whose width IS the
-      // content-sized rail track — keeps the two axes symmetric and picks up any
-      // change to either without a constant to update here.
       const corner = rail.current
-      const inlineCost = corner?.offsetWidth ?? 0
-      const blockCost = corner?.offsetHeight ?? 0
-      const byWidth = Math.floor((node.clientWidth - inlineCost) / columns)
-      // The vertical half of Fit, which §1.7's width-only solve never had. A cell has
-      // to fit BOTH axes, so the answer is the SMALLER of the two solves — `max` here
-      // would grow a board straight back out of the pane, which is the defect this
-      // solve exists to remove.
+      const stageNode = stage.current
+      // Each candidate is written onto the stage and the two costs are read back
+      // AFTER it, because the costs are a function of the candidate: a wider
+      // numeral is a wider rail, and reading them before the write would solve
+      // against the previous answer. The write is the same property React owns,
+      // with the same value React would write, so the transient passes leave no
+      // trace — the one place that is not true is the non-converged return below.
       //
-      // Reading the pane's OWN box, rather than any board variable, is what keeps this
-      // free of the cap ⇄ cell-size loop. The pane is capped by `min(70vh, 46rem)` in
-      // board.css — a value no board can influence, because it is written in viewport
-      // units and in `rem`, and the stage inside the pane is `max-content`. So the
-      // measure's inputs cannot include the board's own output.
-      //
-      // The loop also closes on itself, which is why no settling pass is needed:
-      //   • board taller than the cap → the pane is a scroller at the cap, so
-      //     `byHeight` is exactly the cell that makes the board fit, and it stays.
-      //   • board shorter than the cap → the pane is a grid and shrinks to the board,
-      //     so `clientHeight` is the board's height and `byHeight` is the size the
-      //     board already is: the measure is a no-op.
-      // Either way the next observation returns the same number, and the floor and
-      // the ceiling are pure constants.
-      const available = node.clientHeight - blockCost
-      // A hidden region measures zero on both axes; the width solve is then the only
-      // one with an answer, and a board that is merely not on screen yet must not be
-      // sized to the floor because of it.
-      const byHeight = available > 0 ? Math.floor(available / rows) : byWidth
-      setFitCell(Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, Math.min(byWidth, byHeight))))
+      // The chrome is read ONCE per measure, outside the chain, because it is
+      // structural: the stage's own border and padding and the rails row's border
+      // and padding are the same pixels at every candidate, which is exactly the
+      // property that makes charging them a fixed point rather than a loop.
+      const chrome = stageChrome(stageNode, corner)
+      const probe: FitProbe = (cell) => {
+        stageNode?.style.setProperty('--cell', `${cell}px`)
+        return {
+          paneInline: node.clientWidth,
+          paneBlock: node.clientHeight,
+          railInline: corner?.offsetWidth ?? 0,
+          railBlock: corner?.offsetHeight ?? 0,
+          inlineChrome: chrome.inline,
+          blockChrome: chrome.block,
+        }
+      }
+      const outcome = settleFitCell(probe, columns, rows, fitSettled.current)
+      if (!outcome.converged) {
+        // Put back the size React last rendered before returning, so a board that
+        // will not settle holds still instead of freezing on a candidate the
+        // measure had already disowned.
+        stageNode?.style.setProperty('--cell', `${fitSettled.current}px`)
+        return
+      }
+      fitSettled.current = outcome.cell
+      setFitCell(outcome.cell)
     }
     measure()
     const observer = new ResizeObserver(measure)
@@ -357,8 +568,10 @@ export function BoardSurface(props: BoardSurfaceProps) {
     // without re-running here the fit would be solved against the PREVIOUS
     // round's rail. `fitCell` itself is deliberately NOT a dep: it is the
     // effect's own output, and depending on it would let a numeral-size change
-    // feed the corner back into the measure as a render loop. The observer
-    // watches the pane only, so a content change never re-fires it.
+    // feed the corner back into the measure as a render loop — which is why the
+    // solve walks to its own fixed point INSIDE one pass instead. The observer
+    // watches the pane only, so a content change never re-fires it; a change of
+    // cell size does not need it to, because every pass re-reads the live costs.
   }, [columns, rows, round, isFit])
 
   function moveTo(next: number): void {
@@ -855,6 +1068,7 @@ export function BoardRow({
             preview={drag.previewVerdictOf(cell.index)}
             tabIndex={cell.index === roving ? 0 : -1}
             registerCell={registerCell}
+            hints={hints}
           />
         )
       })}
@@ -879,6 +1093,7 @@ export function BoardCell({
   preview,
   tabIndex,
   registerCell,
+  hints,
 }: {
   readonly t: Copy
   readonly cell: CellView
@@ -888,6 +1103,7 @@ export function BoardCell({
   readonly preview: PreviewVerdict
   readonly tabIndex: number
   readonly registerCell: (index: number, node: HTMLDivElement | null) => void
+  readonly hints?: boolean
 }) {
   const state = cellState(cell, revealed)
   return (
@@ -917,11 +1133,16 @@ export function BoardCell({
       data-texture={state === 'wrong-mine' || state === 'wrong-blank' ? 'hatch' : undefined}
     >
       {cell.mark === 'unknown' ? null : <span className="mg-cell__mark" aria-hidden="true" />}
-      <RunGuides run={runCovering(rowLine.runs, cell.column)} cap={capOf(rowLine.runs, cell.column)} />
+      <RunGuides
+        run={runCovering(rowLine.runs, cell.column)}
+        cap={capOf(rowLine.runs, cell.column)}
+        hints={hints}
+      />
       <RunGuides
         run={runCovering(columnLine?.runs ?? [], cell.row)}
         cap={capOf(columnLine?.runs ?? [], cell.row)}
         orientation="column"
+        hints={hints}
       />
     </div>
   )
@@ -993,17 +1214,43 @@ function capOf(runs: readonly OrderedRunProgress[], offset: number): Cap {
  * so the one state this cannot reach in play is `complete === true` with
  * `start === null`; the reachable proof that a window is inference is a non-empty
  * `mineIndices` beside a null `start`.
+ *
+ * § — and the hint layer's cut runs straight through this component. The
+ * membership rule is INFERENCE versus ACKNOWLEDGEMENT, and this function is where
+ * the two meet: `run.complete` is derived from the PLAYER's own marks, so a closed
+ * run's tape is the game saying \u201cyou finished that\u201d and is drawn at every
+ * setting; an open run's tape is the MACHINE saying where the run has to be, which
+ * the player has not done anything to earn, and it is the layer — so `hints`
+ * takes it away. The player's own question put it there: \u300c段落位置已定 这个应该也属于提示？」.
+ *
+ * It is done HERE, in React, rather than in a stylesheet, for one reason that is
+ * about testing rather than design: jsdom resolves every CSS import to an empty
+ * module here, so a `display: none` written against `[data-hints='off']` would
+ * have no committed test at all — it would be a rule nothing could fail. Removing
+ * an element is checkable, so this is a checkable gate. The residual, stated
+ * plainly: the stylesheet still cannot prove what React does, and the two are
+ * kept in step by the shape instead — `data-hints` is written on the stage either
+ * way, and the rules that read it are the two annotation edge styles in
+ * clues.css §5b, which have no other state to belong to.
  */
 export function RunGuides({
   run,
   cap,
   orientation = 'row',
+  hints,
 }: {
   readonly run: OrderedRunProgress | null
   readonly cap: Cap
   readonly orientation?: 'row' | 'column'
+  readonly hints?: boolean
 }) {
   if (run === null || !run.invariant) {
+    return null
+  }
+  // The layer's own line, in the same shape as the clue numerals': a closed run
+  // is never gated, an open run is. `hints === false` rather than `!hints`, so a
+  // caller that forgets the prop draws the loud form rather than the quiet one.
+  if (hints === false && !run.complete) {
     return null
   }
   return (

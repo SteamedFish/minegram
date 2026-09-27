@@ -144,14 +144,28 @@
      (`0.46em` of this) actually scale with the board. */
   --fs-numeral: clamp(13px, var(--cell) * 0.44, 18px);
   font-size: var(--fs-numeral);
-  /* The same re-binding, for the rail's two budgets. Both are `calc()`s over a
-     count the host writes INLINE on this element — `--rail-slots` from the
-     round's longest column clue, `--rail-digits`/`--rail-runs` from its longest
-     row clue — and a custom property resolves its own `var()` where it is
-     DECLARED, so the `:root` copies arrive with `:root`'s fallback counts
-     substituted in and are blind to the round. Re-declared here, they see the
-     real ones. `--rail-num`, `--rail-run-gap`, `--rail-digit` and `--rail-badge`
-     are constants, so they are inherited as written and need nothing. */
+  /* The same re-binding, for the rail's budgets — and it is longer than the
+     two budgets it was written for. A custom property resolves its own
+     `var()`s where it is DECLARED, so every `:root` copy arrives with `:root`'s
+     own values already substituted in, blind to whatever the host writes
+     inline here. That was always true of the two `calc()`s over the round's
+     clue counts — `--rail-slots` from the longest column clue,
+     `--rail-digits` and `--rail-runs` from its longest row clue — and it is now
+     true of the SCALING pair as well, which is why `--rail-num` is re-declared
+     here and not only at `:root`: substituted at `:root`, where `--cell` is
+     still its 32px default, it would arrive everywhere as a flat 10px and the
+     rail would not scale at all. `--rail-step` and `--rail-digit` follow it for
+     the same reason one step removed, and `--rail-badge` with them, since the
+     strip is one numeral tall. `--rail-run-gap` is still a plain constant and
+     is still inherited as written. The price is that `--rail-col` and
+     `--rail-band` now DEPEND on `--cell` — a bigger cell asks for a wider rail,
+     which hands back a smaller cell — so the host's fit measure iterates to a
+     fixed point before it paints. `settleFitCell` in `BoardSurface.tsx` is
+     that iteration. */
+  --rail-num: clamp(10px, calc(var(--cell) * 0.3), 20px);
+  --rail-step: calc(var(--rail-num) * var(--rail-lh) + var(--rule-w));
+  --rail-badge: var(--rail-num);
+  --rail-digit: calc(var(--rail-num) * 0.62);
   --rail-band: calc(var(--rail-badge) + var(--rail-step) * var(--rail-slots) + 4px);
   --rail-col: calc(3px + var(--rail-badge) + var(--rail-digits) * var(--rail-digit) + (var(--rail-runs) - 1) * var(--rail-run-gap));
   /* A drag paints with the crosshair: declared here, on the ancestor, because

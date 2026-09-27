@@ -1,7 +1,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { BoardSurface, ClueCell } from './BoardSurface'
+import { BoardSurface, ClueCell, settleFitCell } from './BoardSurface'
 import { BoardEmptyState } from './BoardEmptyState'
 import { createGameStore, type GameStore } from '../gameStore'
 import { DEFAULT_LOCALE, getCopy } from '../copy'
@@ -71,7 +71,7 @@ function openStore(): GameStore {
   return created
 }
 
-function paint(snapshot: UiSnapshot, live: GameStore, mode: MarkingMode = 'mine', hints?: boolean): void {
+function paint(snapshot: UiSnapshot, live: GameStore, mode: MarkingMode = 'mine', hints?: boolean, zoom: ZoomStep = 'fit'): void {
   const noop = (): void => undefined
   root = createRoot(container)
   act(() => {
@@ -81,7 +81,7 @@ function paint(snapshot: UiSnapshot, live: GameStore, mode: MarkingMode = 'mine'
         snapshot={snapshot}
         board={snapshot.board}
         mode={mode}
-        zoom={'fit' as ZoomStep}
+        zoom={zoom}
         fingerMarking={false}
         hints={hints}
         store={live}
@@ -270,13 +270,19 @@ describe('BoardSurface — the §5.4 reveal hooks', () => {
 
 describe('BoardSurface — the hint switch as a boundary', () => {
   /**
-   * The switch is 提示, and 提示 is EXACTLY the two boxed annotations the player's
-   * own legend names: 矛盾提示, the dashed edge and the ✕, and 进度未解, the dotted
-   * edge and the ?. It is not the acknowledgement. A run whose mines are all
-   * marked is lit and a finished line is ticked because the player did that work;
-   * the player said so twice and called it 必须做的. A switch that could take those
-   * away would be a switch that can make the game unplayable, and a gate that
-   * grows is a bug.
+   * The switch is 提示, and 提示 is EXACTLY what the player has named, which is now
+   * THREE members and not the two this block used to say: the 矛盾提示 cell (dashed
+   * edge, ✕), the 进度未解 cell (dotted edge, ?), and the 段落位置已定 tape — the
+   * underline under an OPEN run whose position the solution has forced, which the
+   * player asked about directly: 「段落位置已定 这个应该也属于提示？」. The first two
+   * are the two the player named in the legend; the third arrived by the rule the
+   * component now carries in code, which is INFERENCE versus ACKNOWLEDGEMENT — a
+   * member says something the MACHINE worked out, a non-member says something the
+   * PLAYER did. It is not the acknowledgement. A run whose mines are all marked is
+   * lit, a finished line is ticked and a CLOSED run's tape stays because the player
+   * did that work; the player said so twice and called it 必须做的. A switch that
+   * could take those away would be a switch that can make the game unplayable, and a
+   * gate that grows is a bug.
    *
    * So there are four phases, and this file pins all four:
    *
@@ -293,6 +299,11 @@ describe('BoardSurface — the hint switch as a boundary', () => {
    * geometry, and the strip is where the annotations are loudest — so "absent"
    * means an empty span, and the cell's own `data-line-state` is untouched either
    * way because this is a presentation gate and never a state gate.
+   *
+   * THE THIRD MEMBER IS NOT A CHARACTER, so it is not asserted in these four: the
+   * tape is an element, gated in `RunGuides` by returning null, and it is asserted
+   * in the test immediately after phase 4. Both gates are component gates for the
+   * same reason, and neither can be done in a stylesheet here.
    */
 
   /** The complete-line fixture: cells 0 and 3 are row 0's only and column 0's only. */
@@ -418,6 +429,72 @@ describe('BoardSurface — the hint switch as a boundary', () => {
     expect(unknown.querySelector('.mg-rail-cell__glyph')?.textContent).toBe('?')
   })
 
+  it('gates the third member — the open run tape — on the same cut, and never the closed one', () => {
+    // The tape is an ELEMENT and not a character, so it is gated by returning null
+    // from `RunGuides` rather than by emptying a span, and it is asserted on the
+    // count. That is not a stylistic difference: jsdom resolves every stylesheet
+    // import to an empty module here, so a `display: none` written against
+    // `[data-hints='off']` would be a rule with no committed test — a gate that
+    // could be deleted and nothing would fail.
+    //
+    // The board is the 2x2 diagonal, and ONE correct blank is all it takes to make
+    // the deduction: cell 1 is blank, so row 0's clue of `1` can only be cell 0, and
+    // column 1's can only be cell 3. Both runs are forced and neither is finished,
+    // so the tapes are `data-run="tape"` — the layer. Marking nothing else keeps the
+    // auto-reveal out of it: row 0's only mine is unmarked, so the line is not filled
+    // behind the player's back and a closed tape cannot be mistaken for an open one.
+    store = openStore()
+    act(() => {
+      store?.actions.mark([{ index: 1, assertion: 'blank' }])
+    })
+    const openTapes = (): Element[] => all('.mg-run-tape[data-run="tape"]')
+    const closedTapes = (): Element[] => all('.mg-run-tape[data-run="complete"]')
+    // A second `paint` on the same container is a second `createRoot`, which React
+    // warns about, so the root is torn down between every view of the same store.
+    const repaint = (hints: boolean): void => {
+      act(() => {
+        root?.unmount()
+        root = null
+      })
+      paint(store?.getSnapshot() as UiSnapshot, store as GameStore, 'mine', hints)
+    }
+
+    paint(store.getSnapshot(), store, 'mine', true)
+    // Non-vacuity first: with the layer on, the deduction is on the board, and
+    // exactly the two forced-but-unfinished runs carry a tape. The other two lines
+    // are two-cell lines with an unforced single run, which is what `invariant` means.
+    expect(openTapes()).toHaveLength(2)
+    expect(closedTapes()).toHaveLength(0)
+    // Each tape is where the deduction is, and it is the machine's claim, not the
+    // player's: the cells they sit in are unmarked.
+    for (const tape of openTapes()) {
+      // An unmarked cell is `data-mark="unknown"` — the value means "the player has
+      // said nothing", which is the whole claim: the tape is standing where no
+      // assertion was made.
+      expect(tape.closest('[data-cell-index]')?.getAttribute('data-mark')).toBe('unknown')
+      expect(tape.getAttribute('aria-hidden')).toBe('true')
+    }
+    act(() => {
+      root?.unmount()
+      root = null
+    })
+    repaint(false)
+    expect(one('.mg-board-stage').getAttribute('data-hints')).toBe('off')
+    // The whole layer: no tape of either kind, and the cells are still there, still
+    // unmarked, and still described by their own labels.
+    expect(all('.mg-run-tape')).toHaveLength(0)
+    expect(all('[data-mark="unknown"]').length).toBe(3)
+
+    // And the cut, in the direction that matters most: the player finishes the run
+    // and the tape STAYS with the layer off, because that is the acknowledgement.
+    act(() => {
+      store?.actions.mark([{ index: 0, assertion: 'mine' }])
+    })
+    repaint(false)
+    expect(openTapes()).toHaveLength(0)
+    expect(closedTapes().length).toBeGreaterThan(0)
+  })
+
   /**
    * The auto-reveal is not the hint layer, and the claim used to rest on an
    * argument no test could see: that `hints` is read in exactly one place and that
@@ -541,7 +618,13 @@ describe('BoardSurface — the height-aware Fit', () => {
     disconnect(): void {}
   }
 
-  function stubPane(width: number, height: number, railWidth = 0, railBlock = 0): void {
+  function stubPane(
+    width: number,
+    height: number,
+    railWidth = 0,
+    railBlock = 0,
+    rowChrome = 0,
+  ): void {
     Object.defineProperty(globalThis, 'ResizeObserver', {
       configurable: true,
       writable: true,
@@ -570,8 +653,13 @@ describe('BoardSurface — the height-aware Fit', () => {
     })
     Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
       configurable: true,
+      // The rails ROW is the band plus its own border, and the fit measures the
+      // difference, so `rowChrome` is how a test speaks for the 1px
+      // `border-block-end` the row spends outside the corner's box.
       get(this: HTMLElement) {
-        return this.classList.contains('mg-rail-cell') ? railBlock : 0
+        if (this.classList.contains('mg-rail-cell')) return railBlock
+        if (this.classList.contains('mg-board-row--rails')) return railBlock + rowChrome
+        return 0
       },
     })
   }
@@ -644,6 +732,52 @@ describe('BoardSurface — the height-aware Fit', () => {
     store = openStore()
     paint(store.getSnapshot(), store)
     expect(fitCell()).toBe('35px')
+  })
+
+  it('charges the chrome the stage spends on itself before the rows divide', () => {
+    // The same pane and the same band as the test above, plus the rails row's own
+    // 1px `border-block-end` — the pixels the pane measures, that the band does not
+    // cover, and that the solve used to hand back as free room. 100 − 1 − 30 = 69 over
+    // two rows is 34, and 34 is strictly inside the band, so the number cannot be
+    // produced by the width axis (which would answer the 56px ceiling) or by a
+    // dropped chrome (35).
+    stubPane(400, 100, 0, 30, 1)
+    store = openStore()
+    paint(store.getSnapshot(), store)
+    expect(fitCell()).toBe('34px')
+  })
+
+  it('holds still on a pane that is TRACKING the board, which is the case the walk broke', () => {
+    // The pane is capped by `min(70vh, 46rem)`, so a board shorter than the cap sits
+    // inside a pane that is as tall as the board: the height solve's input is then
+    // the board's own output, and the only correct answer is the cell it is already
+    // at. Measured in the browser on a 1x1 board at 32px: pane 69, band 34, 3px of
+    // chrome, so 69 − 3 − 34 = 32. A solve that ignored the chrome read 35, the pane
+    // grew to 72, and the next pass read 38 — the chain ramped to the ceiling and
+    // came back, so the board never settled and the effect refused to paint at all.
+    // Both halves are asserted in one test because the second half is the
+    // regression: the SAME pane, measured the way the solve used to measure it, does
+    // not terminate inside the budget.
+    const trackingPane = (extra: number) => {
+      const band = 34
+      return (cell: number) => ({
+        paneInline: 668,
+        paneBlock: band + cell + extra,
+        railInline: 19,
+        railBlock: band,
+        inlineChrome: 0,
+        blockChrome: extra,
+      })
+    }
+    const settled = settleFitCell(trackingPane(3), 1, 1, 32)
+    expect(settled).toEqual({ cell: 32, passes: 1, converged: true })
+    // 69 − 34 = 35 with the 3px uncharged, and the pane grows to 72, so the next pass
+    // asks for 38. The budget runs out with the board still moving, which is why the
+    // effect refuses to paint rather than paint a size it is about to leave.
+    const uncharged = (cell: number) => ({ ...trackingPane(3)(cell), blockChrome: 0 })
+    const ramped = settleFitCell(uncharged, 1, 1, 32)
+    expect(ramped.converged).toBe(false)
+    expect(ramped.cell).toBeGreaterThan(32)
   })
 
   it('keeps the rail out of the width solve', () => {
@@ -863,6 +997,23 @@ describe('BoardSurface — the height-aware Fit', () => {
     paint(store.getSnapshot(), store)
     expect(all('.mg-board-stage')).toHaveLength(0)
     expect(all('.mg-board-empty')).toHaveLength(1)
+    expect(observed).toHaveLength(0)
+  })
+
+  it('stands aside once the player has chosen a zoom step, so the step is what paints', () => {
+    // The pane is the one every test above solves to 29px from, so a measure that ran
+    // would leave its answer on the stage. The `xxl` step is 72px, the player asked for
+    // it, and the measure has no claim on it: this is the clobber the probe's DOM
+    // writes cause, measured in the browser at 15x15 in 1440x900 — choosing `xxl`
+    // painted 32px and left the rail numerals at the resting 10px, because the fit's
+    // answer happened to equal the value `fitCell` already held, `setFitCell` bailed
+    // out, nothing re-rendered, and the board kept the last candidate the probe wrote.
+    stubPane(400, 58)
+    store = openStore()
+    paint(store.getSnapshot(), store, 'mine', undefined, 'xxl')
+    expect(fitCell()).toBe('72px')
+    // And it observed nothing while it stood aside, so there is no measure waiting to
+    // write the moment the pane is next resized.
     expect(observed).toHaveLength(0)
   })
 })
