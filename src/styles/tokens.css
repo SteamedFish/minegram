@@ -276,9 +276,10 @@
      would no longer be a straight line of baselines.
 
      The numeral is a FLAT 10px, and that is the design decision, not a shortcut.
-     10px is the stated legibility floor: the mono rail figures are 0.6 of their
-     font-size wide, so a 10px numeral is a 6.7px cap with a real bowl, and below
-     9px they start to fill in. Keeping it flat also closes the fit loop on
+     10px is the stated legibility floor: the mono rail figures measure 6.00px of
+     advance at that size — 0.6 of the font-size, checked in a real browser rather
+     than assumed from the stack — which still leaves a bowl you can read, and
+     below 9px they start to fill in. Keeping it flat also closes the fit loop on
      paper: `--rail-band` and `--rail-col` are then a function of the round's
      clues alone, so the host's fit measure — which reads this rail's two costs
      back off the corner cell — cannot chase its own output. The trade is that
@@ -289,7 +290,30 @@
   --rail-step: calc(var(--rail-num) * var(--rail-lh) + var(--rule-w));
   --rail-badge: 10px; /* the line-state glyph's strip, one step tall at the floor */
   --rail-run-gap: 5px; /* the gutter BETWEEN runs — what makes two digits two runs */
-  --rail-digit: 6.2px; /* one tabular numeral's advance at --rail-num, plus rounding slack */
+  /* `--rail-digit` is one numeral's advance, MEASURED, not assumed. In the face
+     the mono stack actually resolves to (`ui-monospace`, then SF Mono, Cascadia
+     Mono, Menlo, Consolas) a 10px tabular figure is 6.00px of advance and a
+     two-digit numeral is 12.00px — the figure is exactly 0.6em, so the ratio
+     holds and two slots pay for two digits. The rendered gutter is 5.00px, exactly
+     `--rail-run-gap`, and the two add to an 11.00px pitch.
+     The 0.2px on top of the 6.00px is the WHOLE margin, and the worst clue a
+     24-cell line can hold is what spends it: 12 single-digit runs (12 mines +
+     11 gaps = 23 of 24 cells). The budget then asks for
+     `3 + 10 + 12 x 6.2 + 11 x 5 = 142.4px`, and what the numerals actually get
+     to stand in is the track less 2px of cell padding, less the 1px border a
+     settled line spends, less the 10px the clue reserves at its END for the
+     badge strip — 129px, against `12 x 6 + 11 x 5 = 127px` of ink. That 2px is
+     not shared out: the row rail is `flex-end`, so every bit of it survives in
+     FRONT of the first numeral, the one the player reads first and the one
+     `overflow: hidden` kills first. Measured in a headless Chromium at that
+     case: the first numeral's edge sits 2.38px inside the cell, nothing clipped.
+     At `--rail-digit: 6px` the same clue leaves exactly 0.00px — the first
+     numeral's left edge lands ON the cell's content edge, so a face that
+     resolves even a fraction wider than the measured one takes it. Drop the
+     budget to 5.3px (track 134.59) and the first numeral is 5.42px outside the
+     cell with one run clipped, which is the failure this constant exists to
+     prevent. Do not round it down to the measured advance. */
+  --rail-digit: 6.2px;
   /* The `3px` opening `--rail-col` is 1px of cell padding on each side PLUS the
      one pixel of border a settled or contradicted line spends on its own edge:
      §1 draws that edge as `border-inline-end`, which comes out of the content

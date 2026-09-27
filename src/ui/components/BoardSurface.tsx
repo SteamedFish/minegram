@@ -68,7 +68,8 @@ export interface BoardSurfaceProps {
   readonly fingerMarking: boolean
   /* The hint layer's master switch, rendered as `data-hints` on the stage so
      clues.css §5.1 can restore the resting treatment with four custom
-     properties. The attributes themselves stay truthful either way — this is a
+     properties, and passed down to `ClueCell` so the ✓ is not drawn at all when
+     it is off. The attributes themselves stay truthful either way — this is a
      presentation gate, never a state gate — and the `aria-label` keeps
      reporting line state to a screen reader under both values. Optional
      because the stylesheet reads an absent attribute as "on", which is also
@@ -526,7 +527,7 @@ export function BoardSurface(props: BoardSurfaceProps) {
               <BoardEmptyState t={t} />
             ) : (
               <>
-                <ColumnClueRail t={t} board={board} focusWithin={focusInside} railRef={rail} />
+                <ColumnClueRail t={t} board={board} focusWithin={focusInside} railRef={rail} hints={props.hints} />
                 {grid.map((rowCells) => (
                   <BoardRow
                     key={rowCells[0]?.index ?? 0}
@@ -539,6 +540,7 @@ export function BoardSurface(props: BoardSurfaceProps) {
                     registerCell={(index, node) => {
                       cells.current[index] = node
                     }}
+                    hints={props.hints}
                   />
                 ))}
                 {/* §5.4 on the column axis. A row has an element of its own to carry
@@ -787,11 +789,13 @@ export function ColumnClueRail({
   board,
   focusWithin,
   railRef,
+  hints,
 }: {
   readonly t: Copy
   readonly board: BoardView
   readonly focusWithin: boolean
   readonly railRef: RefObject<HTMLDivElement | null>
+  readonly hints?: boolean
 }) {
   return (
     <div
@@ -803,7 +807,7 @@ export function ColumnClueRail({
         {t.board.corner}
       </div>
       {board.columnProgress.map((line) => (
-        <ClueCell key={line.index} t={t} line={line} orientation="column" />
+        <ClueCell key={line.index} t={t} line={line} orientation="column" hints={hints} />
       ))}
     </div>
   )
@@ -817,6 +821,7 @@ export function BoardRow({
   drag,
   roving,
   registerCell,
+  hints,
 }: {
   readonly t: Copy
   readonly row: number
@@ -825,6 +830,7 @@ export function BoardRow({
   readonly drag: DragController
   readonly roving: number
   readonly registerCell: (index: number, node: HTMLDivElement | null) => void
+  readonly hints?: boolean
 }) {
   const rowLine = board.rowProgress[row]
   if (rowLine === undefined) {
@@ -835,7 +841,7 @@ export function BoardRow({
     // gradient bar at each end. The attribute is absent unless the line is
     // complete, so nothing in the DOM is being told about a line that is not.
     <div className="mg-board-row" role="row" data-line-revealed={rowLine.complete ? 'row' : undefined}>
-      <ClueCell t={t} line={rowLine} orientation="row" />
+      <ClueCell t={t} line={rowLine} orientation="row" hints={hints} />
       {cells.map((cell) => {
         const columnLine = board.columnProgress[cell.column]
         return (
@@ -973,8 +979,20 @@ function capOf(runs: readonly OrderedRunProgress[], offset: number): Cap {
  * overlay, so it needs no geometry: consecutive segments join into a continuous
  * underline and `data-cap` tells the stylesheet where the ends are.
  *
- * §5.6: only an INVARIANT run gets a tape. `mineIndices` is a deduction and is
- * deliberately not rendered — it must never read as a solution overlay.
+ * §5.6: a tape is a PROOF, and it takes all three of these to be one.
+ *   · `run.invariant` — the run's window is forced by the clue alone. A window read
+ *     off the solution is inference, and inference drawn on the board reads as an
+ *     answer key, so `mineIndices` is never rendered and never a cap source.
+ *   · `run.start !== null` — a start is proved, not merely floated.
+ *   · `run.end !== null` — an end is proved too. `start` and `invariant` are the
+ *     pure deduction; `end` is not. When the solution pins an end and leaves the
+ *     start free, `end` comes back set and `start` stays `null`, so "an end
+ *     exists" is not evidence of position and the guard has to ask for both.
+ * Dropping either guard would let a run that merely COULD be somewhere be drawn
+ * as though it were certainly there. Note that marking a window forces its start,
+ * so the one state this cannot reach in play is `complete === true` with
+ * `start === null`; the reachable proof that a window is inference is a non-empty
+ * `mineIndices` beside a null `start`.
  */
 export function RunGuides({
   run,
@@ -1008,12 +1026,32 @@ export function ClueCell({
   t,
   line,
   orientation,
+  hints,
 }: {
   readonly t: Copy
   readonly line: LineProgress
   readonly orientation: 'row' | 'column'
+  /* The same flag the stage renders as `data-hints`, and it reaches the glyph
+     because the ✓ is the one piece of the hint layer that CANNOT be switched off
+     in CSS alone: the glyph element also carries the `✕` and the `?`, so a
+     `display: none` under `[data-hints='off']` would take the contradiction
+     badges with it, and those are an error warning rather than progress. The
+     narrow rule is available — the cell already says `data-line-state` — but it
+     would live in a stylesheet no committed test can read, so the character is
+     simply not rendered here instead. Nothing announced is lost: the span is
+     `aria-hidden` and the cell's `aria-label` carries the state sentence under
+     both values. */
+  readonly hints?: boolean
 }) {
   const state = lineState(line)
+  const glyph =
+    state === 'contradiction'
+      ? '✕'
+      : state === 'unknown'
+        ? '?'
+        : state === 'complete' && hints !== false
+          ? '✓'
+          : ''
   return (
     <div
       className="mg-rail-cell"
@@ -1024,7 +1062,7 @@ export function ClueCell({
       data-line-state={state}
     >
       <span className="mg-rail-cell__glyph" aria-hidden="true">
-        {state === 'contradiction' ? '✕' : state === 'unknown' ? '?' : state === 'complete' ? '✓' : ''}
+        {glyph}
       </span>
       <span className="mg-rail-cell__clue" aria-hidden="true">
         {line.clue.length === 0 ? (
@@ -1043,9 +1081,10 @@ export function ClueCell({
                   numeral's own box filled solid confirm with the digit knocked
                   out, plus the solid underline. The block is the numeral's box
                   and nothing more, so it cannot push a column rail's run past the
-                  band or widen a row rail. The glyph above is the line's state
-                  and is always rendered, which is what lets clues.css fill the
-                  badge strip of a closed line. */}
+                  band or widen a row rail. The glyph above is the line's state,
+                  and its element is always rendered, which is what lets clues.css
+                  fill the badge strip of a closed line — only its `✓` is withheld
+                  when the player has the hint layer off. */}
               <span
                 className="mg-rail-cell__numeral"
                 data-run-state={line.runs[runIndex]?.complete === true ? 'complete' : 'open'}

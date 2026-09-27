@@ -267,6 +267,152 @@ describe('BoardSurface — the §5.4 reveal hooks', () => {
   })
 })
 
+describe('BoardSurface — the hint switch as a boundary', () => {
+  /**
+   * A closed line's tick IS the loudest mark in the layer, and a switch that
+   * removed the numerals and the underlines but left the tick standing would have
+   * moved the player's complaint rather than answered it, so the switch has to
+   * take the tick with it.
+   *
+   * What this test deliberately refuses to do is assert `display: none` or any
+   * other CSS effect: jsdom does not lay out stylesheets, so such an assertion
+   * would keep passing with the tick painted. The character has to be ABSENT
+   * FROM THE DOM for the check to mean anything, which is why `ClueCell`
+   * withholds it rather than a rule under `[data-hints='off']` hiding the span.
+   * (The span itself always exists, because the same element carries the `✕` and
+   * the `?` and the geometry of the badge strip; the tick is the part that goes.)
+   */
+  it('withdraws the closed line tick when the layer is off, and the error badges when it is on', () => {
+    store = openStore()
+    act(() => {
+      store?.actions.mark([{ index: 0, assertion: 'mine' }, { index: 3, assertion: 'mine' }])
+    })
+    const ticks = (): string[] =>
+      all('.mg-rail-cell[data-line]').map((cell) => cell.querySelector('.mg-rail-cell__glyph')?.textContent ?? '')
+
+    paint(store.getSnapshot(), store, 'mine', true)
+    expect(one('.mg-board-stage').getAttribute('data-hints')).toBe('on')
+    expect(ticks()).toEqual(['✓', '✓', '✓', '✓'])
+    // The run numerals are the rest of the layer and they are still announced by
+    // their own attributes under both values; only the drawing changes.
+    expect(all('.mg-rail-cell__numeral[data-run-state="complete"]').length).toBeGreaterThan(0)
+
+    act(() => {
+      root?.unmount()
+      root = null
+    })
+    paint(store.getSnapshot(), store, 'mine', false)
+    expect(one('.mg-board-stage').getAttribute('data-hints')).toBe('off')
+    // No tick anywhere — the assertion a `display: none` regression could not fail.
+    expect(ticks()).toEqual(['', '', '', ''])
+    expect(all('.mg-rail-cell[data-line-state="complete"]')).toHaveLength(4)
+    // The state attributes are untouched, because this is a presentation gate and
+    // never a state gate: the rail still knows which lines are closed.
+    expect(all('.mg-rail-cell__numeral[data-run-state="complete"]').length).toBeGreaterThan(0)
+    // And the label is unconditional, so a screen reader is not quieter than the eye.
+    for (const cell of all('.mg-rail-cell[data-line-state="complete"]')) {
+      expect((cell.getAttribute('aria-label') ?? '').length).toBeGreaterThan(0)
+    }
+  })
+
+  /**
+   * The `✕` and the `?` are NOT part of the hint layer. A line with no compatible
+   * pattern says the player's own marks are wrong, which is an error warning and
+   * has to survive a preference about ASSISTS — which is exactly why the tick is
+   * withdrawn in the component and the span is never hidden: a blanket
+   * `display: none` on `.mg-rail-cell__glyph` would silence the contradiction and
+   * the unknown alongside the progress.
+   */
+  it('keeps the contradiction badge at off, because a wrong mark is not a hint', () => {
+    store = openStore()
+    // Asserting BOTH of row 0 as mines puts two mines under a clue of one, which is
+    // the only way a mark can have no pattern at all: a single wrong mark is usually
+    // still fittable, and a fittable wrong mark is not a contradiction yet.
+    act(() => {
+      store?.actions.mark([
+        { index: 0, assertion: 'mine' },
+        { index: 1, assertion: 'mine' },
+      ])
+    })
+    const badges = (): string[] =>
+      all('.mg-rail-cell[data-line-state]').map((cell) => cell.querySelector('.mg-rail-cell__glyph')?.textContent ?? '')
+
+    paint(store.getSnapshot(), store, 'mine', false)
+    expect(one('.mg-board-stage').getAttribute('data-hints')).toBe('off')
+    const off = badges()
+    expect(off).toContain('✕')
+    expect(off).not.toContain('✓')
+
+    act(() => {
+      root?.unmount()
+      root = null
+    })
+    paint(store.getSnapshot(), store, 'mine', true)
+    const on = badges()
+    // Same board, same marks: the ONLY difference the switch makes is that column 0
+    // — whose only mine is the correctly marked cell 0 — earns a tick when the layer
+    // is on. The `✕` stands in both phases, in the same cell, which is the whole
+    // claim: an error warning outlives a preference about assists.
+    expect(on.filter((glyph) => glyph === '✕')).toEqual(off.filter((glyph) => glyph === '✕'))
+    expect(on).toContain('✕')
+    expect(on).toContain('✓')
+    expect(off).not.toContain('✓')
+  })
+
+  /**
+   * The auto-reveal is not the hint layer, and the claim used to rest on an
+   * argument no test could see: that `hints` is read in exactly one place and that
+   * `src/application/` imports nothing from `src/ui/`. A layering argument is
+   * true right up until somebody reads the flag in a selector or a memo. This is
+   * the observable half of the claim — flip the flag, and every mark, every lock
+   * and every label on the board must be byte-identical, including the cells the
+   * reducer revealed on its own.
+   *
+   * The `blank-locked` assertion is what keeps the test from passing vacuously:
+   * a boundary test over a board where nothing was ever revealed would prove
+   * nothing about the reveal.
+   */
+  it('leaves the revealed marks and the locks byte-identical when the flag flips', () => {
+    store = openStore()
+    act(() => {
+      store?.actions.mark([{ index: 0, assertion: 'mine' }, { index: 3, assertion: 'mine' }])
+    })
+    const fingerprint = (): string =>
+      all('[data-cell-index]')
+        .map((cell) =>
+          [
+            cell.getAttribute('data-cell-index'),
+            cell.getAttribute('data-mark'),
+            cell.getAttribute('data-locked'),
+            cell.getAttribute('data-correct'),
+            cell.getAttribute('data-state'),
+            cell.getAttribute('data-texture') ?? '',
+            cell.getAttribute('aria-label') ?? '',
+            cell.querySelectorAll('.mg-cell__mark').length,
+          ].join('\u0000'),
+        )
+        .join('\n')
+    const locks = (): string[] => all('[data-cell-index]').map((cell) => cell.getAttribute('data-locked') ?? '?')
+
+    paint(store.getSnapshot(), store, 'mine', true)
+    // The reducer filled row 0's and column 0's remaining cells on its own.
+    expect(all('.mg-cell[data-state="blank-locked"]').length).toBe(2)
+    const on = fingerprint()
+    const onLocks = locks()
+
+    act(() => {
+      root?.unmount()
+      root = null
+    })
+    paint(store.getSnapshot(), store, 'mine', false)
+    expect(one('.mg-board-stage').getAttribute('data-hints')).toBe('off')
+    expect(fingerprint()).toBe(on)
+    expect(locks()).toEqual(onLocks)
+    // The revealed cells are still revealed, and still locked, with the flag off.
+    expect(all('.mg-cell[data-state="blank-locked"]').length).toBe(2)
+  })
+})
+
 describe('BoardSurface — the unprinted region', () => {
   it('shows the empty state and no stage before a round exists', () => {
     store = createGameStore()

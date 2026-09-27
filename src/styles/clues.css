@@ -358,6 +358,19 @@
    The legend's swatches sit OUTSIDE the stage, so they never see this rule and
    keep the `:root` values: they always draw the loud form, which is right for a
    legend whose job is to name the shapes the rail can take.
+
+   The one piece of the layer this section cannot switch is the ✓, and that is on
+   purpose rather than an omission. `.mg-rail-cell__glyph` is ONE element for all
+   three of the rail's line marks, so a `display: none` here would take the `✕`
+   and the `?` with the tick — and those are not progress: a line with no
+   compatible pattern says the player's own marks are wrong, which is an error
+   warning and stays whatever the assist preference is. The narrow rule is
+   available (`[data-hints='off'] .mg-rail-cell[data-line-state='complete']`),
+   but it would live in a stylesheet no committed test can read, and a switch
+   whose removal cannot be asserted is a switch nobody will believe. So
+   `ClueCell` withholds the character instead, and the element — which carries
+   the `✕`/`?` and the strip's geometry — stays. Nothing announced is lost: the
+   span is `aria-hidden` and the cell's `aria-label` is unconditional.
    -------------------------------------------------------------------------- */
 .mg-board-stage[data-hints='off'] {
   --clue-on-ground: transparent; /* the block and the strip are GONE, not pale */
