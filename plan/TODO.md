@@ -203,21 +203,52 @@ because an optimisation brief with no measurement in it is a redesign by
 taste. `.tmp/small-probe.mjs` drives headless Chromium over CDP; `maxBlock` is
 `.mg-board-scroll`'s `max-block-size: min(70vh, 46rem)`.
 
-| viewport | cell | numeral | in view | page v-scroll | maxBlock | pane | left panel |
-|---|---|---|---|---|---|---|---|
-| 800×1280 (10" portrait) | 41px | 12.3px | 225/225 | 0 | 736px | 726 | 0px |
-| 800×1100 (portrait + browser chrome) | 40px | 12px | 225/225 | 34px | 736px | 711 | 0px |
-| 1280×800 (10" LANDSCAPE) | 32px | 10px | 225/225 | **163px** | 560px | 1191 | 0px |
-| 600×960 (8" portrait / split) | 30px | 10px | 225/225 | 13px | 672px | 543 | 0px |
-| 412×915 (phone floor check) | 24px | 10px | 165/225 | 102px | 640.5px | 355 | 0px |
+**A correction to the first survey below, which was measured in the wrong state.**
+The two side panels are hidden behind a PERSISTED flag (`minegram.panel.settings`,
+`minegram.panel.legend`), and the probe reuses one Chromium profile across every
+round, so an earlier run left them `'false'` and the whole first survey measured a
+state no player arrives in. The table immediately under this note is the CORRECTED
+one, taken with both panels explicitly opened. What the hidden state produced, and
+what it cost:
 
-24×24: 800×1280 → 25px cells, 576/576 in view, no scroll. 800×1100 → 25px,
-65px page scroll. 600×960 → **420/576 in view, the pane scrolls in BOTH axes.**
-412×915 → 192/576, pane scrolls in both axes.
+- It reported the left panel as **0px at every tablet width** and that became
+  round-5 "defect 5". With the panels open the left aside measures 737px at
+  800×1280, 569 at 600×960, 381 at 412×915 and 240 at 1280×800. **Defect 5 is
+  withdrawn — it was never a defect.**
+- It reported `keyOwnScroll false` at every viewport, which read as "the `--key-cap`
+  bound is inert". With the panels open the computed `max-block-size` is 768px at
+  800×1280, 576 at 600×960, 549 at 412×915, all with `overflow-y: auto`. **The bound
+  is live.** A boolean read off a `display: none` aside is not a measurement of the
+  thing the boolean names.
+- It UNDERSTATED landscape. Fold slack is now −151px at 15×15 and −201px at 24×24,
+  so the board's bottom edge is off-screen when the player arrives, in the most
+  natural posture a tablet has.
 
-Touch targets (`button, [role=switch], [role=button], .mg-cell, a[href],
-input, select`): under 44×44 — **241 of 241** at 15×15 and **592 of 592** at
-24×24, at EVERY viewport. Under 24×24 — 2, both `INPUT`s at 13×13.
+**Corrected survey — both panels open, on the built bundle.** `slack` is
+`window.innerHeight − pane.getBoundingClientRect().bottom` read at scroll 0, where
+the player arrives; negative means the board is below the fold. The board is
+`[data-testid="board-scroll"]`, which is also the element carrying `max-block-size`.
+
+| viewport | 15×15 cell / numeral | 15×15 slack | 24×24 in view | 24×24 slack | banner / footer / toolbar |
+|---|---|---|---|---|---|
+| 800×1280 (10" portrait) | 40px / 13.6px | +278 in fold | 576/576 | +261 in fold | 108 / 58 / 90 |
+| 800×1100 (portrait + chrome) | 40px / 13.6px | +98 in fold | 576/576 | +81 in fold | 108 / 58 / 90 |
+| 1280×800 (10" LANDSCAPE) | 37px / 12.58px | **−151 NOT in fold** | 529/576, pane scrolls XY | **−201 NOT in fold** | 108 / 58 / 90 |
+| 600×960 (8" portrait / split) | 29px / 12px | +78 in fold | 396/576, pane scrolls XY | **−79 NOT in fold** | 142 / 58 / 130 |
+| 412×915 (phone floor check) | 24px / 12px | +14 in fold | 210/576, pane scrolls XY | **−176 NOT in fold** | 190 / 98 / 166 |
+
+Portrait's page scroll is now 1759–2195px, because the settings sheet (1112–1140px
+of content) and the key (768–828px) stack BELOW the board — the board itself is
+above the fold in all three portrait viewports, which is the fact that matters and
+the reason `vPageScroll` is the wrong headline metric in a portrait layout. 412×915
+at 15×15 shows 165/225 in view with the pane panning inline.
+
+Touch targets (`button, [role=switch], [role=button], .mg-cell, a[href], input,
+select`), both panels open: **259** at 15×15 and **610** at 24×24. Under 44×44 —
+251 and 602 respectively, at EVERY viewport. Under 24×24 — **3, all
+`mg-field__checkbox` at 13×13**. The board cells cannot reach 44 at any measured
+viewport (see defect 2), so 44×44 is available on the `xl`/`xxl` zoom steps, which
+disarm both pan axes; the sub-24px floor is a real miss and is not about the board.
 
 The app has exactly one width breakpoint: `src/styles/layout.css:83
 @media (width >= 74rem)` and `:353 @media (width < 74rem)`. 74rem is 1184px, so
@@ -247,49 +278,85 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
   SMALLER member of the cycle, the one that cannot overflow. Measured after:
   cell 32→40px, numeral 10→13.6px.
 
-- [ ] **Defect 1b — the landscape cap overshoots the space the board's own
-  region gets, so the board's bottom now falls below the fold.** This is the
-  price of the fix above, and it is a layout judgement, not a logic error: the
-  band sets `--board-cap: 86dvh` (688px at 1280×800) as a fraction of the
-  VIEWPORT, but the board region only receives the viewport minus the banner
-  (108px), the footer (58px), the board's own toolbar (144px) and the body
-  margins (32px). Measured at 1280×800: `main` is 832px in an 800px viewport,
-  so `vPageScroll` went 163→302 and the board's bottom edge is below the fold at
-  scroll 0. The board is fully inside its pane and the pane is `max-block-size`
-  bounded, so this is a cap-sizing decision: either bound the board's region to
-  the space the chrome leaves (and keep the page still), or let the page scroll
-  and lower the cap so the board still finishes above the fold. The second is
-  the smaller change and preserves the larger board. OPEN, with des-5.
+- [ ] **Defect 1b — the board's bottom falls below the fold in landscape, and
+  the cap is not the term that decides it.** OPEN, with des-5. The band sets
+  `--board-cap: 86dvh` (688px at 1280×800) as a fraction of the VIEWPORT, but the
+  board region only receives the viewport less what the chrome spends above it.
+  Measured at 1280×800, 15×15, both panels open: pane `top 273`, `bottom 945`,
+  `height 672` — so **the pane is 16px short of its own cap and the cap is not
+  binding; the stage's content is.** That matters because the obvious reading of
+  the cap is wrong in exactly this regime: lowering `--board-cap` does not merely
+  trim a slack ceiling, it becomes the binding term immediately, and `fitCellAt`
+  reads it as `Math.max(paneBlock, paneBlockCap)`, so the board shrinks to match.
+  The stack above the pane is banner 148 + status 42 + toolbar ≈ 83 = 273, and the
+  fold at 800 leaves the pane 527. So the options are: lower the cap to ~527
+  (`86dvh` → `~66dvh`), which costs 15×15 roughly 37 → ~29px cells and costs 24×24
+  **nothing** because that cell is already on the 24px floor; or spend ~100px of
+  the banner/footer/status chrome instead, which buys about 7px of cell on a
+  15-row board; or a landscape-specific arrangement of those rows. The decision
+  belongs to des-5 and the measurement to the browser, not to the arithmetic
+  above. Note also that des-5's own round-5 report led with `vPageScroll`
+  ("1280×800: before 346, after 346 … No viewport scrolls more"), which is the
+  metric that hides exactly this: in landscape the page's scroll is the chrome plus
+  the board region's overshoot, and "no viewport scrolls more" is perfectly
+  compatible with the board being cut off.
 
-- [ ] **Defect 2 — no touch target reaches 44×44**, including the board cells
-  (best 41px), so WCAG 2.5.5 AAA is unmet everywhere; the two `INPUT`s are
-  below even 2.5.8 AA. This is a TRADE-OFF, not a slider: 15×15 at 44px needs
-  660px of grid plus ~209px of rail chrome, which does not fit an 800px portrait
-  tablet. Whatever is chosen has to be legible in the result, not papered over.
+- [x] **Defect 2, in the part that is reachable — no touch target reaches 44×44,
+  and the board cells cannot.** 251 of 259 targets at 15×15 and 602 of 610 at
+  24×24 are under 44×44, at every viewport. The board's own cells are the bulk of
+  that and the ceiling is arithmetic, not preference: 15×15 at 44px needs 660px of
+  grid plus ~75px of rail chrome = 735px inline, which fits 800 and neither 600 nor
+  412; 24×24 at 44px needs 1056px plus ~97px, exceeding every measured viewport in
+  both axes. So 44×44 is available on the `xl`/`xxl` zoom steps (measured `xl` at
+  1280×800 = 56px), which is the deliberate escape hatch and which des-5's pan-axis
+  work made safe by disarming both axes. The coarse-pointer band raises the
+  banner's panel disclosure, the footer's theme select and the footer's source link
+  to 44px — the last two because a class rule at `forms.css:534` sized the select
+  and beat `base.css`'s bare `select { 44px }`. STILL OPEN, and the only part
+  actually in reach: **3 targets under 24×24**, all `mg-field__checkbox` at 13×13,
+  the settings form's checkboxes. The known obstacle is that `primitives.tsx`
+  renders `<input>` and `<label htmlFor>` as SIBLINGS in a 2-column grid, so the
+  comment claiming the label wraps the control is false, and a native checkbox
+  draws shadow content at the input's own size. A 24×24 input is a CSS change if
+  the layout tolerates it; 44px would need the label to be the hit area, which is
+  a component change.
 
 - [x] **Defect 3 — below ~700px the numeral was back on its 10px floor**, so
   round 4's 「数字实在太小了」 was still present on an 8" tablet at default fit
   (600×960 → 30px cell → 10px). The floor and the ratio are now TOKENS
-  (`--rail-num-floor`, `--rail-num-ratio`) and 12px/0.34 is spent at 768–1184px
-  and in the landscape band, which takes 800×1280 12.3→13.94px, 800×1100
-  12→13.6px and 1280×800 10→13.6px. STILL OPEN below 48rem: 600×960 still
-  measures 10px, because the override is scoped `width >= 48rem`, and at 600px
-  the cell is 30px so a 12px floor would be 40% of the cell against the ratio's
-  own 34%. That is a design call, not an oversight — a floor is exactly the
-  parameter that decouples legibility from the cell, and it is the one that has
-  to be bounded against a minimum cell width.
+  (`--rail-num-floor`, `--rail-num-ratio`) and 12px/0.34 is spent in three bands:
+  `width >= 48rem and width < 74rem`, the landscape band, AND the phone band
+  `width < 48rem` that the first pass omitted. Measured with the panels open,
+  15×15: 800×1280 40px cell / 13.6px numeral, 800×1100 40 / 13.6, 1280×800 37 /
+  12.58, 600×960 29 / 12, 412×915 24 / 12. The phone band's floor costs the fit
+  0.62 × 2px per column of rail, which it already counts, and 1px of cell at
+  600×960. That the SMALLER board had the SMALLER numeral was the defect — the
+  whole point of a floor is that it decouples legibility from the cell — and it
+  is now monotonic in the right direction across all five viewports.
 
-- [ ] **Defect 4 — 24×24 on a small screen scrolls in two axes inside a page
-  that also scrolls** (600×960: pane scrolls X and Y, 420/576 in view). Nested
-  scroll containers on a touch device: a flick cannot tell the player which
-  surface will move.
+- [x] **Defect 4 — 24×24 on a small screen scrolled in two axes inside a page
+  that also scrolled**, so a flick started on the board could move the page and
+  leave the board apparently still. The pane now ARMS ONE AXIS AT A TIME: the
+  axis with something to give is the one it keeps, and the other is released to
+  the page (`panAxesFor` + `data-pan-block` / `data-pan-inline` on the pane, with
+  `overflow-inline: hidden` on the disarmed axis — `hidden`, not `clip`, because
+  `clip` is non-scrolling in Chromium and this is where the column rail's
+  stickiness is bought). Measured with 12-step touch swipes at 412×915, 15×15:
+  before, a vertical flick started on the board moved the board **0px** and the
+  page 268px; after, the same flick moves the board and leaves the page at 0,
+  while a horizontal flick still pans the board its full 77px. A 24×24 at 412×915
+  arms BOTH axes (210/576 in view) and that is not fixable — a 24×24 is 684px of
+  grid against a 355px pane, so no cap can hold it, and the zoom steps, which
+  disarm both, are the escape hatch.
 
-- [ ] **Defect 5 — the left panel is 0px at every tablet width.** Settings and
-  the legend are reachable only through the two `.mg-banner__panel-toggle`
-  controls in the banner (`src/ui/components/AppBanner.tsx:181`). The panel has
-  a persisted hide toggle, so on a tablet the player's settings vanish and two
-  icons bring them back. Decide the small-screen information architecture, and
-  make it discoverable without a tutorial without stealing the board's space.
+- [x] **Defect 5 — WITHDRAWN. The left panel was never 0px at a tablet width.**
+  It measured 0 because the panel-hide flag is persisted and the probe's shared
+  Chromium profile had it off, so the whole first survey ran against a state no
+  player arrives in. With both panels open the left aside is 737px at 800×1280,
+  569 at 600×960, 381 at 412×915 and 240 at 1280×800 — full width in every
+  portrait band, a proper column in landscape. The banner's two
+  `.mg-banner__panel-toggle` controls and the persisted hide remain as they were;
+  there is no information-architecture work to do here.
 
 
 ## Lessons
@@ -319,3 +386,7 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
 - **A fixture modelled from the FORMULA instead of from the MEASUREMENT passed the old code — the same mistake as round 4, re-learned inside the same fix.** The new cycle test derived the rail costs from the clamp arithmetic and put the 39px rail at 85.25 where the browser says 84, which moved the fixed point onto an exact value, so the chain converged under the *pre-fix* code and the test passed while testing nothing. It passed because the defect had been smoothed out of its own fixture. The corrected fixture carries the browser's measured pairs (77, 85) at 32px and (86, 92) at 40px, and asserts the cycle as a PREMISE (`f(40) === 39`, `f(39) === 40`) so the test dies if the fixture ever stops having the defect. Round 4's lesson said fixtures must be the browser's own numbers; the sharper form is that a fixture derived from the same arithmetic as the code under test cannot disagree with it, and a fixture that cannot disagree is not evidence. **Every number in a regression fixture must be traceable to an observation, not to a restatement of the implementation.**
 - **In a decreasing map, "does it fit" is `f(x) >= x`, and writing it the other way round makes the test fail on the FIX.** I asserted `fitCellAt(probe, …, settled.cell) <= settled.cell` and the correct implementation failed it, because in a decreasing map a solve that asks for a SMALLER cell than the one asked about is the OVERFLOWING one. This is the second time this round family flipped that direction — round 4 had the same inversion on the numeral's growth check — and the tell was the same both times: the failure looked exactly like the opposite of the improvement, which is what a premise that moved looks like and what a wrong inequality looks like. **An inequality that encodes a safety property is worth deriving out loud before it is written, because its direction is not guessable and the two forms are silently opposite.**
 - **Two probe faults, both of which cost real time and neither of which was a product defect.** (1) A probe that assembles from a shared prelude must carry the prelude's SHUTDOWN too — an open CDP WebSocket keeps node's event loop alive forever, so the probe does not fail, it HANGS; `small-body.mjs` ends with `await fetch(\`http://127.0.0.1:${PORT}/json/close/${target.id}\`)` followed by `process.exit(0)` and slicing the prelude without those two lines produced a 20-minute run. (2) `getComputedStyle(el).maxBlockSize` must be read from the element that CARRIES the `max-block-size` — here `.mg-board-scroll`, which is also the element the app reads `clientWidth`/`clientHeight` from, not `.mg-board-stage`, which reports `none`. That is the third wrong-element read in this project's probe history after `getComputedStyle(el)['--cell']` (a property lookup, not a custom-property one) and a wrong numeral selector. **Every one of the three produced a number that looked entirely reasonable.**
+
+- **A PERSISTED UI flag in a shared browser profile will silently measure a state no player ever arrives in — and it does not merely add noise, it invents a defect and hides two real ones.** Both side panels sit behind a persisted `minegram.panel.*` flag, and every round's probe reuses one Chromium profile on port 9224, so whatever the last run left behind became this round's baseline. The first survey of round 5 therefore reported the left panel as 0px wide at every tablet width — which I wrote into this file as "defect 5" and briefed a designer against — when the panel measures 737/569/381/240px with the flag set. The same hidden state reported `keyOwnScroll false` at every viewport, which read as "the `--key-cap` bound is inert", and it also **understated the defect I was actually chasing**: fold slack at 1280×800 is −151px, larger than the hidden-state run implied. So one leaked flag produced one phantom defect, one false "this feature is broken", and one understated real defect, all at once. The generalisation is about the ORDER of operations: **a probe must set every piece of persisted state it measures, in the state the measurement claims to be about, and a survey that reports a whole region as absent is reporting its own setup.** Related and equally cheap to honour: **a boolean read off a hidden element is not a measurement of the thing the boolean names** — `scrollHeight > clientHeight + 1` on a `display: none` aside is `0 > 1`, which is not a fact about scrollability. Both are the same failure as the three wrong-element reads above, and the fifth instance of the family earns the general rule written once: **before believing a measurement, print the element it came from, its computed `display`, and its box.** A number with no element attached to it is a guess with a decimal point.
+
+- **A refusal to act must be checked against which TERM binds, not against whether the lever is the right shape.** des-5 declined to lower `--board-cap` in the landscape band, reasoning "a cap cannot buy space, only the chrome can" — a correct statement about the page and an irrelevant one about the pane, because the pane is `max-content` under a `max-block-size`. At 1280×800 the pane measured 672px against a 688px cap: the cap was 16px short of binding, and the stage's content was what set the height. So `--board-cap` was not a slack ceiling there at all; lowering it would have become the binding term on the next measure, and `fitCellAt` reads it as `Math.max(paneBlock, paneBlockCap)` precisely so that it can. The refusal was a correct principle applied to the wrong term, and it survived because the evidence column was `vPageScroll` — a metric perfectly compatible with the board being cut off, and in a portrait layout dominated by content below the board. **Where a "max" is documented as a ceiling, measure the gap between the ceiling and the content before concluding the ceiling does nothing; a bound that is not currently binding is still a bound, and the regime in which it starts to bind is the one the design has to survive.** The second half is a scoring rule: **a report's headline number should be the one that would go red if the defect were fixed**, and `vPageScroll` is not that number in either orientation.
