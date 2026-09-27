@@ -1,7 +1,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { BoardSurface, ClueCell, settleFitCell } from './BoardSurface'
+import { BoardSurface, ClueCell, fitCellAt, settleFitCell } from './BoardSurface'
 import { BoardEmptyState } from './BoardEmptyState'
 import { createGameStore, type GameStore } from '../gameStore'
 import { DEFAULT_LOCALE, getCopy } from '../copy'
@@ -896,6 +896,64 @@ describe('BoardSurface — the height-aware Fit', () => {
     const ramped = settleFitCell(uncharged, 1, 1, 32)
     expect(ramped.converged).toBe(false)
     expect(ramped.cell).toBeGreaterThan(32)
+  })
+
+  it('settles a DECREASING chain that cycles, rather than holding the size it walked from', () => {
+    // These are the measured 1280x800 landscape terms, read out of the browser one
+    // candidate at a time by walking the real map against the real elements: a
+    // 1181-wide pane whose height is 560 at 32px and sits on the 688px cap above
+    // that, 2px of inline chrome and 3 of block, and a rail that GROWS with the
+    // cell because `--rail-num` is `clamp(12px, --cell * 0.34, 20px)`.
+    //
+    // That growth is what makes the chain decreasing, so the walk alternates around
+    // the answer instead of climbing to it. The measured trace is 32 -> 40 -> 39 ->
+    // 40 -> 39: no step ever equals the step before it, so the budget runs out with
+    // the board still moving, and the effect answers that by painting NOTHING. The
+    // board therefore stayed at 32px with the pane's cap 128px unspent, and every
+    // later resize walked the same cycle and failed the same way, so the stale size
+    // was permanent rather than momentary.
+    //
+    // The rail costs are the measured pairs (77, 85) at 32px and (86, 92) at 40px,
+    // carried linearly between, so the fixture IS the browser's own map instead of a
+    // model of it. The first draft derived them from the clamp arithmetic instead and
+    // put the 39px rail at 85.25 where the browser says 84 — which moved the fixed
+    // point onto an exact value, so the chain converged under the old code too and
+    // the test passed without testing anything. A fixture that rounds away the very
+    // behaviour it exists to pin is worse than no fixture.
+    const railBlock = (cell: number): number => Math.round(77 + ((cell - 32) * 9) / 8)
+    const railInline = (cell: number): number => Math.round(85 + ((cell - 32) * 7) / 8)
+    const landscape = (cell: number) => ({
+      paneInline: 1181,
+      paneBlock: cell === 32 ? 560 : 688,
+      paneBlockCap: 688,
+      railInline: railInline(cell),
+      railBlock: railBlock(cell),
+      inlineChrome: 2,
+      blockChrome: 3,
+    })
+    // The premise, asserted rather than assumed: this map really does cycle, and it
+    // really does cycle out of the walk the old equality test was watching. A test
+    // whose fixture no longer has the defect is a test of the fixture.
+    expect(fitCellAt(landscape, 15, 15, 40)).toBe(39)
+    expect(fitCellAt(landscape, 15, 15, 39)).toBe(40)
+    const settled = settleFitCell(landscape, 15, 15, 32)
+    // Inside the budget: the walk is shallow, so a cycle is found in a few passes
+    // and the fix must not have bought correctness with an unbounded march.
+    expect(settled.passes).toBeLessThanOrEqual(4)
+    expect(settled.converged).toBe(true)
+    // The regression, stated as the direction it moved rather than as the number it
+    // moved to: before the fix this was `converged: false` and the effect painted
+    // nothing, so the board stayed at 32px however many times it re-measured.
+    expect(settled.cell).toBeGreaterThan(32)
+    // The invariant that outlives the numbers, because it is the one a fit is not
+    // allowed to break: the size it settled on must not OVERFLOW, and in this map
+    // the way to say that is the solve's own answer. A solve that asks for a SMALLER
+    // cell than the one it was asked about is a cell that does not fit, so the answer
+    // must be at least the size we kept. At 39 the solve asks for 40 — that is 39
+    // under-filling, which is safe; at 40 it asks for 39, which is 40 overflowing by
+    // one pixel. Pinning the direction this way is what fails if the fix is changed
+    // to return the LARGER member of the cycle.
+    expect(fitCellAt(landscape, 15, 15, settled.cell)).toBeGreaterThanOrEqual(settled.cell)
   })
 
   it('grows into the pane cap it is under, instead of confirming the size it was given', () => {

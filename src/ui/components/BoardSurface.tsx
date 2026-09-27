@@ -351,11 +351,34 @@ export function fitCellAt(
 /**
  * Walk the fit solve to its fixed point.
  *
- * The chain is monotone and its links are shallow, so this converges; the budget
- * is there for the case where it does not, because the caller's honest response
- * to a board that will not settle is to leave the last size it settled on rather
- * than to paint one it is about to leave. `converged` is what lets it say so:
- * the effect does not paint an unconverged answer at all.
+ * The links are shallow, so the walk converges — but DECREASINGLY, and that word
+ * is the whole design. A bigger cell buys a bigger clue rail (`--rail-num` is a
+ * function of `--cell`), which leaves less room, so `f(cell) < cell` whenever the
+ * solve wants a bigger cell. A decreasing map cannot be walked to a fixed point
+ * from below in the monotone sense: the iterates alternate around the answer and
+ * settle into a 2-cycle. With `Math.floor` in the map the two values differ by the
+ * residual of the contraction — a single pixel at these sizes — so the walk is
+ * converged well before either value equals the other.
+ *
+ * Exact equality is therefore the wrong test, and testing only for it was a real
+ * defect: the caller's honest response to `converged: false` is to paint NOTHING
+ * and keep the size React last rendered, so a board whose fixed point is a
+ * 2-cycle could never move at all. Measured at 1280x800 with the landscape cap,
+ * the walk runs 32 -> 40 -> 39 -> 40 -> 39, exhausts `FIT_PASSES`, reports
+ * unconverged, and the board stays at 32px with a quarter of the pane unspent —
+ * a stale size that survives every later resize, because every later resize walks
+ * the same cycle and fails the same way. Detecting the cycle EXACTLY (a value
+ * coming back around is proof, a small residual is only a guess) is what lets the
+ * walk report a real answer.
+ *
+ * The two values of a cycle straddle the fixed point, so either is within the
+ * residual of it; the smaller is taken because it can only under-fill the pane by
+ * that residual, whereas the larger can overflow it. Overflow is the one failure
+ * a fit is not allowed to have.
+ *
+ * The budget is still there for a walk that neither fixes nor cycles — a chain
+ * that kept producing fresh values would be one the probe itself is mis-driving —
+ * and `converged` is still what lets the effect decline to paint it.
  */
 export function settleFitCell(
   probe: FitProbe,
@@ -365,11 +388,20 @@ export function settleFitCell(
   maxPasses: number = FIT_PASSES,
 ): FitOutcome {
   let cell = Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, start))
+  // Every value the walk has stood on, so a repeat is recognisable as a repeat.
+  // The first two are seeded: `cell` is where the walk starts, and a chain that
+  // immediately returns to its start has found its fixed point by the only route
+  // that needs no second pass to notice.
+  const seen = new Set<number>([cell])
   for (let passes = 1; passes <= maxPasses; passes += 1) {
     const next = fitCellAt(probe, columns, rows, cell)
     if (next === cell) {
       return { cell, passes, converged: true }
     }
+    if (seen.has(next)) {
+      return { cell: Math.min(cell, next), passes, converged: true }
+    }
+    seen.add(next)
     cell = next
   }
   return { cell, passes: maxPasses, converged: false }
