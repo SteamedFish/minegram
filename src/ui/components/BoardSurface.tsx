@@ -452,9 +452,9 @@ export function settleFitCell(
 ): FitOutcome {
   let cell = Math.min(FIT_CEILING_PX, Math.max(FIT_FLOOR_PX, start))
   // Every value the walk has stood on, so a repeat is recognisable as a repeat.
-  // The first two are seeded: `cell` is where the walk starts, and a chain that
-  // immediately returns to its start has found its fixed point by the only route
-  // that needs no second pass to notice.
+  // Only `cell` is seeded: a chain that immediately returns to its start is a
+  // fixed point, and the `next === cell` test below catches that on the first
+  // pass, so a cycle is the only thing left for this set to recognise.
   const seen = new Set<number>([cell])
   for (let passes = 1; passes <= maxPasses; passes += 1) {
     const next = fitCellAt(probe, columns, rows, cell)

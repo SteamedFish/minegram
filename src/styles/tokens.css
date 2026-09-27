@@ -987,12 +987,16 @@ html[data-theme='light'] {
    the binding one. The value is unchanged here on purpose; the small-screen
    gains are the band override and the layout, not a bigger number here.
 
-   The two RAIL knobs are the ones the player's 「放大游戏区域不放大数字格子」
-   asked for, and they are the reason this section exists. Below the desktop
-   breakpoint the floor rises to 12px and the ratio to 0.34: on any board small
-   enough to be fitted into a tablet, `0.3 x cell` never cleared the old 10px
-   constant, so the clamp was a constant wearing a formula. 12px is the smallest
-   numeral that still reads as a numeral; `--rail-col` grows with it and the fit
+   Neither RAIL knob is this band's to decide, and both used to be, which is
+   why this paragraph once described a floor and a ratio that no longer live
+   here. They are app-wide now — the floor is a ramp on the window's height and
+   the ratio is 0.34 everywhere, both set in the root block above, with no band
+   spending either (a check fails if one reappears). That was the player's
+   「放大游戏区域不放大数字格子」: on any board small enough to be fitted into a
+   tablet, `0.3 x cell` never cleared a flat 10px constant, so the clamp was a
+   constant wearing a formula, and the two bands that raised it did it with a
+   WIDTH literal, so a narrower window painted the larger digit. What stays in
+   this band is about the PANELS. `--rail-col` grows with the numeral and the fit
    pays for the wider rail itself, which it already knew how to do because
    `--rail-digit` is counted in `--rail-col`. */
 :root {
