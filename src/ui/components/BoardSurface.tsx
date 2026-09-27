@@ -1032,26 +1032,28 @@ export function ClueCell({
   readonly line: LineProgress
   readonly orientation: 'row' | 'column'
   /* The same flag the stage renders as `data-hints`, and it reaches the glyph
-     because the ✓ is the one piece of the hint layer that CANNOT be switched off
-     in CSS alone: the glyph element also carries the `✕` and the `?`, so a
-     `display: none` under `[data-hints='off']` would take the contradiction
-     badges with it, and those are an error warning rather than progress. The
-     narrow rule is available — the cell already says `data-line-state` — but it
-     would live in a stylesheet no committed test can read, so the character is
-     simply not rendered here instead. Nothing announced is lost: the span is
-     `aria-hidden` and the cell's `aria-label` carries the state sentence under
-     both values. */
+     because the glyph is ONE element for all three line marks: a `display: none`
+     under `[data-hints='off']` would take the ✓ with the `✕` and the `?`. The
+     narrow rules are available — the cell already says `data-line-state` — but
+     they would live in a stylesheet no committed test can read, so the two
+     ANNOTATION characters are simply not rendered here instead. The `complete`
+     branch is deliberately OUT of the flag: the run highlight and the line tick
+     are the game's acknowledgement of a finished line, not an assist, and the
+     player called that 必须做的. Nothing announced is lost either way: the span
+     is `aria-hidden` and the cell's `aria-label` carries the state sentence
+     under both values. */
   readonly hints?: boolean
 }) {
   const state = lineState(line)
+  const annotated = state === 'contradiction' || state === 'unknown'
   const glyph =
-    state === 'contradiction'
-      ? '✕'
-      : state === 'unknown'
-        ? '?'
-        : state === 'complete' && hints !== false
-          ? '✓'
-          : ''
+    annotated && hints !== false
+      ? state === 'contradiction'
+        ? '✕'
+        : '?'
+      : state === 'complete'
+        ? '✓'
+        : ''
   return (
     <div
       className="mg-rail-cell"
@@ -1060,6 +1062,14 @@ export function ClueCell({
       data-testid={`${orientation}-clue-${line.index}`}
       data-line={orientation}
       data-line-state={state}
+      /* The stage carries the switch; the cell repeats it, so a rail cell states
+         the two facts about itself a reader needs — which line it is, and whether
+         the annotations are being drawn for it — and so clues.css's five off-rules
+         are two compounds deep (the house rule for a selector chain) instead of
+         three. It costs one attribute per cell and buys specificity that does not
+         depend on the off-rules coming after the on-rules, which is the only kind
+         of ordering a later edit can break silently. */
+      data-hints={hints === false ? 'off' : 'on'}
     >
       <span className="mg-rail-cell__glyph" aria-hidden="true">
         {glyph}
@@ -1077,14 +1087,15 @@ export function ClueCell({
                   first off the cell's centre line, for a grouping the line break
                   already gives a column rail. */}
               {/* §5 states a closed run ON its numeral: `data-run-state` is the
-                  hook clues.css turns into the hint layer's ON state — the
-                  numeral's own box filled solid confirm with the digit knocked
-                  out, plus the solid underline. The block is the numeral's box
-                  and nothing more, so it cannot push a column rail's run past the
-                  band or widen a row rail. The glyph above is the line's state,
-                  and its element is always rendered, which is what lets clues.css
-                  fill the badge strip of a closed line — only its `✓` is withheld
-                  when the player has the hint layer off. */}
+                  hook clues.css turns into the acknowledgement — the numeral's own
+                  box filled solid confirm with the digit knocked out, plus the
+                  solid underline. The block is the numeral's box and nothing more,
+                  so it cannot push a column rail's run past the band or widen a row
+                  rail. Neither the block nor the `✓` reads the hint flag: a run
+                  whose mines are all marked is closed, and the tick is the line's
+                  own news, so a player who has the annotations off still gets both.
+                  The glyph element is always rendered, which is what lets clues.css
+                  fill its badge strip. */}
               <span
                 className="mg-rail-cell__numeral"
                 data-run-state={line.runs[runIndex]?.complete === true ? 'complete' : 'open'}

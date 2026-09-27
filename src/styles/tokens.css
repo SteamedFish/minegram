@@ -423,6 +423,7 @@
   /* Washes, mixed from the palette so there is no eighth colour to maintain. */
   --wash-accent: color-mix(in srgb, var(--accent) 8%, transparent); /* a wrong claim */
   --wash-accent-soft: color-mix(in srgb, var(--accent) 4%, transparent); /* …under a preview */
+  --wash-unknown-soft: color-mix(in srgb, var(--unknown) 4%, transparent); /* the 进度未解 cell's body */
   --wash-reveal: color-mix(in srgb, var(--confirm) 8%, transparent); /* an auto-revealed line */
 }
 
@@ -813,16 +814,20 @@ html[data-theme='light'] {
      puts the rail on paper or on slate. The weights are the second channel, for a
      player who cannot separate shape from colour.
 
-     Every one of these is a PAIR: the value here is the ON state, and clues.css
-     re-declares the same names on `.mg-board-stage[data-hints='off']` with the
-     resting value for that element — the same `color`, `font-weight`,
-     `font-size`, `--clue-edge` and inset shadow a rail carries with no hint layer
-     at all. Nothing is switched off by being cancelled; it is switched off by
-     becoming the value the rail already had. That is why there are nine names and
-     not four: `inherit` on a custom property means "take the parent's value",
-     which for these is the token block right here, so an `inherit` off-switch
-     leaves the ON weight in place. The OFF values are literals, each one copied
-     from the rule it replaces. */
+     One name per THING a rule changes, not per rule, because the values are not
+     interchangeable: the ✓ rests at 600 and the numeral at 400, the ✓ rests at
+     `--rail-num` and only shrinks to sit in a filled strip, the numeral rests on
+     `--ink` and a knocked-out glyph rests on the surface. A single `--clue-on-ink`
+     cannot be both, which is why there are nine names and not four.
+
+     NONE of these is switched off. The hint layer is the two annotations and not
+     this (§5b in clues.css), so a closed run's block and a closed line's ✓ are
+     the same at `data-hints="off"` as at `on`: they are the acknowledgement of a
+     line the player finished, and the player called that 必须做的. The two
+     annotations borrow `--clue-badge-ink`, `--clue-on-radius`,
+     `--clue-on-badge-size` and `--clue-on-badge-weight` for their own filled
+     strips, which is the point of naming them per thing: all three filled bars
+     in the rail are one mark, so a player learns the shape once. */
   --clue-on-ground: var(--confirm); /* the closed run's block, the closed line's badge */
   --clue-numeral-ink: var(--surface-1); /* the digit, knocked out of the block */
   --clue-badge-ink: var(--surface-1); /* the ✓, knocked out of the filled strip */

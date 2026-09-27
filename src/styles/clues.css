@@ -79,6 +79,12 @@
 
 .mg-rail-cell[data-line-state='unknown'] {
   --clue-edge: var(--clue-line-border-unknown);
+  /* The same 4% body the contradiction gets, in ochre. The filled badge strip
+     below carries the signal on its own, and this is the second channel for a
+     player scanning the rail by shape and by surface rather than by ink: an
+     annotated cell is a cell whose ground is not the resting one. §5b takes it
+     back with the rest of the annotation when the layer is off. */
+  background-color: var(--wash-unknown-soft);
 }
 
 .mg-rail-cell[data-line='row'] {
@@ -185,26 +191,52 @@
   font-weight: 600;
 }
 
+/* The two annotations fill the badge strip §3 reserved, in the SAME shape as the
+   ✓ and with the same knock-out ink, so the rail speaks one language: a FILLED BAR
+   is the machine telling the player something about this line, and the colour says
+   which thing. That is the answer to 「太不明显」 — a 1px dash and a bare 10px ✕
+   are texture on a thirty-cell rail, a bar the length of the cell is countable
+   without reading a single digit. The strip is 10px and out of flow, so a filled
+   one costs no layout, and the glyph's own size and weight are the tick's, so all
+   three strips are the same mark. */
 .mg-rail-cell[data-line-state='contradiction'] .mg-rail-cell__glyph {
-  color: var(--badge-color-contradiction);
+  color: var(--clue-badge-ink);
+  background-color: var(--badge-color-contradiction);
+  border-radius: var(--clue-on-radius);
+  font-size: var(--clue-on-badge-size);
+  font-weight: var(--clue-on-badge-weight);
 }
 
 .mg-rail-cell[data-line-state='unknown'] .mg-rail-cell__glyph {
-  color: var(--badge-color-unknown);
+  color: var(--clue-badge-ink);
+  background-color: var(--badge-color-unknown);
+  border-radius: var(--clue-on-radius);
+  font-size: var(--clue-on-badge-size);
+  font-weight: var(--clue-on-badge-weight);
 }
 
 /* The caret, borrowed from the status strip: same duration, same hard steps, one
    meaning. At rest a rail is 30 identical numbers, and this is the only motion
-   that says which of them the machine has not finished reading. */
+   that says which of them the machine has not finished reading. `mg-blink` fades
+   the element, which is right for the status caret and the busy chip because
+   neither has a ground; an annotated rail cell does, so its own keyframes pulse
+   the INK and leave the bar standing. A strobing bar is a harder thing to read
+   than a still one, and the bar is the mark. */
 @keyframes mg-blink {
   50% {
     opacity: 0.4;
   }
 }
 
+@keyframes mg-annot-blink {
+  50% {
+    color: transparent;
+  }
+}
+
 .mg-rail-cell:is([data-line-state='contradiction'], [data-line-state='unknown'])
   .mg-rail-cell__glyph {
-  animation: mg-blink var(--caret-duration) var(--caret-steps) infinite;
+  animation: mg-annot-blink var(--caret-duration) var(--caret-steps) infinite;
 }
 
 /* -----------------------------------------------------------------------------
@@ -259,13 +291,24 @@
 
 /* §5.3: contradiction and unknown both suppress run highlighting entirely, and
    §5.6 forbids asserting a deduction that is not supported. Spelled as a
-   negation so the suppression cannot be forgotten when a state is added. */
+   negation so the suppression cannot be forgotten when a state is added.
+
+   The second alternative is the hint switch (§5b), and it is the SAME set of
+   declarations rather than a second version of them: with the annotations off an
+   annotated line has nothing wrong with it that the player can see, so it is
+   treated as an ordinary line — its runs get their underline back. Neither item is
+   a judgement about the flag: they are mutually exclusive on `data-line-state`, so
+   the rule never has two answers for one cell. */
 .mg-rail-cell:not(:is([data-line-state='contradiction'], [data-line-state='unknown']))
+  .mg-rail-cell__run,
+.mg-rail-cell[data-hints='off']:is([data-line-state='contradiction'], [data-line-state='unknown'])
   .mg-rail-cell__run {
   box-shadow: inset 0 calc(var(--rule-w) * -1) 0 var(--ink-3);
 }
 
 .mg-rail-cell:not(:is([data-line-state='contradiction'], [data-line-state='unknown']))
+  .mg-rail-cell__run:has(> .mg-rail-cell__numeral[data-run-state='complete']),
+.mg-rail-cell[data-hints='off']:is([data-line-state='contradiction'], [data-line-state='unknown'])
   .mg-rail-cell__run:has(> .mg-rail-cell__numeral[data-run-state='complete']) {
   box-shadow: var(--clue-on-run-mark);
 }
@@ -275,11 +318,19 @@
 }
 
 /* -----------------------------------------------------------------------------
-   5. THE ON STATE — a closed run is INVERTED, a closed line is STAMPED
-   The player turned the hint layer on because the old marker was easy to miss: a
-   2px rule and a shade of green at 10px, repeated across thirty cells, is texture
-   and not a state. So the ON state is a SHAPE, and it is one shape in both themes
-   and both orientations:
+   5. THE ACKNOWLEDGEMENT — a closed run is INVERTED, a closed line is STAMPED
+   Nothing in this section reads the hint flag, and that is the definition rather
+   than an omission. A run whose mines are all marked is closed and its numeral
+   says so; a line whose cells are all marked is finished and the ✓ says so. The
+   player asked for exactly this twice and called it 必须做的: it is the feedback
+   the marking exists to produce, so a preference that could switch it off would be
+   a preference that can make the game unplayable. §5b switches the other two line
+   marks and must not reach this one — a gate that grows is a bug.
+
+   The treatment is loud because the marker this replaced was not: a 2px rule and a
+   shade of green at 10px, repeated across thirty cells, is texture and not a
+   state. So the acknowledgement is a SHAPE, one shape in both themes and both
+   orientations:
 
      · A closed run's numeral becomes a SOLID `--confirm` block with its own digit
        knocked out to the rail's surface. The block IS the numeral's own box — no
@@ -297,11 +348,15 @@
        is findable on a thirty-cell rail by counting bars, which is the only read
        that survives when the individual digits do not.
 
-   The hierarchy is unchanged and deliberate: ONE BLOCK is one run, a FILLED BADGE
+   The hierarchy is unchanged and deliberate: ONE BLOCK is one run, a FILLED BAR
    is a whole line. Colour and weight are kept as the second and third channels,
-   for a player who cannot separate shape from colour.
+   for a player who cannot separate shape from colour. The bars themselves are one
+   vocabulary: §5b's two annotations fill the same strip in their own inks, so a
+   player learns "a filled bar means the machine has news" once.
    -------------------------------------------------------------------------- */
 .mg-rail-cell:not(:is([data-line-state='contradiction'], [data-line-state='unknown']))
+  .mg-rail-cell__numeral[data-run-state='complete'],
+.mg-rail-cell[data-hints='off']:is([data-line-state='contradiction'], [data-line-state='unknown'])
   .mg-rail-cell__numeral[data-run-state='complete'] {
   color: var(--clue-numeral-ink);
   background-color: var(--clue-on-ground);
@@ -328,61 +383,58 @@
 }
 
 /* -----------------------------------------------------------------------------
-   5a. THE OFF SWITCH — nine values, each one the resting value
-   The hint layer is a preference and it is OFF by default, so "off" has to mean
-   the rail says NOTHING about progress: not a quieter tint, not a lighter weight,
-   the resting ink, the resting weights, the resting glyph at its resting size,
-   the resting edge and the resting underline. So the switch does not cancel the
-   five rules in §5 — it re-points every name they read at the value that rule
-   replaced, and the rules keep applying. Nothing in the component, the reducer or
-   the `aria-label` changes when it is thrown, and the state stays reported to a
-   screen reader through the cell's label either way.
+   5b. THE HINT SWITCH — the two annotations, and exactly two things
+   提示 is what the player's own legend calls it: 矛盾提示, a dashed edge and a ✕,
+   and 进度未解, a dotted edge and a ?. Those two, and nothing else, are the layer.
+   They are off until the player turns them on, at any time, without costing a
+   point, and while they are off the rail must say NOTHING about them — no dashed
+   edge, no dotted edge, no ✕, no ?, and no wash. Not a quieter tint: absence.
 
-   One custom property per THING a rule changes, not per rule, because the values
-   are not interchangeable: the ✓ rests at 600 and the numeral at 400, the ✓ rests
-   at `--rail-num` and only shrinks when it sits in a filled strip, the numeral
-   rests on `--ink` and the glyph on the badge's own green. A single
-   `--clue-on-ink` cannot be both, and `font-size: 0.8em` written straight into §5
-   cannot be un-written at all — which is exactly what the browser measured when
-   the first version of this section used `inherit` for the weights: `inherit` on a
-   custom property inherits the PROPERTY's value from the parent element, and for
-   these names the parent is the token block, so the off switch kept the ON weight
-   and the off rail still drew a full progress marker. Literals, each copied from
-   the rule it replaces; that is the whole discipline.
+   §5 is not in this section and must never be added to it. A closed run's block
+   and a closed line's ✓ are the acknowledgement of work the player did, not an
+   assist, and the player said so. So "off" here means an annotated line is treated
+   as an ORDINARY line, which is the only reading that leaves no hole: the edge
+   goes back to the resting hairline, the cell's body to the resting surface, and
+   the runs get their underline back — the three places that suppress a run's
+   highlight for an annotated line each name this switch as a second alternative,
+   so the declarations are the resting ones and the rule has one answer per cell.
+   There are five rules here and they are the whole switch. Each one names BOTH
+   annotations and the `:is()` is not decoration: it is the guard against a gate
+   that grows, so a later state cannot be caught by the net.
 
-   The alternative wiring is equally cheap and needs no CSS at all: omit
-   `data-run-state="complete"` and `data-line-state="complete"` instead, and the
-   rules above have nothing to match. It is the component's call, and either way
-   the answer a keyboard player gets is the same.
+   The two `✕` and `?` CHARACTERS are withheld by the component rather than hidden
+   here, because `.mg-rail-cell__glyph` is one element for all three line marks: a
+   `display: none` in this section would take the ✓ with them, and a
+   `visibility`/`color` trick would be a style a committed test cannot assert in
+   jsdom. The glyph element stays — it carries the strip's geometry, and the strip
+   is where the two annotations are loudest — so this section has to clear the
+   strip's own ground as well as the cell's.
 
-   The legend's swatches sit OUTSIDE the stage, so they never see this rule and
-   keep the `:root` values: they always draw the loud form, which is right for a
-   legend whose job is to name the shapes the rail can take.
+   `data-line-state` and `data-run-state` are never touched by the flag: the DOM
+   keeps reporting what the machine knows, and `aria-label` is unconditional for
+   the same reason, because for a screen-reader user it is the line's only channel
+   of state and gating it would delete information rather than present it
+   differently. Turning the switch back on needs no re-render of anything else.
 
-   The one piece of the layer this section cannot switch is the ✓, and that is on
-   purpose rather than an omission. `.mg-rail-cell__glyph` is ONE element for all
-   three of the rail's line marks, so a `display: none` here would take the `✕`
-   and the `?` with the tick — and those are not progress: a line with no
-   compatible pattern says the player's own marks are wrong, which is an error
-   warning and stays whatever the assist preference is. The narrow rule is
-   available (`[data-hints='off'] .mg-rail-cell[data-line-state='complete']`),
-   but it would live in a stylesheet no committed test can read, and a switch
-   whose removal cannot be asserted is a switch nobody will believe. So
-   `ClueCell` withholds the character instead, and the element — which carries
-   the `✕`/`?` and the strip's geometry — stays. Nothing announced is lost: the
-   span is `aria-hidden` and the cell's `aria-label` is unconditional.
-   -------------------------------------------------------------------------- */
-.mg-board-stage[data-hints='off'] {
-  --clue-on-ground: transparent; /* the block and the strip are GONE, not pale */
-  --clue-numeral-ink: var(--ink); /* §4's clue colour */
-  --clue-badge-ink: var(--badge-color-complete); /* §3's settled-glyph colour */
-  --clue-on-weight: 400; /* §4 sets no weight, so the rail's own */
-  --clue-on-line-weight: 400;
-  --clue-on-badge-weight: 600; /* §3 */
-  --clue-on-badge-size: var(--rail-num); /* §3 */
-  --clue-on-radius: 0px; /* nothing at rest is round; §4 and §3 set no radius */
-  --clue-on-edge: var(--clue-line-border); /* §1's resting edge */
-  --clue-on-run-mark: inset 0 calc(var(--rule-w) * -1) 0 var(--ink-3); /* §5.3's own */
+   The switch is read off the CELL (`ClueCell` renders `data-hints` beside
+   `data-line-state`), not off the stage. Two reasons, and the first is the larger:
+   an off-rule then costs two compounds of chain instead of three, which is the
+   house limit, and it costs the same specificity whether or not these rules happen
+   to come last in the file. The stage keeps the attribute for the same reason the
+   cell does — it is the board's mode, and one `querySelector` reads it.
+
+   The legend's swatches sit OUTSIDE the stage and carry no `data-hints`, so no
+   rule here reaches them and they keep the loud form: a legend's job is to name the
+   shapes the rail can take, including the ones currently switched off. */
+.mg-rail-cell[data-hints='off']:is([data-line-state='contradiction'], [data-line-state='unknown']) {
+  --clue-edge: var(--clue-line-border);
+  background-color: var(--surface-1);
+}
+
+.mg-rail-cell[data-hints='off']:is([data-line-state='contradiction'], [data-line-state='unknown'])
+  .mg-rail-cell__glyph {
+  background-color: transparent;
+  animation: none;
 }
 
 /* -----------------------------------------------------------------------------

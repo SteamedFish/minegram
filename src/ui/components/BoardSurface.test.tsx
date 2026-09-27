@@ -1,13 +1,14 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { BoardSurface } from './BoardSurface'
+import { BoardSurface, ClueCell } from './BoardSurface'
 import { BoardEmptyState } from './BoardEmptyState'
 import { createGameStore, type GameStore } from '../gameStore'
 import { DEFAULT_LOCALE, getCopy } from '../copy'
 import { derivePuzzleClues } from '../../domain'
 import { normalizeGenerationSettings } from '../../engine/generator/settings'
 import type { MarkingMode, UiSnapshot, ZoomStep } from '../viewModel'
+import type { LineProgress } from '../../application/lineProgress'
 
 /**
  * The board surface's structural contract, and only the parts of it this file owns.
@@ -269,94 +270,152 @@ describe('BoardSurface — the §5.4 reveal hooks', () => {
 
 describe('BoardSurface — the hint switch as a boundary', () => {
   /**
-   * A closed line's tick IS the loudest mark in the layer, and a switch that
-   * removed the numerals and the underlines but left the tick standing would have
-   * moved the player's complaint rather than answered it, so the switch has to
-   * take the tick with it.
+   * The switch is 提示, and 提示 is EXACTLY the two boxed annotations the player's
+   * own legend names: 矛盾提示, the dashed edge and the ✕, and 进度未解, the dotted
+   * edge and the ?. It is not the acknowledgement. A run whose mines are all
+   * marked is lit and a finished line is ticked because the player did that work;
+   * the player said so twice and called it 必须做的. A switch that could take those
+   * away would be a switch that can make the game unplayable, and a gate that
+   * grows is a bug.
    *
-   * What this test deliberately refuses to do is assert `display: none` or any
-   * other CSS effect: jsdom does not lay out stylesheets, so such an assertion
-   * would keep passing with the tick painted. The character has to be ABSENT
-   * FROM THE DOM for the check to mean anything, which is why `ClueCell`
-   * withholds it rather than a rule under `[data-hints='off']` hiding the span.
-   * (The span itself always exists, because the same element carries the `✕` and
-   * the `?` and the geometry of the badge strip; the tick is the part that goes.)
+   * So there are four phases, and this file pins all four:
+   *
+   *   1  off, acknowledgement   the ✓ stands and the numerals are filled
+   *   2  on,  acknowledgement   the same board, and the same two facts
+   *   3  off, annotations       neither ✕ nor ? is in the DOM at all
+   *   4  on,  annotations       both glyphs are, each in the same cell as before
+   *
+   * Phases 3 and 4 are checked on the CHARACTER, not on a computed style, because
+   * jsdom does not lay out stylesheets: an assertion about `display: none` keeps
+   * passing with the glyph painted. `.mg-rail-cell__glyph` is one element for all
+   * three marks, so the two annotation characters have to be withheld by the
+   * component. The span itself always exists — it carries the badge strip's
+   * geometry, and the strip is where the annotations are loudest — so "absent"
+   * means an empty span, and the cell's own `data-line-state` is untouched either
+   * way because this is a presentation gate and never a state gate.
    */
-  it('withdraws the closed line tick when the layer is off, and the error badges when it is on', () => {
-    store = openStore()
-    act(() => {
-      store?.actions.mark([{ index: 0, assertion: 'mine' }, { index: 3, assertion: 'mine' }])
-    })
-    const ticks = (): string[] =>
-      all('.mg-rail-cell[data-line]').map((cell) => cell.querySelector('.mg-rail-cell__glyph')?.textContent ?? '')
 
-    paint(store.getSnapshot(), store, 'mine', true)
-    expect(one('.mg-board-stage').getAttribute('data-hints')).toBe('on')
-    expect(ticks()).toEqual(['✓', '✓', '✓', '✓'])
-    // The run numerals are the rest of the layer and they are still announced by
-    // their own attributes under both values; only the drawing changes.
-    expect(all('.mg-rail-cell__numeral[data-run-state="complete"]').length).toBeGreaterThan(0)
-
+  /** The complete-line fixture: cells 0 and 3 are row 0's only and column 0's only. */
+  function closedStore(): GameStore {
+    const created = openStore()
     act(() => {
-      root?.unmount()
-      root = null
+      created.actions.mark([
+        { index: 0, assertion: 'mine' },
+        { index: 3, assertion: 'mine' },
+      ])
     })
+    return created
+  }
+
+  /** A line the machine could not enumerate. Built rather than generated: an
+   *  `unknown` status needs enumeration to hit a resource limit, which a fixture
+   *  must not wait for. `ClueCell` is a pure function of the line, so the state
+   *  the UI cares about — the glyph and the two attributes — is fully reachable
+   *  this way, and the store still covers the contradiction half for real. */
+  function unresolvedLine(): LineProgress {
+    return {
+      orientation: 'column',
+      index: 0,
+      clue: [1, 2],
+      fullyLabeled: false,
+      compatiblePatternCount: null,
+      contradiction: false,
+      status: 'unknown',
+      complete: false,
+      runs: [
+        { runIndex: 0, length: 1, start: 0, end: 0, invariant: true, mineIndices: [0], complete: true },
+        { runIndex: 1, length: 2, start: 2, end: 3, invariant: true, mineIndices: [2, 3], complete: false },
+      ],
+    }
+  }
+
+  function paintCell(line: LineProgress, hints: boolean): Element {
+    act(() => {
+      root?.render(<ClueCell t={getCopy(DEFAULT_LOCALE)} line={line} orientation="column" hints={hints} />)
+    })
+    return one('.mg-rail-cell')
+  }
+
+  const glyphs = (): string[] =>
+    all('.mg-rail-cell[data-line]').map((cell) => cell.querySelector('.mg-rail-cell__glyph')?.textContent ?? '')
+
+  it('phase 1 — off: the closed line keeps its tick, and its run numerals stay filled', () => {
+    store = closedStore()
     paint(store.getSnapshot(), store, 'mine', false)
     expect(one('.mg-board-stage').getAttribute('data-hints')).toBe('off')
-    // No tick anywhere — the assertion a `display: none` regression could not fail.
-    expect(ticks()).toEqual(['', '', '', ''])
+    // Every rail cell mirrors the switch, so one query reads a cell's own mode and
+    // clues.css's off-rules can name the cell instead of the stage.
+    for (const cell of all('.mg-rail-cell[data-line]')) {
+      expect(cell.getAttribute('data-hints')).toBe('off')
+    }
+    expect(glyphs()).toEqual(['✓', '✓', '✓', '✓'])
     expect(all('.mg-rail-cell[data-line-state="complete"]')).toHaveLength(4)
-    // The state attributes are untouched, because this is a presentation gate and
-    // never a state gate: the rail still knows which lines are closed.
+    // The numerals are the other half of the acknowledgement, and the off-rules
+    // give an annotated line the resting underline rather than no underline.
     expect(all('.mg-rail-cell__numeral[data-run-state="complete"]').length).toBeGreaterThan(0)
-    // And the label is unconditional, so a screen reader is not quieter than the eye.
     for (const cell of all('.mg-rail-cell[data-line-state="complete"]')) {
       expect((cell.getAttribute('aria-label') ?? '').length).toBeGreaterThan(0)
     }
   })
 
-  /**
-   * The `✕` and the `?` are NOT part of the hint layer. A line with no compatible
-   * pattern says the player's own marks are wrong, which is an error warning and
-   * has to survive a preference about ASSISTS — which is exactly why the tick is
-   * withdrawn in the component and the span is never hidden: a blanket
-   * `display: none` on `.mg-rail-cell__glyph` would silence the contradiction and
-   * the unknown alongside the progress.
-   */
-  it('keeps the contradiction badge at off, because a wrong mark is not a hint', () => {
+  it('phase 2 — on: the same board, the same acknowledgement, so the switch changed nothing here', () => {
+    store = closedStore()
+    paint(store.getSnapshot(), store, 'mine', true)
+    expect(one('.mg-board-stage').getAttribute('data-hints')).toBe('on')
+    expect(glyphs()).toEqual(['✓', '✓', '✓', '✓'])
+    expect(all('.mg-rail-cell[data-line-state="complete"]')).toHaveLength(4)
+    expect(all('.mg-rail-cell__numeral[data-run-state="complete"]').length).toBeGreaterThan(0)
+  })
+
+  it('phase 3 — off: neither annotation is in the DOM, and the rail still knows about both', () => {
     store = openStore()
-    // Asserting BOTH of row 0 as mines puts two mines under a clue of one, which is
-    // the only way a mark can have no pattern at all: a single wrong mark is usually
-    // still fittable, and a fittable wrong mark is not a contradiction yet.
+    // Two mines under a clue of one is the only way a mark has no pattern at all,
+    // so this is the real contradiction, reached the way a player reaches one.
     act(() => {
       store?.actions.mark([
         { index: 0, assertion: 'mine' },
         { index: 1, assertion: 'mine' },
       ])
     })
-    const badges = (): string[] =>
-      all('.mg-rail-cell[data-line-state]').map((cell) => cell.querySelector('.mg-rail-cell__glyph')?.textContent ?? '')
-
     paint(store.getSnapshot(), store, 'mine', false)
     expect(one('.mg-board-stage').getAttribute('data-hints')).toBe('off')
-    const off = badges()
-    expect(off).toContain('✕')
-    expect(off).not.toContain('✓')
+    const contradictionCell = one('.mg-rail-cell[data-line-state="contradiction"]')
+    // The character is gone, which is the assertion a `display: none` regression
+    // could not fail; the span stays, because it is also the tick's span.
+    expect(contradictionCell.querySelector('.mg-rail-cell__glyph')?.textContent).toBe('')
+    expect(glyphs()).not.toContain('✕')
+    expect(glyphs()).not.toContain('?')
+    // The state attribute and the label are NOT gated: the DOM keeps reporting
+    // what the machine knows, and a screen reader is not quieter than the eye.
+    expect(contradictionCell.getAttribute('aria-label')).toContain(
+      getCopy(DEFAULT_LOCALE).clue.contradiction,
+    )
+    // The `?` half needs an enumeration that hit a resource limit, so it is
+    // rendered directly: off, the character is absent and the cell still says why.
+    const unknown = paintCell(unresolvedLine(), false)
+    expect(unknown.getAttribute('data-line-state')).toBe('unknown')
+    expect(unknown.getAttribute('data-hints')).toBe('off')
+    expect(unknown.querySelector('.mg-rail-cell__glyph')?.textContent).toBe('')
+  })
 
+  it('phase 4 — on: both annotations appear, each in the cell that was already saying so', () => {
+    store = openStore()
     act(() => {
-      root?.unmount()
-      root = null
+      store?.actions.mark([
+        { index: 0, assertion: 'mine' },
+        { index: 1, assertion: 'mine' },
+      ])
     })
     paint(store.getSnapshot(), store, 'mine', true)
-    const on = badges()
-    // Same board, same marks: the ONLY difference the switch makes is that column 0
-    // — whose only mine is the correctly marked cell 0 — earns a tick when the layer
-    // is on. The `✕` stands in both phases, in the same cell, which is the whole
-    // claim: an error warning outlives a preference about assists.
-    expect(on.filter((glyph) => glyph === '✕')).toEqual(off.filter((glyph) => glyph === '✕'))
-    expect(on).toContain('✕')
-    expect(on).toContain('✓')
-    expect(off).not.toContain('✓')
+    expect(one('.mg-board-stage').getAttribute('data-hints')).toBe('on')
+    const contradiction = all('.mg-rail-cell[data-line-state="contradiction"]')
+    expect(contradiction).toHaveLength(1)
+    expect(contradiction[0]?.querySelector('.mg-rail-cell__glyph')?.textContent).toBe('✕')
+    expect(glyphs()).toContain('✕')
+
+    const unknown = paintCell(unresolvedLine(), true)
+    expect(unknown.getAttribute('data-hints')).toBe('on')
+    expect(unknown.querySelector('.mg-rail-cell__glyph')?.textContent).toBe('?')
   })
 
   /**

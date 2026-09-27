@@ -256,7 +256,7 @@ const en = {
     },
     hints: {
       label: 'Hints',
-      hint: 'Off by default. On: a run lights up as soon as its mines are marked, and a finished line takes a tick. Off: you get the numbers and your own marks, nothing else. Turning it on mid-round does not cost a point.',
+      hint: 'The two rail annotations are off by default: a dashed box with a cross where your marks cannot fit the clue at all, and a dotted box with a question mark where the pattern search ran out of budget. Turn this on to see them. A run lights up and a finished line takes its tick whichever way this is set — that is not a hint, it is the answer to your marking. Turning it on mid-round costs nothing.',
     },
     units: {
       percent: '%',
@@ -899,7 +899,7 @@ export const zhCN: Partial<Copy> = {
     },
     hints: {
       label: '提示',
-      hint: '默认关闭。开启：某串地雷全部标出时对应数字立即高亮，整行或整列完成后打上对勾。关闭：只看数字和你自己的标记，不给任何额外信息。游戏中随时切换不会扣分。',
+      hint: '默认关闭。开启：显示两条提示——虚线框加叉号，表示你的标记与该线索完全矛盾；点线框加问号，表示模式搜索已达预算上限。关闭：这两条一律不显示。无论开关如何设置，某串地雷标完时数字都会高亮、整行或整列完成后都会打上对勾——那是对你操作的回应，不属于提示。游戏中随时切换不会扣分。',
     },
     units: {
       percent: '%',
