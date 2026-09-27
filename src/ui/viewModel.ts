@@ -7,8 +7,14 @@
  *    read only where a rail's own solution line is needed — the selectors and this
  *    module's per-rail derivation, which pins the same input — and none of its
  *    contents reach a `UiSnapshot`. The only solution-adjacent values a snapshot
- *    carries are the per-cell `correct` flag and `runs[].mineIndices`, both of
- *    which the selectors already derived.
+ *    carries are the per-cell `correct` flag and `runs[].mineIndices`. Both are
+ *    INFERENCE, not proofs, and a renderer must not present them as one: `correct`
+ *    is per-cell, and `mineIndices` is the run's window read off the solution
+ *    whenever the clue cannot force a start (see `OrderedRunProgress`). That is
+ *    what lets a run's numeral light the moment its mines are marked, which is the
+ *    rule the player was given; the price is that a lit numeral is evidence, not
+ *    certainty, so the UI's guards are `invariant` and "not exactly one of `start`
+ *    and `end` is null", tested together.
  * 2. **Fail closed.** A line the pattern enumeration could not finish is
  *    published as `LineProgress.status === 'unknown'`, never as "fine". The
  *    only wall-clock reads in this file are the per-rail enumeration budget and

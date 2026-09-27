@@ -276,7 +276,12 @@ function reachPlaying(store: GameStore, initialScore = 5): void {
 /**
  * §1: the puzzle's ordered run clues and the selectors' `runs[].mineIndices`
  * are solution-adjacent, and `preview.cellIndices` merely echoes the cells the
- * caller itself passed in. The private board is none of those.
+ * caller itself passed in. The private board is none of those. `mineIndices`
+ * is allowed here because it is INFERENCE rather than a raw board slice: it is
+ * the run's window, either deduced from the clue or read off the solution when
+ * the clue cannot force a start. A renderer may light a numeral from it, but
+ * must not present it as a proof — `OrderedRunProgress` and `viewModel.ts` carry
+ * that caveat where the values are produced and consumed.
  */
 const ALLOWED_NUMERIC_ARRAYS = new Set(['mineIndices', 'clue', 'cellIndices'])
 

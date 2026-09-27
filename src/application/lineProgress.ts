@@ -20,10 +20,27 @@ export type LineProgressStatus = 'ready' | 'unknown'
 export interface OrderedRunProgress {
   readonly runIndex: number
   readonly length: number
+  /** The run's first cell, but ONLY when the clue forces it across every compatible layout. `null` otherwise. Never a guess. */
   readonly start: number | null
+  /**
+   * The run's last cell under the same rule as `start` — with ONE exception, and it is
+   * load-bearing: when the solution (or the compatible set) pins the run's END but leaves its
+   * START free, `end` is reported and `start` stays `null`. So `end !== null` does NOT imply
+   * the run's position is forced. A consumer that treats a non-null `end` as a proof of
+   * position is wrong; the render guards are `invariant` plus "not exactly one of the two
+   * ends is null", and they are checked together for that reason.
+   */
   readonly end: number | null
+  /** True when this run sits at the same index in every compatible layout. This, not `end`, is what a position proof requires. */
   readonly invariant: boolean
+  /**
+   * Every cell of the run's window. Read off the solution when the clue cannot force the
+   * window, so this is INFERENCE, not deduction — a renderer must never present it as a
+   * solution overlay. It exists so a run's numeral can light when its own mines are marked,
+   * which is the rule the player was given.
+   */
   readonly mineIndices: readonly number[]
+  /** The mark test alone: every cell of `mineIndices` carries `mine`. Not a proof, and deliberately not stronger. */
   readonly complete: boolean
 }
 

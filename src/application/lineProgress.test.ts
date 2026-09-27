@@ -148,6 +148,73 @@ describe('deriveLineProgress', () => {
     expect(progress.runs[0].complete).toBe(false)
   })
 
+  // Pins what `029dc4a` actually changed. Before it, a run whose start the clue could not force
+  // returned `mineIndices: []`, so its numeral could never light no matter what the player
+  // marked. The test above could not see that: it is named for ambiguity but passes a solution
+  // with NO mines, so its window came back empty from `solutionRunCells` for an unrelated
+  // reason, and it passed unchanged against the old code. Here the solution is real, so the
+  // window is the solution's, and the run stays dark only because the player has not marked it.
+  //
+  // `complete` cannot be asserted `true` in this shape, and the reason is worth recording
+  // because it is what makes the bug hard to reproduce: marking every cell of a run's window
+  // forces that run's start (the marks admit only the layouts whose run sits there), so the
+  // deduced path takes over and the solution fallback is never reached. `start: null` together
+  // with `complete: true` is therefore unreachable whenever marks are supplied. The reachable
+  // proof of the fix is the non-empty window, and the mark test is pinned separately below.
+  it('takes a run window from the solution when the clue forces no position', () => {
+    const progress = deriveLineProgress({
+      lineLength: 4,
+      clue: [1],
+      marks: [BLANK, UNKNOWN, UNKNOWN, UNKNOWN],
+      solution: [1, 0, 0, 0],
+    })
+    const run = progress.runs[0]
+    // Three, not four: the BLANK at cell 0 eliminates the layout with its mine there, and the
+    // three that remain disagree on where the mine is, which is the ambiguity under test.
+    expect(progress.compatiblePatternCount).toBe(3)
+    expect(run.length).toBe(1)
+    expect(run.invariant).toBe(false)
+    expect(run.start).toBeNull()
+    // The window is read off the solution, so it is inference: a renderer must not present it
+    // as a proof, which is why `invariant` and `start` are asserted null above.
+    expect(run.mineIndices).toEqual([0])
+    expect(run.complete).toBe(false)
+  })
+
+  it('lights a run once the marks force its position and place every mine', () => {
+    // The player's rule, in the shape it can actually occur: a 4-cell line with a clue of [1]
+    // has four layouts, but marking cell 0 admits only the one with its mine there, so the
+    // start becomes forced and the numeral lights. One compatible layout, not four.
+    const progress = deriveLineProgress({
+      lineLength: 4,
+      clue: [1],
+      marks: [MINE, UNKNOWN, UNKNOWN, UNKNOWN],
+      solution: [1, 0, 0, 0],
+    })
+    const run = progress.runs[0]
+    expect(progress.compatiblePatternCount).toBe(1)
+    expect(run.invariant).toBe(true)
+    expect(run.start).toBe(0)
+    expect(run.mineIndices).toEqual([0])
+    expect(run.complete).toBe(true)
+  })
+
+  it('leaves a run dark when one of its solution mines is not marked', () => {
+    // The guard the two cases above could regress into: `complete` must track the MARKS, not
+    // the solution. The run is a single cell, and the cell IS marked, so it reads `true` there;
+    // here it is two cells and only the first is placed, which must stay dark.
+    const progress = deriveLineProgress({
+      lineLength: 4,
+      clue: [2],
+      marks: [MINE, UNKNOWN, UNKNOWN, UNKNOWN],
+      solution: [1, 1, 0, 0],
+    })
+    const run = progress.runs[0]
+    expect(run.start).toBe(0)
+    expect(run.mineIndices).toEqual([0, 1])
+    expect(run.complete).toBe(false)
+  })
+
   it('marks a fully labeled contradiction only when there are zero compatible patterns', () => {
     const contradiction = deriveLineProgress({
       lineLength: 3,
