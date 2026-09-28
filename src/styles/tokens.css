@@ -1035,7 +1035,7 @@ html[data-theme='light'] {
    (tokens.css, `--rail-num-floor` and `--rail-num-ratio`), and these bands have
    nothing left to say. If a band ever needs to own the numeral again the honest
    form is a gradient that crosses it rather than a literal that replaces it on
-   one side of an edge. `.tmp/style-check.mjs` section 17 fails if either band
+   one side of an edge. `scripts/style-check.mjs` section 17 fails if either band
    reappears, or if any band anywhere spends the numeral. */
 
 /* TABLET LANDSCAPE: WIDE AND SHORT — the one band where a three-column page is

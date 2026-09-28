@@ -182,7 +182,7 @@
    BoardSurface.tsx:354 — so leaving the resting cap in place here would have the
    fit divide a fallback while the pane sat at a height the cap it cannot parse
    never described. (The cap's own value is quoted only in tokens.css: the guard
-   in `.tmp/style-check.mjs` that keeps one cap out of the sheets reads the raw
+   in `scripts/style-check.mjs` that keeps one cap out of the sheets reads the raw
    text, and a comment in this file quoting it would read as a second cap.)
    One answer, from the layout. The band's measured result at 1280x800 with a
    coarse pointer and both panels open: page scroll 380 -> 0, pane 394, stage

@@ -158,7 +158,7 @@ export type FitProbe = (cell: number) => {
    * ever STRETCHED to the pane would hand its slack back as chrome and the solve
    * would subtract the same pixels twice. The parts are structural and small: the
    * stage's own border and padding, plus the rails ROW's border and padding, which
-   * the corner does not cover. `.tmp/style-check.mjs` pins the CSS shape this
+   * the corner does not cover. `scripts/style-check.mjs` pins the CSS shape this
    * relies on; a stretch would be a layout decision, and the layout is `max-content`
    * on both axes in board.css §2.
    */

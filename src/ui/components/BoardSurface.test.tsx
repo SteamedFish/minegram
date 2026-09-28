@@ -29,7 +29,7 @@ import type { LineProgress } from '../../application/lineProgress'
  *      axis is asserted directly rather than through a screenshot.
  *
  * Nothing here asserts pixels. The paint is the stylesheet's business and is checked
- * by `.tmp/style-check.mjs` and by eye in a browser.
+ * by `scripts/style-check.mjs` and by eye in a browser.
  */
 
 // 1 0
@@ -1286,7 +1286,7 @@ describe('BoardSurface — the height-aware Fit', () => {
     // to an empty module (`css` is stubbed and `?raw` / `?inline` do not get past it),
     // so a source-level check would be checking against `''`. The three declarations
     // jsdom cannot see — the strip's grid lines, the stage's containing block, and the
-    // cap — are guarded statically in `.tmp/style-check.mjs` instead, and the visible
+    // cap — are guarded statically in `scripts/style-check.mjs` instead, and the visible
     // consequence of the geometry is asserted above: the strip lands after the rows, on
     // its own line, carrying `--k`.
     const inline = Array.from(stage.style)

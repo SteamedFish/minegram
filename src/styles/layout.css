@@ -669,7 +669,7 @@
    they must stay the same: the numeral floor and the narrowed side column are
    set in the same band there, and a band that matched on one screen and not the
    other would give a 12px numeral with a 20rem panel. The check that keeps them
-   together is in `.tmp/style-check.mjs`, not in this comment. */
+   together is in `scripts/style-check.mjs`, not in this comment. */
 
 @media (orientation: landscape) and (height < 56rem) and (width >= 48rem) {
   .mg-side {
@@ -808,7 +808,7 @@
    not the file each half of the idea is in: `board.css` section 1c for the
    surface and the cap, `overlays.css` for the status row, `forms.css`
    section 8a for the toolbar, and the footer trim is the rule below, in this
-   section. `.tmp/style-check.mjs` section 15 is what keeps the four halves in
+   section. `scripts/style-check.mjs` section 15 is what keeps the four halves in
    one band — and in step — not this comment. */
 
 @media (pointer: coarse) and (width >= 74rem) {
