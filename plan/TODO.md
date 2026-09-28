@@ -553,6 +553,94 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
   band into `tokens.css` myself and counted **4 failures**, then restored and got
   ALL CHECKS PASS. §18 is not vacuous, verified independently.
 
+## Player-reported fixes — round 6 — locale authority and template placeholders
+
+The report, verbatim, is one screen of chrome from a zh-CN player, and it
+contains two separate defects: an ENGLISH sentence inside Chinese chrome, and
+a raw uninterpolated `{round}` placeholder in a button.
+
+```
+生成失败
+生成已停止：The requested difficulty was not reached
+第 2 局仍在
+棋盘原样保留，可以接着玩。
+
+继续第 {round} 局
+```
+
+Both are copy-projection defects, and both hazards were already written down
+before they shipped: the locale one at `src/ui/viewModel.ts:670` ("a
+non-default `copy` must also pass `locale` or reason copy stays English") —
+documented and not enforced — and the placeholder one as the round-2
+`{step}`/`{zoom}` class, whose fix swept only the announcement path.
+
+**Defect A — the store's dictionary was stuck on English while the UI rendered
+Chinese.** `src/App.tsx:58` creates the singleton store with no locale, so its
+`locale` is `DEFAULT_LOCALE` (`'en'`) and its `copy` the English dictionary
+(`src/ui/gameStore.ts:235-236`). `useLocale`
+(`src/ui/components/preferences.ts:26-47`) seeds its React state from persisted
+storage (`minegram.lang`) but called `store.setLocale` only inside the
+language-change callback — there was no mount-time push. So a returning player
+who had chosen zh-CN had `locale === 'zh-CN'` in the tree (Chinese chrome)
+while the store still held `'en'` — and every `projectSnapshot` call projects
+with the STORE's closure `copy`/`locale`, so failure headlines, remedies,
+announcements and reason labels all came out English. The player saw
+`生成已停止：The requested difficulty was not reached` where the dictionary has
+`没有达到所选难度` (`src/ui/copy.ts:1132`).
+
+The ruling (recorded in `AGENTS.md`): the store is the single source of truth
+for locale, and a persisted preference must be APPLIED to the store on mount.
+`useLocale` now carries a one-way sync effect that calls
+`store.setLocale(locale)` whenever the effective locale differs from the
+store's — mount covers the restored persisted value, later renders cover an
+active change. `setLocale` early-returns on equality
+(`src/ui/gameStore.ts:522-529`), so the effect is idempotent, and re-publishes
+`lastEvent` on a real change — which is what the sync relies on and what
+`StatusRegion`'s content-comparison de-duplication
+(`src/ui/components/StatusRegion.tsx:76`) already treats as a label change.
+
+Pinned in `src/App.test.tsx`, `describe('App locale authority')`: seed
+`minegram.lang = 'zh-CN'`, install a store left on the default locale, render,
+and assert the store converges to `'zh-CN'`, `.mg-failure` carries
+`没有达到所选难度` and the English headline is absent; the negative arm asserts
+that with NO persisted value the store stays `'en'` and the headline is
+English, so the sync must not manufacture a change. The zh arm fails against
+the pre-fix code with `expected 'en' to be 'zh-CN'`.
+
+**Defect B — a raw `{round}` in the Resume button.** `src/App.tsx` rebuilds
+the resume object inline (it needs its own `canResume`, so it cannot use
+`projectResume`) and passed `t.resume.action` RAW, while the sibling title was
+interpolated and `projectResume` (`src/ui/viewModel.ts:786-796`) interpolates
+correctly. `RoundBanner.tsx:155` renders the action verbatim, so the button
+printed `继续第 {round} 局`. The fix interpolates at the producer, with the
+same `status.round` the sibling uses and the same `canResume` ternary as the
+body: `action: canResume ? interpolate(t.resume.action, { round: status.round })
+: t.resume.unavailable`. `interpolate` deliberately leaves unknown placeholders
+verbatim so a missing value stays visible — that design choice stands; the
+producer was the bug.
+
+**Defect C — the guard that should have caught B, widened rather than
+duplicated.** `src/ui/components/announcePlaceholders.test.tsx` asserts no
+`{`/`}` survives, but only on the ANNOUNCEMENT path; a button is a different
+component and sailed past it. Instead of a second narrow test,
+`src/App.test.tsx` `describe('App placeholder sweep')` renders the real App in
+both locales across the surfaces reachable from a `failed` state —
+kept-round-with-failure, won, lost — and asserts the one property that covers
+the whole class: the rendered `textContent` is non-empty and contains no `{`
+or `}`. A static per-branch expectation cannot outlive a new branch; the sweep
+can. The exact button text is additionally pinned per locale against
+`interpolate(getCopy(locale).resume.action, { round: 1 })`, so a failure names
+WHICH template broke.
+
+**Validation.** `npx tsc -b` exit 0. `npx vitest run`: 35 files, 597 tests,
+all pass. `node scripts/style-check.mjs`: ALL CHECKS PASS. `npx oxlint`: 12
+warnings, 0 errors — the pre-existing baseline, no new warnings. Every new
+test was run against the pre-fix code first (the fix was saved to
+`.tmp/round6-fix.patch` and the sources reverted): **5 failed, 26 passed** on
+`src/App.test.tsx`, with the exact reported strings in the assertions
+(`'Resume round {round}'`, `继续第 {round} 局`, the English headline inside the
+zh sweep). The patch was then re-applied and the full suite re-run green.
+
 ## Lessons
 
 - **A measurement probe that reads the WRONG element will report a defect that does not exist — and the fix is to print the element, not just the count.** The first run of this round's probe reported `openTapes=1` with the layer off and I was one step from calling it a leak. The one surviving tape is the LEGEND's own key: the legend deliberately carries no `data-hints` so it always teaches the true shape, and its swatch is literally `<span class="mg-run-tape" data-run="tape" data-cap="only">`, which a document-wide `.mg-run-tape[data-run="tape"]` selector matches. Scoped to the board stage the count is 0 → 34 → 0 as designed. This is lesson (1) from the Phase 4 round recurring in its sharpest form: the same shape of mistake, three rounds apart, in a file I wrote myself. The generalisation: **when a count disagrees with a design claim, dump `outerHTML` of the offender before theorising** — a two-line diagnostic that would have cost thirty seconds and is now built into the probe permanently (`offenders`).
@@ -695,3 +783,53 @@ The app has exactly one width breakpoint: `src/styles/layout.css:83
   changed shape. The discipline is the same one that made a headline number be
   "the one that would go red if the defect were fixed": a report's own negative
   result is the part a reader cannot get from the diff.
+
+- **A persisted preference that the state owner never learns about is the
+  same class as a persisted UI flag that measures a state no player arrives
+  in — round 5's lesson, one level up.** There the leaked flag corrupted the
+  MEASUREMENT; here the unapplied preference corrupted the PRODUCT.
+  `useLocale` seeded React state from `minegram.lang` and told the store
+  nothing, so the component tree and the store's projection disagreed for
+  exactly the players the persistence exists for — returning players. The
+  component-local view was self-consistent (Chinese chrome, zh copy inside the
+  tree), which is why nothing caught it: every store-level test installs a
+  store whose locale matches the assertion, and the component tests either
+  never set persisted state or never asserted a store-projected string. The
+  trap was even documented — `src/ui/viewModel.ts:670` warns that a
+  non-default `copy` must also pass `locale` — and a documented-but-enforced-
+  nowhere hazard is a comment, not a guard. The generalisation: **whoever owns
+  the state a preference describes must be told the preference on RESTORE,
+  not only on CHANGE; a seed-without-sync is a half-write that compiles.** An
+  idempotent sync effect is the cheap enforcement, and it is safe precisely
+  because `setLocale` early-returns on equality.
+
+  The sharpest form of the evidence is one line I did not look for first:
+  `src/ui/components/preferences.ts:25` already carried the docstring "**The
+  store's locale is authoritative; `localStorage` only remembers it**" — the
+  exact ruling, stated correctly, directly above a hook that did the opposite,
+  while `src/ui/viewModel.ts:670` warned about the same hazard in prose. Two
+  comments, both RIGHT, one on the function that violated them. This is the
+  inverse of the round-3 `Legend.tsx` defect, where two agreeing comments were
+  both wrong, and it suggests a sharper reading rule than "a comment is a
+  claim": **a comment that states an invariant is a testable claim — check the
+  code against it, and if they disagree the comment is usually the one telling
+  the truth about intent, because the invariant was written down before the
+  behaviour drifted.** Two agreeing comments that are both wrong (round 3) and a
+  correct comment contradicted by its own function (round 6) are the same
+  failure of *not checking*, and the second is strictly more actionable: it
+  names the invariant the fix has to restore.
+
+- **A guard that covers one call path cannot clear a whole defect class — it
+  can only choose where the next instance ships.** The round-2 `{step}`/`{zoom}`
+  fix swept the ANNOUNCEMENT path for placeholders; defect B was the same
+  class one component over, on a BUTTON path, and sailed past the guard. The
+  widened guard sweeps the rendered document rather than a region: both
+  locales, every surface reachable from the states that compose copy
+  (failed-kept-round, won, lost), asserting the absence of `{`/`}` in the whole
+  `textContent` plus non-emptiness, so a blank render cannot pass vacuously.
+  The shape that cannot miss the next one is property-over-rendering, not
+  expectation-per-branch — a static per-branch expectation is stale the day a
+  new branch exists, and "no braces anywhere in what the player can read" is
+  the property the player is actually reporting. The exact-sentence assertions
+  stay alongside the sweep: the property catches the class; the sentence says
+  WHICH template broke when one does.
