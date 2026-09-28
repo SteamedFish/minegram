@@ -2,6 +2,7 @@ import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { App } from './App'
+import { getCopy, interpolate } from './ui/copy'
 import {
   createInitialGameState,
   gameReducer,
@@ -199,6 +200,50 @@ function failedState(reason: string, from: GameState): GameState {
 
 function baseState(): GameState {
   return createInitialGameState({ settings: FIXTURE_SETTINGS, initialScore: 5 })
+}
+
+/** `playing` with every cell marked correctly: the win banner surface. */
+function wonState(): GameState {
+  const marked = gameReducer(playingState(), {
+    type: 'round/markBatch',
+    cells: [
+      { index: 0, assertion: 'mine' },
+      { index: 1, assertion: 'blank' },
+      { index: 2, assertion: 'blank' },
+      { index: 3, assertion: 'mine' },
+    ],
+  })
+  if (marked.type !== 'transition') {
+    throw new Error(`fixture: expected a transition, got ${marked.type}`)
+  }
+  return marked.state
+}
+
+/** A one-point round with one wrong mark: the loss banner surface. */
+function lostState(): GameState {
+  const start = gameReducer(
+    createInitialGameState({ settings: FIXTURE_SETTINGS, initialScore: 1 }),
+    { type: 'generation/start' },
+  )
+  if (start.type !== 'transition') {
+    throw new Error(`fixture: expected a transition, got ${start.type}`)
+  }
+  const succeeded = gameReducer(start.state, {
+    type: 'generation/succeeded',
+    generationId: start.state.generationId,
+    round: fixtureRound(),
+  })
+  if (succeeded.type !== 'transition') {
+    throw new Error(`fixture: expected a transition, got ${succeeded.type}`)
+  }
+  const marked = gameReducer(succeeded.state, {
+    type: 'round/markBatch',
+    cells: [{ index: 0, assertion: 'blank' }],
+  })
+  if (marked.type !== 'transition') {
+    throw new Error(`fixture: expected a transition, got ${marked.type}`)
+  }
+  return marked.state
 }
 
 function fixtureRound(): GeneratedRound {
@@ -533,4 +578,93 @@ describe('App chrome', () => {
     expect(one('.mg-footer__seed').textContent).toContain(adopted)
     expect(store.getSnapshot().status.dimensions?.authoredSeed).toBe(adopted)
   })
+})
+
+/**
+ * Round 6, defect A: a returning player who chose zh-CN once had Chinese chrome over
+ * an English store. `useLocale` seeded its React state from `localStorage` but never
+ * told the store, and every snapshot-derived string — the failure headline among
+ * them — was projected with the store's own dictionary, which was still the default.
+ */
+describe('App locale authority', () => {
+  it('applies a persisted zh-CN preference to the store on mount and re-projects the failure report in Chinese', () => {
+    // The exact player state: the store exists on the default locale while
+    // `minegram.lang` remembers zh-CN from a previous session.
+    window.localStorage.setItem('minegram.lang', 'zh-CN')
+    const store = install(failedState('difficulty-not-found', playingState()))
+    render(<App />)
+
+    // The sync effect must reach the store, and the re-published snapshot must
+    // carry the Chinese failure copy — not just the component tree.
+    expect(store.getLocale()).toBe('zh-CN')
+    expect(one('.mg-failure').textContent).toContain('没有达到所选难度')
+    expect(container.textContent).not.toContain('The requested difficulty was not reached')
+  })
+
+  it('leaves the store on the default locale when nothing is persisted', () => {
+    const store = install(failedState('difficulty-not-found', playingState()))
+    render(<App />)
+
+    // The sync effect converges immediately; it must not manufacture a change.
+    expect(store.getLocale()).toBe('en')
+    expect(one('.mg-failure').textContent).toContain('The requested difficulty was not reached')
+  })
+})
+
+/**
+ * Round 6, defect B — and the durable guard for the whole class. The announcement
+ * sweep in `announcePlaceholders.test.tsx` proved no `{placeholder}` survives the
+ * status region, and a button outside that region leaked one anyway: `App` builds
+ * its `resume` object inline (it needs its own `canResume`) and passed the raw
+ * `t.resume.action` template, which `RoundBanner` renders verbatim. A guard that
+ * covers one call path cannot clear a whole defect class, so this sweep renders the
+ * REAL app — banner, failure report, status region, board, panels, footer — in both
+ * locales over every banner surface, and asserts the only property that matters:
+ * no unmatched `{` or `}` survives anywhere in the composed text. A static list of
+ * expected strings cannot outlive a new branch; "no braces" can.
+ */
+describe('App placeholder sweep', () => {
+  const LOCALES = ['en', 'zh-CN'] as const
+  /** Every player-facing template reachable from a round-bearing state. */
+  const SURFACES: readonly { name: string; state: () => GameState }[] = [
+    // The defect itself: the kept-round banner with its resume button, alongside the
+    // failure report and the (English-only until round 6) projected failure copy.
+    { name: 'failed-kept-round', state: () => failedState('difficulty-not-found', playingState()) },
+    // The win banner interpolates {round} and {score}; the loss banner {round}.
+    { name: 'won', state: wonState },
+    { name: 'lost', state: lostState },
+  ]
+
+  for (const locale of LOCALES) {
+    for (const { name, state } of SURFACES) {
+      it(`renders the ${name} surface in ${locale} without a leftover brace`, () => {
+        if (locale === 'zh-CN') {
+          window.localStorage.setItem('minegram.lang', 'zh-CN')
+        }
+        install(state())
+        render(<App />)
+
+        const text = container.textContent ?? ''
+        expect(text.length, `${locale} / ${name} rendered nothing`).toBeGreaterThan(0)
+        expect(text, `${locale} / ${name} left a placeholder in the composed text`).not.toMatch(/[{}]/)
+      })
+    }
+
+    it(`interpolates the resume action at the producer in ${locale}`, () => {
+      // The regression itself. `RoundBanner` renders `resume.action` verbatim, so the
+      // interpolation has to happen where the object is built; `projectResume` already
+      // does it, but App cannot use it and dropped it while inlining. "No braces" alone
+      // would also pass a button that had stopped naming the round, so the exact
+      // sentence is pinned here the same way the zoom sentence is pinned in
+      // `announcePlaceholders.test.tsx`.
+      if (locale === 'zh-CN') {
+        window.localStorage.setItem('minegram.lang', 'zh-CN')
+      }
+      install(failedState('difficulty-not-found', playingState()))
+      render(<App />)
+
+      const primary = one('.mg-round-banner__primary')
+      expect(primary.textContent).toBe(interpolate(getCopy(locale).resume.action, { round: 1 }))
+    })
+  }
 })

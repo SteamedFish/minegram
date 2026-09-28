@@ -43,6 +43,21 @@ export function useLocale(t: Copy): readonly [Locale, (next: Locale) => void] {
     document.documentElement.lang = locale
   }, [locale])
 
+  /* The store is the single source of truth for locale, and it can only project
+   * what it knows: seeding this state from `localStorage` leaves the store on its
+   * default until the player actively changes the language, so every
+   * snapshot-derived string a returning player sees is projected in the wrong
+   * dictionary. Push the effective locale into the store whenever the two
+   * disagree — on mount, which applies a restored persisted value, and after any
+   * later change. `store.setLocale` early-returns on equality and re-publishes
+   * the last event in the new dictionary when it does change, so a converged
+   * effect is a no-op and a real one is announced correctly. */
+  useEffect(() => {
+    if (store.getLocale() !== locale) {
+      store.setLocale(locale)
+    }
+  }, [store, locale])
+
   return [locale, setLocale] as const
 }
 

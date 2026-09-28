@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { DEFAULT_LOCALE, getCopy } from './ui/copy'
+import { DEFAULT_LOCALE, getCopy, interpolate } from './ui/copy'
 import {
   getGameStore,
   normalizeDraft,
@@ -215,7 +215,11 @@ export function App() {
           resume={{
             round: status.round,
             body: canResume ? t.resume.body : t.resume.unavailable,
-            action: t.resume.action,
+            // This object is built inline because it needs this component's
+            // `canResume`, which means it cannot borrow `projectResume`'s
+            // interpolated action — the interpolation has to happen HERE, at the
+            // producer, or the button leaks the raw `{round}` template.
+            action: canResume ? interpolate(t.resume.action, { round: status.round }) : t.resume.unavailable,
           }}
           settingsId={SETTINGS_ID}
           onResume={() => {
