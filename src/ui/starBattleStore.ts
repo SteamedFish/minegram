@@ -3,10 +3,10 @@
  * `src/ui/gameStore.ts` in shape and voice. It drives `starBattleReducer`
  * (which owns `StarBattleState`) and a Star Battle generation Worker
  * (`src/workers/starBattleWorker.ts`), and it owns everything the reducer
- * deliberately does not: the `generating` lifecycle flag, the difficulty
- * preference (persisted through the shared storage helper, never through
- * generation settings), the failure state, the win interlude with its page
- * visibility guard, and stale-result protection.
+ * deliberately does not: the `generating` lifecycle flag, the difficulty and
+ * board-size preferences (persisted through the shared storage helper, never
+ * through generation settings), the failure state, the win interlude with its
+ * page visibility guard, and stale-result protection.
  *
  * The store is the string→structure seam for marks: `onMark` receives the
  * UI's `'blank' | 'star' | null` vocabulary plus row/column coordinates and
@@ -36,6 +36,8 @@ import {
 import type { GameFailureDiagnostics } from '../application/gameReducer'
 import {
   DEFAULT_STAR_SIDE,
+  MAX_STAR_SIDE,
+  MIN_STAR_SIDE,
   assertStarBattlePuzzle,
   assertStarBattleSide,
   type StarBattlePuzzle,
@@ -76,6 +78,7 @@ export interface StarBattleSnapshot {
   readonly mistakes: number
   readonly streak: number
   readonly difficulty: StarDifficulty
+  readonly side: number
   readonly failure: GameFailureDiagnostics | null
   readonly version: number
 }
@@ -83,6 +86,14 @@ export interface StarBattleSnapshot {
 export interface StarBattleStoreActions {
   /** Persists the tier and prints a fresh board with the same seed. No-op while generating. */
   setDifficulty(difficulty: StarDifficulty): void
+  /**
+   * Persists the board side and prints a fresh board with the same seed and
+   * tier — a different side with the same seed already yields a different
+   * board, so the seed is kept exactly as `setDifficulty` keeps it. An
+   * out-of-range side is refused silently, exactly like an unusable tier:
+   * no throw, no failure state, no launch. No-op while generating.
+   */
+  setSide(n: number): void
   /**
    * Starts a round. With no seed — the picker entry — derives a fresh seed
    * from the last used one; an explicit seed (numeric or text) becomes the
@@ -153,6 +164,8 @@ export interface StarBattleStoreOptions {
   readonly visibility?: VisibilityProbe
   /** Persistence key for the difficulty preference (test seam). */
   readonly storageKey?: string
+  /** Persistence key for the board-side preference (test seam). */
+  readonly sideStorageKey?: string
 }
 
 export const DEFAULT_STAR_WIN_INTERLUDE_MS = 2_500
@@ -170,6 +183,8 @@ export const STAR_NEXT_ROUND_SEED_LABEL = 'star-battle:next-round'
 export const STAR_PICKER_ENTRY_SEED_LABEL = 'star-battle:picker-entry'
 
 const STAR_DIFFICULTY_STORAGE_KEY = 'minegram.star-battle.difficulty'
+
+const STAR_SIDE_STORAGE_KEY = 'minegram.star-battle.side'
 
 const DEFAULT_STAR_DIFFICULTY: StarDifficulty = 'starter'
 
@@ -233,6 +248,22 @@ function readPersistedDifficulty(storageKey: string): StarDifficulty {
   return stored !== null && isStarDifficulty(stored) ? stored : DEFAULT_STAR_DIFFICULTY
 }
 
+/** The side vocabulary the store accepts: the domain bounds, nothing else. */
+function isSupportedSide(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= MIN_STAR_SIDE &&
+    value <= MAX_STAR_SIDE
+  )
+}
+
+function readPersistedSide(storageKey: string): number {
+  const stored = readStored(storageKey)
+  const parsed = stored === null ? Number.NaN : Number(stored)
+  return isSupportedSide(parsed) ? parsed : DEFAULT_STAR_SIDE
+}
+
 /** The UI wire value to the reducer's assertion: `null` is the retract gesture. */
 function wireToAssertion(next: 'blank' | 'star' | null): 'blank' | 'star' | 'clear' {
   return next ?? 'clear'
@@ -251,7 +282,12 @@ interface ActiveStarRequest {
 }
 
 export function createStarBattleStore(options: StarBattleStoreOptions = {}): StarBattleStore {
-  const side = options.side ?? DEFAULT_STAR_SIDE
+  const sideStorageKey = options.sideStorageKey ?? STAR_SIDE_STORAGE_KEY
+  // The side is `let`, not `const`: `setSide` retargets it, and every later
+  // launch reads it here in the closure. The explicit option wins; otherwise
+  // the persisted preference wins over the domain default, exactly like the
+  // tier below.
+  let side = options.side ?? readPersistedSide(sideStorageKey)
   assertStarBattleSide(side, 'star battle store side')
   const setTimer =
     options.setTimer ?? ((handler: () => void, ms: number): TimerHandle => setTimeout(handler, ms))
@@ -290,6 +326,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       mistakes: state.mistakes,
       streak: state.streak,
       difficulty,
+      side,
       failure,
       version,
     })
@@ -607,6 +644,19 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       publish()
       if (active !== null) {
         // A round is already printing; the persisted tier applies next time.
+        return
+      }
+      launch(authoredSeed)
+    },
+    setSide(next) {
+      if (disposed || !isSupportedSide(next)) {
+        return
+      }
+      side = next
+      writeStored(sideStorageKey, String(next))
+      publish()
+      if (active !== null) {
+        // A round is already printing; the persisted side applies next time.
         return
       }
       launch(authoredSeed)

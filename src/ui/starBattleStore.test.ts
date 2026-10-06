@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { StarBattlePuzzle } from '../domain/starBattle'
+import { MAX_STAR_SIDE, MIN_STAR_SIDE, type StarBattlePuzzle } from '../domain/starBattle'
 import { deriveRandomSeed, normalizeRandomSeed } from '../engine/rng'
 import {
   STAR_NEXT_ROUND_SEED_LABEL,
@@ -22,18 +22,26 @@ import type {
 const SIDE = 4
 
 /** Row-index colouring; valid for any permutation (star colours stay distinct). */
-function makePuzzle(seed: number, solution: readonly number[]): StarBattlePuzzle {
-  const colours = new Uint8Array(SIDE * SIDE)
-  for (let row = 0; row < SIDE; row += 1) {
-    for (let col = 0; col < SIDE; col += 1) {
-      colours[row * SIDE + col] = row
+function makePuzzle(seed: number, solution: readonly number[], n = SIDE): StarBattlePuzzle {
+  const colours = new Uint8Array(n * n)
+  for (let row = 0; row < n; row += 1) {
+    for (let col = 0; col < n; col += 1) {
+      colours[row * n + col] = row
     }
   }
-  return Object.freeze({ n: SIDE, seed, colours, solution })
+  return Object.freeze({ n, seed, colours, solution })
 }
 
 const PUZZLE_A = makePuzzle(normalizeRandomSeed('star-fixture-a'), [1, 3, 0, 2])
 const PUZZLE_B = makePuzzle(normalizeRandomSeed('star-fixture-b'), [2, 0, 3, 1])
+
+// Stars at columns alternating 1, 3, 5, 7, 0, 2, 4, 6: neighbours are always
+// two columns apart, so the adjacency rule holds on the row-index colouring.
+const PUZZLE_EIGHT = makePuzzle(
+  normalizeRandomSeed('star-fixture-eight'),
+  [1, 3, 5, 7, 0, 2, 4, 6],
+  8,
+)
 
 function solutionCells(puzzle: StarBattlePuzzle): readonly number[] {
   return puzzle.solution.map((col, row) => row * puzzle.n + col)
@@ -398,6 +406,89 @@ describe('star battle store: generation', () => {
     // A late answer to the cancelled request is dropped.
     succeed(harness.workers[0]!, PUZZLE_A)
     expect(harness.snapshot().status).toBe('idle')
+  })
+})
+
+// ======================================================================================
+// Board size
+// ======================================================================================
+
+describe('star battle store: board size', () => {
+  it('setSide refuses a side below MIN_STAR_SIDE or above MAX_STAR_SIDE without throwing or launching', () => {
+    const harness = createHarness()
+
+    expect(() => harness.store.actions.setSide(MIN_STAR_SIDE - 1)).not.toThrow()
+    expect(() => harness.store.actions.setSide(MAX_STAR_SIDE + 1)).not.toThrow()
+    expect(() => harness.store.actions.setSide(6.5)).not.toThrow()
+
+    expect(harness.workers).toHaveLength(0)
+    expect(harness.snapshot().status).toBe('idle')
+    expect(harness.snapshot().side).toBe(SIDE)
+    expect(window.localStorage.getItem('minegram.star-battle.side')).toBeNull()
+  })
+
+  it('setSide accepts the boundary sides MIN_STAR_SIDE and MAX_STAR_SIDE', () => {
+    const harness = createHarness()
+
+    harness.store.actions.setSide(MIN_STAR_SIDE)
+    expect(harness.workers).toHaveLength(1)
+    expect(lastRequest(harness.workers[0]!).n).toBe(MIN_STAR_SIDE)
+    succeed(harness.workers[0]!, PUZZLE_A)
+
+    harness.store.actions.setSide(MAX_STAR_SIDE)
+    expect(harness.workers).toHaveLength(2)
+    expect(lastRequest(harness.workers[1]!).n).toBe(MAX_STAR_SIDE)
+  })
+
+  it('setSide prints a board at the new side, keeping the seed and the tier', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('star-fixture-a')
+    succeed(harness.workers[0]!, PUZZLE_A)
+    harness.store.actions.setDifficulty('challenging')
+    succeed(harness.workers[1]!, PUZZLE_B)
+
+    harness.store.actions.setSide(8)
+
+    expect(harness.snapshot().side).toBe(8)
+    expect(harness.workers).toHaveLength(3)
+    const request = lastRequest(harness.workers[2]!)
+    expect(request.n).toBe(8)
+    expect(request.seed).toBe(normalizeRandomSeed('star-fixture-a'))
+    expect(request.difficulty).toBe('challenging')
+
+    succeed(harness.workers[2]!, PUZZLE_EIGHT)
+    expect(harness.snapshot().status).toBe('playing')
+    expect(harness.snapshot().puzzle).toBe(PUZZLE_EIGHT)
+    expect(harness.snapshot().puzzle?.n).toBe(8)
+  })
+
+  it('setSide is a no-op while a round is generating', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('star-fixture-a')
+    harness.store.actions.setSide(8)
+
+    expect(harness.workers).toHaveLength(1)
+    expect(lastRequest(harness.workers[0]!).n).toBe(SIDE)
+    expect(harness.snapshot().side).toBe(8)
+    expect(window.localStorage.getItem('minegram.star-battle.side')).toBe('8')
+
+    // The in-flight round still prints at the old side; the persisted side
+    // applies to the next launch.
+    succeed(harness.workers[0]!, PUZZLE_A)
+    expect(harness.snapshot().puzzle?.n).toBe(SIDE)
+  })
+
+  it('setSide persists the side and a freshly created store prints at it', () => {
+    const harness = createHarness()
+    harness.store.actions.setSide(6)
+    expect(window.localStorage.getItem('minegram.star-battle.side')).toBe('6')
+
+    // `side: undefined` overrides the harness default, so the store falls
+    // back to the persisted preference — a player re-entering the game.
+    const returning = createHarness({ side: undefined })
+    returning.store.actions.startNewRound('star-fixture-a')
+    expect(returning.snapshot().side).toBe(6)
+    expect(lastRequest(returning.workers[0]!).n).toBe(6)
   })
 })
 
