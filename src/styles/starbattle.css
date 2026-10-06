@@ -268,8 +268,15 @@
   border-radius: var(--radius-panel);
 }
 
-.mg-star-toolbar__back {
-  margin-inline-end: auto;
+/* The shared games bar (its box lives in screens.css) names the game beside
+   the picker switch, on both screens, one mechanism. The bar markup is the
+   app's; this lane owns the name's voice. */
+.mg-gamesbar__name {
+  margin-inline-start: var(--sp-2);
+  font-family: var(--font-display);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+  color: var(--ink);
 }
 
 .mg-star-meter {
@@ -317,90 +324,98 @@
   padding-inline: var(--sp-1);
 }
 
-/* ---- the four constraints, counted ---- */
+/* ---- lives: pips, the spent ones dimmed ---- */
 
-.mg-star-counters {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--sp-3);
+.mg-star-pips {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
-.mg-star-counters__group {
+.mg-star-pips__pip {
+  color: var(--accent);
+  font-size: var(--fs-body);
+  line-height: 1;
+}
+
+.mg-star-pips__pip[data-spent='true'] {
+  color: var(--rule-cell);
+  opacity: 0.8;
+}
+
+/* ---- the rules and legend block ----
+   The discoverability answer, above the board: the three placement rules and
+   the adjacency rule, what the player's own marks mean, and the gestures. */
+
+.mg-star-rules {
   display: grid;
   gap: var(--sp-2);
-  align-content: start;
   padding: var(--sp-2) var(--sp-3);
   background: var(--surface-1);
   border: var(--rule-w) solid var(--rule-cell);
   border-radius: var(--radius-panel);
 }
 
-.mg-star-counters__label {
+.mg-star-rules__list {
   margin: 0;
-  font-size: var(--fs-micro);
-  line-height: var(--lh-micro);
-  letter-spacing: var(--track-micro);
-  text-transform: uppercase;
+  padding-inline-start: var(--sp-4);
+  display: grid;
+  gap: 2px;
   color: var(--ink-2);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
 }
 
-.mg-star-counters__chips {
+.mg-star-rules__rule {
+  margin: 0;
+}
+
+.mg-star-rules__legend {
+  margin: 0;
+  padding: 0;
+  list-style: none;
   display: flex;
   flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+}
+
+.mg-star-rules__legend-item {
+  display: inline-flex;
+  align-items: center;
   gap: var(--sp-1);
-}
-
-/* The colour group is the one a Star Battle player reads first: bigger chips,
-   airier wrapping, and the swatch IS the palette colour. */
-.mg-star-counters__group[data-kind='colours'] .mg-star-chip {
-  min-inline-size: var(--target-min);
-  min-block-size: var(--target-min);
+  color: var(--ink-2);
   font-size: var(--fs-small);
+  line-height: var(--lh-small);
 }
 
-.mg-star-chip {
+/* The swatches speak the board's own glyph vocabulary, in a cell-sized chip. */
+.mg-star-rules__swatch {
+  inline-size: 1.1rem;
+  block-size: 1.1rem;
   display: inline-grid;
   place-items: center;
-  min-inline-size: 1.25rem;
-  min-block-size: 1.25rem;
-  padding: 0 var(--sp-1);
-  border-radius: var(--radius-pill);
+  background: var(--surface-3);
   border: var(--rule-w) solid var(--rule-cell);
-  background: var(--surface-2);
+  border-radius: var(--radius-sharp);
   color: var(--ink-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  line-height: var(--lh-micro);
-  transition: border-color var(--dur-fast) ease-out, color var(--dur-fast) ease-out;
+  font-size: 10px;
+  line-height: 1;
 }
 
-.mg-star-chip[data-state='satisfied'] {
-  border-color: var(--confirm);
-  color: var(--ink);
-  box-shadow: inset 0 0 0 var(--rule-w) var(--confirm);
+.mg-star-rules__swatch[data-swatch='blank'] {
+  font-size: 14px;
 }
 
-.mg-star-chip[data-state='violated'] {
-  border-color: var(--accent);
-  border-style: dashed;
-  color: var(--accent);
-}
-
-.mg-star-chip[data-kind='colour'] {
-  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
-  background: var(--star-cell);
-  color: var(--ink);
-}
-
-.mg-star-chip[data-kind='colour'][data-state='satisfied'] {
+.mg-star-rules__swatch[data-swatch='locked'] {
   box-shadow: inset 0 0 0 var(--rule-w-heavy) var(--confirm);
-  border-color: transparent;
+  color: var(--ink);
 }
 
-.mg-star-chip[data-kind='colour'][data-state='violated'] {
-  box-shadow: inset 0 0 0 var(--rule-w-heavy) var(--accent);
-  border-color: transparent;
-  color: var(--ink);
+.mg-star-rules__gestures {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
 }
 
 /* ---- the board ---- */
@@ -533,15 +548,6 @@
   line-height: var(--lh-body);
 }
 
-/* ---- keyboard hint ---- */
-
-.mg-star-hint {
-  margin: 0;
-  color: var(--ink-3);
-  font-size: var(--fs-small);
-  line-height: var(--lh-small);
-}
-
 /* ---- win / loss banner ---- */
 
 .mg-star-banner {
@@ -611,14 +617,10 @@
   white-space: nowrap;
 }
 
-/* ---- narrow screens: the counters wrap under the board's width and the
-       toolbar rows itself; nothing is hidden, nothing needs a second tap ---- */
+/* ---- narrow screens: the toolbar rows itself; nothing is hidden, nothing
+       needs a second tap ---- */
 
 @media (width < 48rem) {
-  .mg-star-counters {
-    grid-template-columns: 1fr;
-  }
-
   .mg-star-toolbar {
     row-gap: var(--sp-2);
   }
@@ -634,7 +636,6 @@
     min-block-size: var(--target-min);
   }
 
-  .mg-star-toolbar__back,
   .mg-star-banner__actions .mg-button {
     min-block-size: var(--target-touch);
   }
@@ -645,7 +646,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .mg-picker__card,
-  .mg-star-chip,
   .mg-star-cell,
   .mg-star-banner {
     transition: none;

@@ -37,7 +37,8 @@ function starSnapshot(overrides: Partial<StarBattleSnapshot> = {}): StarBattleSn
     status: 'idle',
     puzzle: null,
     marks: new Uint8Array(0),
-    score: 5,
+    lives: 5,
+    maxLives: 5,
     mistakes: 0,
     streak: 0,
     difficulty: 'starter',
@@ -62,6 +63,7 @@ function installStarStore(initial: StarBattleSnapshot): FakeStarStore {
   const actions = {
     setDifficulty: vi.fn(),
     setSide: vi.fn(),
+    setMaxLives: vi.fn(),
     startNewRound: vi.fn(),
     nextRound: vi.fn(),
     retry: vi.fn(),
@@ -252,20 +254,21 @@ describe('App screens — picker to star battle and back', () => {
         status: 'playing',
         puzzle: STAR_PUZZLE,
         marks: new Uint8Array([2, 0, 0, 0]),
-        score: 5,
+        lives: 5,
+        maxLives: 5,
         mistakes: 1,
         streak: 2,
       }),
     )
     expect(container.querySelectorAll('[data-testid="star-cell"]')).toHaveLength(4)
-    expect(one('[data-testid="star-score"]').textContent).toBe('5')
+    expect(one('[data-testid="star-lives"]').getAttribute('aria-label')).toBe('5 of 5 lives')
     expect(one('[data-testid="star-mistakes"]').textContent).toBe('1')
     expect(one('[data-testid="star-streak"]').textContent).toBe('2')
-    // A pointer mark reaches the store with its coordinates…
+    // A tap reaches the store with its coordinates — a tap toggles a star…
     const cell = container.querySelector("[data-cell-index='1']") as HTMLElement
     firePointer(cell, 'pointerdown')
     firePointer(cell, 'pointerup')
-    expect(fake.actions.onMark).toHaveBeenCalledWith(0, 1, 'blank')
+    expect(fake.actions.onMark).toHaveBeenCalledWith(0, 1, 'star')
     // …and `null` — the real retract — passes through untouched. The starred
     // cell (index 0) is the one with something to retract.
     const starred = container.querySelector("[data-cell-index='0']") as HTMLElement
@@ -274,7 +277,7 @@ describe('App screens — picker to star battle and back', () => {
     })
     expect(fake.actions.onMark).toHaveBeenLastCalledWith(0, 0, null)
     // The banner accelerator and the difficulty seam are the store's actions.
-    fake.advance(starSnapshot({ status: 'won', puzzle: STAR_PUZZLE, score: 4 }))
+    fake.advance(starSnapshot({ status: 'won', puzzle: STAR_PUZZLE, lives: 4 }))
     click(one('[data-testid="star-banner"] button'))
     expect(fake.actions.nextRound).toHaveBeenCalledTimes(1)
   })
@@ -288,7 +291,10 @@ describe('App screens — picker to star battle and back', () => {
     fake.advance(
       starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
     )
-    click(one('.mg-star-toolbar__back'))
+    // One back affordance on the playing screen: the shared games bar. The
+    // surface's own toolbar no longer carries one.
+    expect(container.querySelector('.mg-star-toolbar__back')).toBeNull()
+    click(one('[data-testid="gamesbar-back"]'))
     expect(fake.actions.backToPicker).toHaveBeenCalledTimes(1)
     expect(one('[data-testid="game-picker"]')).toBeTruthy()
   })
@@ -330,6 +336,63 @@ describe('App screens — picker to star battle and back', () => {
     })
     expect(fake.actions.setSide).toHaveBeenCalledTimes(1)
     expect(fake.actions.setSide).toHaveBeenCalledWith(12)
+  })
+
+  it('choosing starting lives reaches the store as setMaxLives with the chosen n', () => {
+    fake = installStarStore(
+      starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
+    )
+    render(<App />)
+    click(pickerCard('starbattle'))
+    fake.advance(
+      starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
+    )
+    const seven = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-max-lives'] input[value='7']",
+    )
+    expect(seven).not.toBeNull()
+    act(() => {
+      ;(seven as HTMLInputElement).click()
+    })
+    expect(fake.actions.setMaxLives).toHaveBeenCalledTimes(1)
+    expect(fake.actions.setMaxLives).toHaveBeenCalledWith(7)
+  })
+
+  it('the games bar names the game, on both game screens, from the picker dictionary', () => {
+    fake = installStarStore(
+      starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
+    )
+    render(<App />)
+    click(pickerCard('starbattle'))
+    fake.advance(
+      starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
+    )
+    // One bar above the shell: the way back, and the game's own name.
+    expect(container.querySelectorAll('.mg-gamesbar__name')).toHaveLength(1)
+    expect(one('.mg-gamesbar__name').textContent).toBe('Star Battle')
+    expect(one('.mg-gamesbar').getAttribute('data-screen')).toBe('starbattle')
+    click(one('[data-testid="gamesbar-back"]'))
+    click(pickerCard('minegram'))
+    expect(one('.mg-gamesbar__name').textContent).toBe('Minegram')
+    expect(one('.mg-gamesbar').getAttribute('data-screen')).toBe('minegram')
+  })
+
+  it('names the game in Chinese too, on both screens', () => {
+    window.localStorage.setItem('minegram.lang', 'zh-CN')
+    fake = installStarStore(
+      starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
+    )
+    render(<App />)
+    click(pickerCard('starbattle'))
+    fake.advance(
+      starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
+    )
+    expect(one('.mg-gamesbar__name').textContent).toBe('星战')
+    expect(one('[data-testid="gamesbar-back"]').textContent).toBe('全部游戏')
+    click(one('[data-testid="gamesbar-back"]'))
+    click(pickerCard('minegram'))
+    expect(one('.mg-gamesbar__name').textContent).toBe('Minegram')
+    expect(one('[data-testid="gamesbar-back"]').textContent).toBe('全部游戏')
   })
 
   it('surfaces a generation failure with retry, and the card is honest about the reason', () => {

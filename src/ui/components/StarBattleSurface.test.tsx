@@ -11,12 +11,15 @@ import {
 /**
  * The Star Battle surface's behavioural contract. Everything asserted here is
  * something jsdom can see: grid shape, the data-colour channel, the mark
- * callbacks and their coordinates, drag dedupe, keyboard roving, the counter
- * states, the wrong-mark announcement, and the win/loss banners. Pixels are
- * the stylesheet's business and are guarded by scripts/style-check.mjs.
+ * callbacks and their coordinates, drag dedupe, keyboard roving, the lives
+ * meter, the rules block, the wrong-mark announcement, and the win/loss
+ * banners. Pixels are the stylesheet's business and are guarded by
+ * scripts/style-check.mjs.
  *
  * Fixture: a 4x4 whose solution is [1, 3, 0, 2] — stars on the diagonal-ish,
- * cheap to reason about row by row.
+ * cheap to reason about row by row. The interaction vocabulary is the flipped
+ * one: tap/left-click toggles a star, right-click or a touch long-press
+ * toggles a blank, a drag paints the stroke's tool.
  */
 
 const N = 4
@@ -47,16 +50,20 @@ function defaults(): StarBattleSurfaceProps {
     puzzle: PUZZLE,
     marks: new Uint8Array(N * N),
     status: 'playing',
-    score: 5,
+    lives: 5,
+    maxLives: 5,
     mistakes: 0,
     streak: 0,
     difficulty: 'starter',
     minSide: 4,
     maxSide: 15,
+    minLives: 1,
+    maxLivesCeiling: 9,
     onMark: () => {},
     onNewRound: () => {},
     onDifficultyChange: () => {},
     onSizeChange: () => {},
+    onMaxLivesChange: () => {},
     onBackToPicker: () => {},
   }
 }
@@ -164,50 +171,68 @@ describe('StarBattleSurface — grid and colour channel', () => {
   })
 
   it('exposes every cell state through its accessible name', () => {
-    render({ marks: marksWith({ 1: 2, 2: 1, 4: 3 }) })
+    // Index 1 is a solution star; index 7 is a solution blank; index 4 is a
+    // solution blank too — a locked code there must read as a locked blank,
+    // because the solution, not the mark code, says what a locked cell locked as.
+    render({ marks: marksWith({ 1: 2, 2: 1, 4: 3, 7: 3 }) })
     expect(cell(0).getAttribute('aria-label')).toContain('unmarked')
     expect(cell(2).getAttribute('aria-label')).toContain('empty')
     expect(cell(1).getAttribute('aria-label')).toContain('star')
-    expect(cell(4).getAttribute('aria-label')).toContain('locked star')
+    expect(cell(7).getAttribute('aria-label')).toContain('locked star')
+    expect(cell(4).getAttribute('aria-label')).toContain('locked empty')
+  })
+
+  it('renders a locked cell by what the solution says it locked as, not by the code alone', () => {
+    // Index 4 (row 1, col 0) is not a solution cell: code 3 there is a locked
+    // blank — ringed, dotted, and never counted as a star.
+    render({ marks: marksWith({ 4: 3, 7: 3 }) })
+    expect(cell(4).getAttribute('data-mark')).toBe('locked-blank')
+    expect(cell(7).getAttribute('data-mark')).toBe('locked-star')
+    expect(cell(4).querySelector('.mg-star-cell__glyph')?.textContent).toBe('·')
+    expect(cell(7).querySelector('.mg-star-cell__glyph')?.textContent).toBe('★')
+    // The locked blank is not a star for the adjacency signal either: a star
+    // beside it does not conflict.
+    render({ marks: marksWith({ 0: 2, 4: 3 }) })
+    expect(cell(0).getAttribute('data-conflict')).toBeNull()
   })
 })
 
 describe('StarBattleSurface — pointer interaction', () => {
-  it('left click marks blank, clicking blank again clears it', () => {
+  it('a tap marks a star, tapping the star again clears it', () => {
     const calls: MarkCall[] = []
     const handlers = { onMark: (row: number, col: number, next: StarMark) => calls.push({ row, col, next }) }
     render(handlers)
     firePointer(cell(0), 'pointerdown')
     firePointer(cell(0), 'pointerup')
-    expect(calls).toEqual([{ row: 0, col: 0, next: 'blank' }])
-    render({ ...handlers, marks: marksWith({ 0: 1 }) })
+    expect(calls).toEqual([{ row: 0, col: 0, next: 'star' }])
+    render({ ...handlers, marks: marksWith({ 0: 2 }) })
     firePointer(cell(0), 'pointerdown')
     firePointer(cell(0), 'pointerup')
     expect(calls[1]).toEqual({ row: 0, col: 0, next: null })
   })
 
-  it('right click marks a star, clicking star again clears it', () => {
+  it('right click marks a blank, clicking the blank again clears it', () => {
     const calls: MarkCall[] = []
     const handlers = { onMark: (row: number, col: number, next: StarMark) => calls.push({ row, col, next }) }
     render(handlers)
     firePointer(cell(3), 'pointerdown', { button: 2 })
     firePointer(cell(3), 'pointerup', { button: 2 })
-    expect(calls).toEqual([{ row: 0, col: 3, next: 'star' }])
-    render({ ...handlers, marks: marksWith({ 3: 2 }) })
+    expect(calls).toEqual([{ row: 0, col: 3, next: 'blank' }])
+    render({ ...handlers, marks: marksWith({ 3: 1 }) })
     firePointer(cell(3), 'pointerdown', { button: 2 })
     firePointer(cell(3), 'pointerup', { button: 2 })
     expect(calls[1]).toEqual({ row: 0, col: 3, next: null })
   })
 
-  it('changing a star to blank by left click dispatches blank', () => {
+  it('a tap on a blank asserts the star — the two tools switch in either direction', () => {
     const calls: MarkCall[] = []
-    render({ marks: marksWith({ 3: 2 }), onMark: (row, col, next) => calls.push({ row, col, next }) })
+    render({ marks: marksWith({ 3: 1 }), onMark: (row, col, next) => calls.push({ row, col, next }) })
     firePointer(cell(3), 'pointerdown')
     firePointer(cell(3), 'pointerup')
-    expect(calls).toEqual([{ row: 0, col: 3, next: 'blank' }])
+    expect(calls).toEqual([{ row: 0, col: 3, next: 'star' }])
   })
 
-  it('a drag paints each cell at most once, including its origin', () => {
+  it('a drag paints each cell at most once, including its origin, with the tap tool', () => {
     const calls: MarkCall[] = []
     render({ onMark: (row, col, next) => calls.push({ row, col, next }) })
     let moving = false
@@ -233,13 +258,13 @@ describe('StarBattleSurface — pointer interaction', () => {
       delete (document as { elementFromPoint?: unknown }).elementFromPoint
     }
     expect(calls).toEqual([
-      { row: 0, col: 0, next: 'blank' },
-      { row: 0, col: 1, next: 'blank' },
-      { row: 0, col: 2, next: 'blank' },
+      { row: 0, col: 0, next: 'star' },
+      { row: 0, col: 1, next: 'star' },
+      { row: 0, col: 2, next: 'star' },
     ])
   })
 
-  it('a touch long-press marks a star without a right button', () => {
+  it('a touch long-press marks a blank without a right button', () => {
     vi.useFakeTimers()
     const calls: MarkCall[] = []
     render({ onMark: (row, col, next) => calls.push({ row, col, next }) })
@@ -247,10 +272,36 @@ describe('StarBattleSurface — pointer interaction', () => {
     act(() => {
       vi.advanceTimersByTime(500)
     })
-    expect(calls).toEqual([{ row: 1, col: 1, next: 'star' }])
-    // Releasing the long-press must not toggle the star back off.
+    expect(calls).toEqual([{ row: 1, col: 1, next: 'blank' }])
+    // Releasing the long-press must not toggle the blank back off.
     firePointer(cell(5), 'pointerup', { pointerType: 'touch', pointerId: 7 })
     expect(calls).toHaveLength(1)
+  })
+
+  it('a touch drag after the long-press keeps painting blanks', () => {
+    vi.useFakeTimers()
+    const calls: MarkCall[] = []
+    render({ onMark: (row, col, next) => calls.push({ row, col, next }) })
+    let moving = false
+    document.elementFromPoint = () => (moving ? cell(6) : null)
+    try {
+      firePointer(cell(5), 'pointerdown', { pointerType: 'touch', pointerId: 7, clientX: 0, clientY: 0 })
+      act(() => {
+        vi.advanceTimersByTime(500)
+      })
+      // The store would have applied the long-press by now; feed the blank back
+      // so the drag's origin re-assertion reads as a re-assertion, not a new mark.
+      render({ marks: marksWith({ 5: 1 }), onMark: (row, col, next) => calls.push({ row, col, next }) })
+      moving = true
+      firePointer(grid(), 'pointermove', { pointerType: 'touch', pointerId: 7, clientX: 40, clientY: 40 })
+      firePointer(cell(5), 'pointerup', { pointerType: 'touch', pointerId: 7 })
+    } finally {
+      delete (document as { elementFromPoint?: unknown }).elementFromPoint
+    }
+    expect(calls).toEqual([
+      { row: 1, col: 1, next: 'blank' },
+      { row: 1, col: 2, next: 'blank' },
+    ])
   })
 
   it('locked cells reject every pointer gesture silently', () => {
@@ -330,36 +381,23 @@ describe('StarBattleSurface — keyboard', () => {
   })
 })
 
-describe('StarBattleSurface — the four constraints, counted', () => {
-  it('reads a correct star as satisfied across row, column and colour', () => {
-    // Cell 1 is row 0, column 1, colour 0 — and solution[0] is 1, so it is correct.
-    render({ marks: marksWith({ 1: 2 }) })
-    expect(container.querySelector("[data-testid='counter-rows-0']")?.getAttribute('data-state')).toBe('satisfied')
-    expect(container.querySelector("[data-testid='counter-columns-1']")?.getAttribute('data-state')).toBe('satisfied')
-    expect(container.querySelector("[data-testid='counter-colours-0']")?.getAttribute('data-state')).toBe('satisfied')
-    expect(container.querySelector("[data-testid='counter-rows-1']")?.getAttribute('data-state')).toBe('open')
-    expect(container.querySelector("[data-testid='counter-rows-0']")?.textContent).toBe('1')
+describe('StarBattleSurface — wrong marks and conflicts, stated on the cells', () => {
+  it('flags a wrong star and a wrong blank on data-wrong', () => {
+    // Cell 0 is row 0, column 0 — solution[0] is 1, so a star there is wrong;
+    // cell 1 IS a solution cell, so a blank there is wrong.
+    render({ marks: marksWith({ 0: 2, 1: 1 }) })
+    expect(cell(0).getAttribute('data-wrong')).toBe('true')
+    expect(cell(1).getAttribute('data-wrong')).toBe('true')
+    expect(cell(2).getAttribute('data-wrong')).toBeNull()
   })
 
-  it('reads two stars in one line as violated, and flags touching stars as a conflict', () => {
+  it('flags both cells of a touching pair as a conflict', () => {
     render({ marks: marksWith({ 1: 2, 2: 2 }) })
-    expect(container.querySelector("[data-testid='counter-rows-0']")?.getAttribute('data-state')).toBe('violated')
     expect(cell(1).getAttribute('data-conflict')).toBe('true')
     expect(cell(2).getAttribute('data-conflict')).toBe('true')
-  })
-
-  it('reads a single misplaced star as violated, not satisfied', () => {
-    // Cell 0 is row 0, column 0 — solution[0] is 1, so the star is wrong.
+    // A star with no neighbour carries no conflict, wrong or not.
     render({ marks: marksWith({ 0: 2 }) })
-    expect(cell(0).getAttribute('data-wrong')).toBe('true')
-    expect(container.querySelector("[data-testid='counter-rows-0']")?.getAttribute('data-state')).toBe('violated')
-    expect(container.querySelector("[data-testid='counter-columns-0']")?.getAttribute('data-state')).toBe('violated')
-  })
-
-  it('keeps the colour counter on data-colour like every other colour surface', () => {
-    render()
-    const chip = container.querySelector("[data-testid='counter-colours-2']")
-    expect(chip?.getAttribute('data-colour')).toBe('2')
+    expect(cell(0).getAttribute('data-conflict')).toBeNull()
   })
 })
 
@@ -394,10 +432,11 @@ describe('StarBattleSurface — round states', () => {
 
   it('a won board shows a banner whose primary control starts the next round', () => {
     const onNewRound = vi.fn()
-    render({ status: 'won', score: 4, onNewRound })
+    render({ status: 'won', lives: 3, maxLives: 5, onNewRound })
     const banner = container.querySelector('[data-testid="star-banner"]')
     expect(banner?.getAttribute('data-tone')).toBe('won')
     expect(banner?.textContent).toContain('Board complete')
+    expect(banner?.textContent).toContain('Lives 3')
     const primary = banner?.querySelector('button')
     expect(primary).not.toBeNull()
     click(primary as Element)
@@ -407,10 +446,10 @@ describe('StarBattleSurface — round states', () => {
   it('a lost board states the reason and offers restart and the way back', () => {
     const onNewRound = vi.fn()
     const onBackToPicker = vi.fn()
-    render({ status: 'lost', score: 0, onNewRound, onBackToPicker })
+    render({ status: 'lost', lives: 0, maxLives: 5, onNewRound, onBackToPicker })
     const banner = container.querySelector('[data-testid="star-banner"]')
     expect(banner?.getAttribute('data-tone')).toBe('lost')
-    expect(banner?.textContent).toContain('Out of points')
+    expect(banner?.textContent).toContain('Out of lives')
     const buttons = banner?.querySelectorAll('button')
     expect(buttons).toHaveLength(2)
     click(buttons?.[0] as Element)
@@ -423,14 +462,27 @@ describe('StarBattleSurface — round states', () => {
     render({ status: 'won' })
     expect(container.querySelector('.mg-star-live')?.textContent).toContain('Board complete')
     render({ status: 'lost' })
-    expect(container.querySelector('.mg-star-live')?.textContent).toContain('Out of points')
+    expect(container.querySelector('.mg-star-live')?.textContent).toContain('Out of lives')
   })
 })
 
 describe('StarBattleSurface — chrome', () => {
-  it('shows score, mistakes and streak in the meter', () => {
-    render({ score: 3, mistakes: 2, streak: 7 })
-    expect(container.querySelector('[data-testid="star-score"]')?.textContent).toBe('3')
+  it('shows the lives as pips, spent ones dimmed, with a spoken total', () => {
+    render({ lives: 3, maxLives: 5 })
+    const meter = container.querySelector('[data-testid="star-lives"]')
+    expect(meter?.getAttribute('role')).toBe('img')
+    expect(meter?.getAttribute('aria-label')).toBe('3 of 5 lives')
+    const pips = meter?.querySelectorAll('.mg-star-pips__pip')
+    expect(pips).toHaveLength(5)
+    expect(pips?.[0]?.getAttribute('data-spent')).toBeNull()
+    expect(pips?.[1]?.getAttribute('data-spent')).toBeNull()
+    expect(pips?.[2]?.getAttribute('data-spent')).toBeNull()
+    expect(pips?.[3]?.getAttribute('data-spent')).toBe('true')
+    expect(pips?.[4]?.getAttribute('data-spent')).toBe('true')
+  })
+
+  it('shows mistakes and streak in the meter', () => {
+    render({ mistakes: 2, streak: 7 })
     expect(container.querySelector('[data-testid="star-mistakes"]')?.textContent).toBe('2')
     expect(container.querySelector('[data-testid="star-streak"]')?.textContent).toBe('7')
   })
@@ -445,15 +497,6 @@ describe('StarBattleSurface — chrome', () => {
       option?.click()
     })
     expect(onDifficultyChange).toHaveBeenCalledWith('steady')
-  })
-
-  it('offers the way back to the picker', () => {
-    const onBackToPicker = vi.fn()
-    render({ onBackToPicker })
-    const back = container.querySelector('.mg-star-toolbar__back')
-    expect(back?.textContent).toBe('All games')
-    click(back as Element)
-    expect(onBackToPicker).toHaveBeenCalledTimes(1)
   })
 
   it('renders every size in the given range as a segmented option', () => {
@@ -486,14 +529,6 @@ describe('StarBattleSurface — chrome', () => {
     expect(onSizeChange).toHaveBeenCalledWith(12)
   })
 
-  it('announces the size group the way the difficulty group does, in Chinese too', () => {
-    render({ locale: 'zh' })
-    const group = container.querySelector<HTMLElement>("[data-testid='star-size'] .mg-seg")
-    expect(group?.getAttribute('aria-label')).toBe('棋盘尺寸')
-    const difficulty = container.querySelector<HTMLElement>("[id='mg-star-difficulty']")
-    expect(difficulty?.getAttribute('aria-label')).toBe('难度')
-  })
-
   it('disables the size control while a board is printing, like difficulty', () => {
     render({ status: 'generating' })
     const options = container.querySelectorAll<HTMLInputElement>("[data-testid='star-size'] input[type='radio']")
@@ -503,7 +538,46 @@ describe('StarBattleSurface — chrome', () => {
     }
   })
 
-  it('cell keyboard roving still works with the size control present', () => {
+  it('renders every starting-lives step in the given range, live max checked', () => {
+    render({ minLives: 1, maxLives: 5, maxLivesCeiling: 9 })
+    const group = container.querySelector<HTMLElement>('[data-testid="star-max-lives"] .mg-seg')
+    expect(group?.getAttribute('role')).toBe('radiogroup')
+    expect(group?.getAttribute('aria-label')).toBe('Starting lives')
+    const options = container.querySelectorAll<HTMLInputElement>(
+      "[data-testid='star-max-lives'] input[type='radio']",
+    )
+    expect(Array.from(options).map((option) => option.value)).toEqual([
+      '1', '2', '3', '4', '5', '6', '7', '8', '9',
+    ])
+    expect(container.querySelector<HTMLInputElement>("[data-testid='star-max-lives'] input:checked")?.value).toBe(
+      '5',
+    )
+  })
+
+  it('calls onMaxLivesChange with the chosen starting lives', () => {
+    const onMaxLivesChange = vi.fn()
+    render({ onMaxLivesChange })
+    const seven = container.querySelector<HTMLInputElement>("[data-testid='star-max-lives'] input[value='7']")
+    expect(seven).not.toBeNull()
+    act(() => {
+      ;(seven as HTMLInputElement).click()
+    })
+    expect(onMaxLivesChange).toHaveBeenCalledTimes(1)
+    expect(onMaxLivesChange).toHaveBeenCalledWith(7)
+  })
+
+  it('disables the starting-lives control while a board is printing', () => {
+    render({ status: 'generating' })
+    const options = container.querySelectorAll<HTMLInputElement>(
+      "[data-testid='star-max-lives'] input[type='radio']",
+    )
+    expect(options.length).toBeGreaterThan(0)
+    for (const option of Array.from(options)) {
+      expect(option.disabled).toBe(true)
+    }
+  })
+
+  it('cell keyboard roving still works with the toolbar controls present', () => {
     render()
     const first = cell(0)
     expect(first.getAttribute('tabindex')).toBe('0')
@@ -515,12 +589,45 @@ describe('StarBattleSurface — chrome', () => {
     key(cell(1), 'ArrowDown')
     expect(document.activeElement).toBe(cell(5))
   })
+})
 
+describe('StarBattleSurface — the rules and legend block', () => {
+  it('states the four rules, the mark legend, and the gestures above the board', () => {
+    render()
+    const rules = container.querySelector('[data-testid="star-rules"]')
+    expect(rules?.getAttribute('aria-label')).toBe('How to play')
+    const items = rules?.querySelectorAll('.mg-star-rules__rule')
+    expect(items).toHaveLength(4)
+    expect(items?.[0]?.textContent).toContain('row')
+    expect(items?.[1]?.textContent).toContain('column')
+    expect(items?.[2]?.textContent).toContain('colour')
+    expect(items?.[3]?.textContent).toContain('touch')
+    // The legend speaks the board's glyph vocabulary.
+    expect(rules?.querySelector("[data-swatch='star']")?.textContent).toBe('★')
+    expect(rules?.querySelector("[data-swatch='blank']")?.textContent).toBe('·')
+    expect(rules?.querySelector("[data-swatch='locked']")?.textContent).toBe('★')
+    // The gestures line teaches the flip: tap a star, hold a blank.
+    expect(rules?.textContent).toContain('press and hold')
+    expect(rules?.querySelector("[data-keys='true']")?.textContent).toContain('Space marks empty')
+  })
+
+  it('renders the rules block in Chinese', () => {
+    render({ locale: 'zh' })
+    const rules = container.querySelector('[data-testid="star-rules"]')
+    expect(rules?.getAttribute('aria-label')).toBe('玩法')
+    expect(rules?.textContent).toContain('每一行各放一颗星')
+    expect(rules?.textContent).toContain('长按')
+  })
+})
+
+describe('StarBattleSurface — locale', () => {
   it('renders Chinese copy when the locale says zh', () => {
     render({ locale: 'zh' })
-    expect(container.querySelector('.mg-star-hint')?.textContent).toContain('左键标空')
-    expect(container.querySelector('.mg-star-meter__label')?.textContent).toBe('分数')
-    expect(container.querySelector('.mg-star-toolbar__back')?.textContent).toBe('全部游戏')
-    expect(container.querySelector("[data-testid='star-counters-colours'] .mg-star-counters__label")?.textContent).toBe('颜色')
+    expect(container.querySelector('.mg-star-meter__label')?.textContent).toBe('生命')
+    expect(container.querySelector('[data-testid="star-lives"]')?.getAttribute('aria-label')).toBe('生命 5/5')
+    expect(grid().getAttribute('aria-label')).toContain('4 × 4')
+    expect(container.querySelector('[data-testid="star-max-lives"] .mg-seg')?.getAttribute('aria-label')).toBe(
+      '初始生命',
+    )
   })
 })

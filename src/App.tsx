@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MAX_STAR_SIDE, MIN_STAR_SIDE } from './domain/starBattle'
+import { MAX_STAR_LIVES, MAX_STAR_SIDE, MIN_STAR_LIVES, MIN_STAR_SIDE } from './domain/starBattle'
 import { DEFAULT_LOCALE, failureCopy, getCopy, interpolate, type Copy, type Locale } from './ui/copy'
 import {
   getGameStore,
@@ -21,7 +21,7 @@ import { AppBanner } from './ui/components/AppBanner'
 import { AppFooter } from './ui/components/AppFooter'
 import { BoardSurface } from './ui/components/BoardSurface'
 import { FailureReport } from './ui/components/FailureReport'
-import { GamePicker, type GameId } from './ui/components/GamePicker'
+import { GamePicker, getPickerCopy, type GameId } from './ui/components/GamePicker'
 import { HelpDialog } from './ui/components/HelpDialog'
 import { Legend } from './ui/components/Legend'
 import { RoundBanner } from './ui/components/RoundBanner'
@@ -47,19 +47,21 @@ import {
  *
  *   picker     GamePicker + the global footer (locale and theme live there,
  *              so both stay reachable before a game is chosen).
- *   minegram   The existing Minegram chrome, unchanged, under a slim games bar
- *              that is the way back. Its panels, banner and dialogs stay
- *              minegram's; they are not shared chrome.
- *   starbattle StarBattleSurface's own toolbar (back, meter, difficulty) plus
- *              the global footer. No settings form, no legend — Star Battle
- *              has no minegram chrome. While no certified board exists the
- *              surface is not rendered at all: an idle/generating card states
- *              the case, and a generation failure gets its own card built from
- *              the shared failureCopy machinery, never from machine text.
+ *   minegram   The existing Minegram chrome, unchanged, under the shared
+ *              games bar. Its panels, banner and dialogs stay minegram's;
+ *              they are not shared chrome.
+ *   starbattle The shared games bar (back + the game's name) as a sibling
+ *              above the shell, then StarBattleSurface's own toolbar (meter,
+ *              difficulty, size, lives) plus the global footer. No settings
+ *              form, no legend — Star Battle has no minegram chrome. While no
+ *              certified board exists the surface is not rendered at all: an
+ *              idle/generating card states the case, and a generation failure
+ *              gets its own card built from the shared failureCopy machinery,
+ *              never from machine text.
  *
  * Both stores stay alive across screens (they are module singletons); leaving
  * a game does not destroy its round. Only `backToPicker` resets the Star
- * Battle store, and that action is the surface's own button.
+ * Battle store, and that action belongs to the shared games bar.
  */
 const SETTINGS_ID = 'mg-settings'
 /* The disclosures control the asides, not the panel sections inside them: the
@@ -89,6 +91,28 @@ function getShellCopy(locale: Locale): ShellCopy {
   return locale === 'zh-CN' ? shellZh : shellEn
 }
 
+/**
+ * The one shared top-of-screen bar, on both game screens: the way back to the
+ * picker, and the current game's name, from the picker's own dictionary so
+ * the front door and the in-game chrome can never disagree about the name.
+ * The bar's box lives in screens.css; the name's voice lives here.
+ */
+function GameBar({ locale, game, onBack }: { locale: Locale; game: GameId; onBack: () => void }) {
+  return (
+    <div className="mg-gamesbar" data-screen={game}>
+      <button
+        type="button"
+        className="mg-button mg-gamesbar__back"
+        data-testid="gamesbar-back"
+        onClick={onBack}
+      >
+        {getShellCopy(locale).back}
+      </button>
+      <span className="mg-gamesbar__name">{getPickerCopy(locale === 'zh-CN' ? 'zh' : 'en').games[game].name}</span>
+    </div>
+  )
+}
+
 export function App() {
   const store = getGameStore()
   const snapshot = useUiSnapshot()
@@ -102,7 +126,6 @@ export function App() {
   const keys = useMemo(() => getCopy(DEFAULT_LOCALE), [])
   const [locale, setLocale] = useLocale(keys)
   const t = useMemo(() => getCopy(locale), [locale])
-  const shell = useMemo(() => getShellCopy(locale), [locale])
   const starCopy = useMemo(() => getStarCopy(locale === 'zh-CN' ? 'zh' : 'en'), [locale])
   const [theme, setTheme] = useTheme(keys)
 
@@ -246,7 +269,9 @@ export function App() {
 
   if (screen === 'starbattle') {
     return (
-      <div className="mg-shell" data-screen="starbattle">
+      <>
+        <GameBar locale={locale} game="starbattle" onBack={backToPicker} />
+        <div className="mg-shell" data-screen="starbattle">
         <main className="mg-star-main">
           {starSnapshot.failure !== null ? (
             <StarFailureCard
@@ -266,12 +291,15 @@ export function App() {
               puzzle={starSnapshot.puzzle}
               marks={starSnapshot.marks}
               status={starSnapshot.status}
-              score={starSnapshot.score}
+              lives={starSnapshot.lives}
+              maxLives={starSnapshot.maxLives}
               mistakes={starSnapshot.mistakes}
               streak={starSnapshot.streak}
               difficulty={starSnapshot.difficulty}
               minSide={MIN_STAR_SIDE}
               maxSide={MAX_STAR_SIDE}
+              minLives={MIN_STAR_LIVES}
+              maxLivesCeiling={MAX_STAR_LIVES}
               onMark={(row, col, next) => {
                 // `null` is a real retract and must pass through untouched.
                 starStore.actions.onMark(row, col, next)
@@ -285,29 +313,28 @@ export function App() {
               onSizeChange={(next) => {
                 starStore.actions.setSide(next)
               }}
+              onMaxLivesChange={(next) => {
+                starStore.actions.setMaxLives(next)
+              }}
               onBackToPicker={backToPicker}
             />
           )}
         </main>
         {footer}
-      </div>
+        </div>
+      </>
     )
   }
 
   return (
     <>
-      <div className="mg-gamesbar" data-screen="minegram">
-        <button
-          type="button"
-          className="mg-button mg-gamesbar__back"
-          data-testid="gamesbar-back"
-          onClick={() => {
-            setScreen('picker')
-          }}
-        >
-          {shell.back}
-        </button>
-      </div>
+      <GameBar
+        locale={locale}
+        game="minegram"
+        onBack={() => {
+          setScreen('picker')
+        }}
+      />
       <div
         className="mg-app"
         data-left-panel={settingsPanelOpen ? 'shown' : 'hidden'}

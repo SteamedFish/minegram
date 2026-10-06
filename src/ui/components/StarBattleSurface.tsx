@@ -13,13 +13,26 @@ import { SegmentedControl } from './primitives'
 /**
  * Star Battle surface: the whole second game as one props-driven view.
  * Presentational only — every mark request leaves through `onMark`, every
- * navigation through `onNewRound` / `onDifficultyChange` / `onBackToPicker`.
- * It never mutates a prop and never reaches for a store.
+ * navigation through `onNewRound` / `onDifficultyChange` / `onSizeChange` /
+ * `onMaxLivesChange` / `onBackToPicker`. It never mutates a prop and never
+ * reaches for a store.
  *
- * Interaction vocabulary mirrors Minegram: left click (or a left drag)
- * paints blank, right click (or a right drag, or a long-press on touch)
- * paints star, a drag visits each cell at most once, and a re-assertion of
- * the mark a cell already carries is silent. Locked cells are inert.
+ * The interaction vocabulary, stated where the player meets it (the rules
+ * block under the toolbar):
+ *
+ *   tap / left click    toggles a star (star → clear → star)
+ *   press and hold /    toggles a blank
+ *   right click
+ *   drag                paints the stroke's tool, each cell at most once
+ *
+ * A re-assertion of the mark a cell already carries is silent, and locked
+ * cells are inert. Keyboard: one roving tab stop, arrows/Home/End navigate,
+ * Space/Enter toggle blank, `s`/`*` toggle a star, Backspace/Delete clear.
+ *
+ * Locked cells (code 3) are rendered by asking the solution what they locked
+ * as — the mark array certifies correctness, the solution says whether a
+ * locked cell is a star or a blank, and the game fills blanks the same way
+ * (auto-blank arrives as 3 too).
  *
  * The copy object mirrors `src/ui/copy.ts`'s shape (exhaustive `en`, full
  * `zhCN` sibling) so the wiring lane can lift it into the central dictionary
@@ -48,17 +61,24 @@ export interface StarBattleSurfaceProps {
   /** Length `n * n`: 0 unmarked, 1 blank, 2 star, 3 locked-correct. Read-only. */
   readonly marks: Uint8Array
   readonly status: 'idle' | 'generating' | 'playing' | 'won' | 'lost'
-  readonly score: number
+  /** Remaining lives; `maxLives` is this round's configured maximum, `>= lives`. */
+  readonly lives: number
+  readonly maxLives: number
   readonly mistakes: number
   readonly streak: number
   readonly difficulty: StarDifficulty
   /** The supported board-side range; the host reads it off the domain constants. */
   readonly minSide: number
   readonly maxSide: number
+  /** The supported starting-lives range; the host reads it off the domain constants. */
+  readonly minLives: number
+  /** The absolute ceiling of the starting-lives range (a domain constant). */
+  readonly maxLivesCeiling: number
   readonly onMark: (row: number, col: number, next: StarMark) => void
   readonly onNewRound: () => void
   readonly onDifficultyChange: (difficulty: StarDifficulty) => void
   readonly onSizeChange: (n: number) => void
+  readonly onMaxLivesChange: (n: number) => void
   readonly onBackToPicker: () => void
 }
 
@@ -68,23 +88,34 @@ export interface StarBattleSurfaceProps {
 
 interface StarCopy {
   readonly boardLabel: string
-  readonly score: string
+  readonly lives: string
+  /** The pips' accessible name; `{lives}`/`{max}` are interpolated by the meter. */
+  readonly livesStatus: string
   readonly mistakes: string
   readonly streak: string
   readonly back: string
   readonly difficultyLabel: string
+  readonly difficulties: Record<StarDifficulty, string>
   readonly size: {
     /** The radiogroup's accessible name; the options are the numerals themselves. */
     readonly label: string
   }
-  readonly difficulties: Record<StarDifficulty, string>
-  readonly counters: {
-    readonly rows: string
-    readonly columns: string
-    readonly colours: string
-    readonly group: string
+  readonly maxLives: {
+    /** The radiogroup's accessible name; the options are the numerals themselves. */
+    readonly label: string
   }
-  readonly hint: string
+  /** The rules and legend block: the rules, what the player's marks mean, the gestures. */
+  readonly rules: {
+    readonly label: string
+    readonly items: readonly string[]
+    readonly marks: {
+      readonly star: string
+      readonly blank: string
+      readonly locked: string
+    }
+    readonly gestures: string
+    readonly keys: string
+  }
   readonly empty: {
     readonly idleTitle: string
     readonly idleBody: string
@@ -106,7 +137,8 @@ interface StarCopy {
       readonly unmarked: string
       readonly blank: string
       readonly star: string
-      readonly locked: string
+      readonly lockedStar: string
+      readonly lockedBlank: string
       readonly wrongStar: string
       readonly wrongBlank: string
       readonly conflict: string
@@ -121,20 +153,32 @@ interface StarCopy {
 
 const en: StarCopy = {
   boardLabel: 'Star Battle board, {n} by {n}',
-  score: 'Score',
+  lives: 'Lives',
+  livesStatus: '{lives} of {max} lives',
   mistakes: 'Mistakes',
   streak: 'Streak',
   back: 'All games',
   difficultyLabel: 'Difficulty',
-  size: { label: 'Board size' },
   difficulties: { starter: 'Starter', steady: 'Steady', challenging: 'Challenging' },
-  counters: {
-    rows: 'Rows',
-    columns: 'Columns',
-    colours: 'Colours',
-    group: '{label}: {done}/{total} satisfied',
+  size: { label: 'Board size' },
+  maxLives: { label: 'Starting lives' },
+  rules: {
+    label: 'How to play',
+    items: [
+      'One star in every row.',
+      'One star in every column.',
+      'One star in every colour.',
+      'Stars may not touch, even diagonally.',
+    ],
+    marks: {
+      star: 'your star',
+      blank: 'your empty',
+      locked: 'correct, locked',
+    },
+    gestures:
+      'Tap (or click) marks a star; press and hold (or right-click) marks empty. Tap a mark again to clear it.',
+    keys: 'Arrows move. Space marks empty, S marks a star, Backspace clears.',
   },
-  hint: 'Left-click marks empty, right-click or long-press marks a star. Arrows move, Space marks empty, S marks a star.',
   empty: {
     idleTitle: 'No board yet',
     idleBody: 'Choose a difficulty to print one.',
@@ -143,10 +187,10 @@ const en: StarCopy = {
   },
   banner: {
     wonTitle: 'Board complete',
-    wonBody: 'Score {score}. The next board starts on its own.',
+    wonBody: 'Lives {lives}. The next board starts on its own.',
     wonPrimary: 'Next board',
-    lostTitle: 'Out of points',
-    lostBody: 'The score reached zero.',
+    lostTitle: 'Out of lives',
+    lostBody: 'The lives ran out.',
     restart: 'Restart',
   },
   cell: {
@@ -156,35 +200,47 @@ const en: StarCopy = {
       unmarked: 'unmarked',
       blank: 'empty',
       star: 'star',
-      locked: 'locked star',
-      wrongStar: 'wrong star, minus one point',
-      wrongBlank: 'wrong empty mark, minus one point',
+      lockedStar: 'locked star',
+      lockedBlank: 'locked empty',
+      wrongStar: 'wrong star, minus one life',
+      wrongBlank: 'wrong empty mark, minus one life',
       conflict: 'too close to another star',
     },
   },
   live: {
     wrong: 'Wrong mark: {label}',
     won: 'Board complete',
-    lost: 'Out of points',
+    lost: 'Out of lives',
   },
 }
 
 const zhCN: StarCopy = {
-  boardLabel: '星战棋盘，{n} 乘 {n}',
-  score: '分数',
+  boardLabel: '星战棋盘，{n} × {n}',
+  lives: '生命',
+  livesStatus: '生命 {lives}/{max}',
   mistakes: '失误',
   streak: '连胜',
   back: '全部游戏',
   difficultyLabel: '难度',
-  size: { label: '棋盘尺寸' },
   difficulties: { starter: '入门', steady: '进阶', challenging: '挑战' },
-  counters: {
-    rows: '行',
-    columns: '列',
-    colours: '颜色',
-    group: '{label}：已满足 {done}/{total}',
+  size: { label: '棋盘尺寸' },
+  maxLives: { label: '初始生命' },
+  rules: {
+    label: '玩法',
+    items: [
+      '每一行各放一颗星。',
+      '每一列各放一颗星。',
+      '每种颜色各放一颗星。',
+      '星与星不能相邻，斜向也算。',
+    ],
+    marks: {
+      star: '你标的星',
+      blank: '你标的空白',
+      locked: '标对了，已锁定',
+    },
+    gestures: '点按（单击）标星；长按（右键）标空白。再点一次取消标记。',
+    keys: '方向键移动。空格标空白，S 键标星，退格取消标记。',
   },
-  hint: '左键标空，右键或长按标星。方向键移动，空格标空，S 键标星。',
   empty: {
     idleTitle: '还没有棋盘',
     idleBody: '选择难度后开始一局。',
@@ -193,10 +249,10 @@ const zhCN: StarCopy = {
   },
   banner: {
     wonTitle: '棋盘完成',
-    wonBody: '得分 {score}。下一局会自动开始。',
+    wonBody: '剩余生命 {lives}。下一局会自动开始。',
     wonPrimary: '下一局',
-    lostTitle: '分数耗尽',
-    lostBody: '分数已经扣到零。',
+    lostTitle: '生命耗尽',
+    lostBody: '生命用完了。',
     restart: '重新开始',
   },
   cell: {
@@ -206,16 +262,17 @@ const zhCN: StarCopy = {
       unmarked: '未标记',
       blank: '空白',
       star: '星标',
-      locked: '已锁定的星标',
-      wrongStar: '错误的星标，扣一分',
-      wrongBlank: '错误的空白，扣一分',
+      lockedStar: '已锁定的星标',
+      lockedBlank: '已锁定的空白',
+      wrongStar: '错误的星标，扣一条命',
+      wrongBlank: '错误的空白，扣一条命',
       conflict: '与另一颗星相邻',
     },
   },
   live: {
     wrong: '标记错误：{label}',
     won: '棋盘完成',
-    lost: '分数耗尽',
+    lost: '生命耗尽',
   },
 }
 
@@ -243,75 +300,50 @@ function boardSizes(minSide: number, maxSide: number): readonly number[] {
 
 const LOCKED = 3
 
-function isStarCode(code: number): boolean {
-  return code === 2 || code === LOCKED
+function isSolutionCell(index: number, puzzle: StarBattlePuzzle): boolean {
+  return puzzle.solution[Math.floor(index / puzzle.n)] === index % puzzle.n
 }
 
 function isWrong(index: number, code: number, puzzle: StarBattlePuzzle): boolean {
-  const row = Math.floor(index / puzzle.n)
-  const col = index % puzzle.n
-  return (code === 2 && puzzle.solution[row] !== col) || (code === 1 && puzzle.solution[row] === col)
-}
-
-export type StarLineState = 'open' | 'satisfied' | 'violated'
-
-export interface StarLineCounter {
-  readonly index: number
-  readonly count: number
-  readonly state: StarLineState
+  return (code === 2 && !isSolutionCell(index, puzzle)) || (code === 1 && isSolutionCell(index, puzzle))
 }
 
 /**
- * One constraint line's counter. Satisfied means exactly one star AND it sits
- * on the solution — a single misplaced star reads as violated, because it is a
- * mark the player must correct, not a line that is merely unfinished.
+ * What a cell displays as. A locked cell is certified correct, so the solution
+ * — not the mark code — says whether it locked as a star or a blank; the game
+ * fills blanks (auto-blank) with the same locked code, and this stays right
+ * under both shapes of the write.
  */
-function lineCounter(
-  indices: readonly number[],
-  starIndices: readonly number[],
-  misplaced: ReadonlySet<number>,
+function displayMark(
   index: number,
-): StarLineCounter {
-  let count = 0
-  let wrong = false
-  for (const i of indices) {
-    if (starIndices.includes(i)) {
-      count += 1
-      if (misplaced.has(i)) {
-        wrong = true
-      }
-    }
+  code: number,
+  puzzle: StarBattlePuzzle,
+): 'unmarked' | 'blank' | 'star' | 'locked-star' | 'locked-blank' {
+  if (code === LOCKED) {
+    return isSolutionCell(index, puzzle) ? 'locked-star' : 'locked-blank'
   }
-  return {
-    index,
-    count,
-    state: count === 0 ? 'open' : count === 1 && !wrong ? 'satisfied' : 'violated',
-  }
+  return code === 2 ? 'star' : code === 1 ? 'blank' : 'unmarked'
 }
 
 interface StarDerived {
+  /** Every cell that displays as a star: the player's stars plus locked solution stars. */
   readonly starIndices: readonly number[]
+  /** The proximity constraint's whole signal: both cells of every touching pair. */
   readonly conflicts: ReadonlySet<number>
-  readonly rows: readonly StarLineCounter[]
-  readonly columns: readonly StarLineCounter[]
-  readonly colours: readonly StarLineCounter[]
-  readonly satisfied: { readonly rows: number; readonly columns: number; readonly colours: number }
 }
 
 function deriveStarState(marks: Uint8Array, puzzle: StarBattlePuzzle): StarDerived {
-  const { n, colours } = puzzle
+  const { n } = puzzle
   const starIndices: number[] = []
-  const misplaced = new Set<number>()
   for (let i = 0; i < marks.length; i += 1) {
-    if (isStarCode(marks[i] ?? 0)) {
+    const code = marks[i] ?? 0
+    if (code === 2 || (code === LOCKED && isSolutionCell(i, puzzle))) {
       starIndices.push(i)
-      if (isWrong(i, marks[i] ?? 0, puzzle)) {
-        misplaced.add(i)
-      }
     }
   }
-  // The proximity constraint has no counter, so it is computed for the cells:
-  // any two star marks within Chebyshev distance 1 conflict, and both carry it.
+  // The adjacency rule has no counter — the player asked for the board
+  // without them — so it is stated on the cells: any two displayed stars
+  // within Chebyshev distance 1 conflict, and both carry it.
   const conflicts = new Set<number>()
   for (let a = 0; a < starIndices.length; a += 1) {
     for (let b = a + 1; b < starIndices.length; b += 1) {
@@ -323,38 +355,7 @@ function deriveStarState(marks: Uint8Array, puzzle: StarBattlePuzzle): StarDeriv
       }
     }
   }
-  const rows: StarLineCounter[] = []
-  const columns: StarLineCounter[] = []
-  const colourCounters: StarLineCounter[] = []
-  const byColour: number[][] = Array.from({ length: n }, () => [])
-  for (let i = 0; i < n * n; i += 1) {
-    byColour[colours[i] ?? 0]?.push(i)
-  }
-  for (let k = 0; k < n; k += 1) {
-    const rowIdx: number[] = []
-    const colIdx: number[] = []
-    for (let c = 0; c < n; c += 1) {
-      rowIdx.push(k * n + c)
-      colIdx.push(c * n + k)
-    }
-    rows.push(lineCounter(rowIdx, starIndices, misplaced, k))
-    columns.push(lineCounter(colIdx, starIndices, misplaced, k))
-    colourCounters.push(lineCounter(byColour[k] ?? [], starIndices, misplaced, k))
-  }
-  const countSatisfied = (list: readonly StarLineCounter[]): number =>
-    list.filter((c) => c.state === 'satisfied').length
-  return {
-    starIndices,
-    conflicts,
-    rows,
-    columns,
-    colours: colourCounters,
-    satisfied: {
-      rows: countSatisfied(rows),
-      columns: countSatisfied(columns),
-      colours: countSatisfied(colourCounters),
-    },
-  }
+  return { starIndices, conflicts }
 }
 
 /* --------------------------------------------------------------------------------------
@@ -515,7 +516,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
     [props, n],
   )
 
-  /** A click TOGGLES: the carried mark cycles to the next assertive state. */
+  /** A tap TOGGLES the stroke's tool: the carried mark cycles to the next assertive state. */
   const applyToggle = useCallback(
     (index: number, tool: 'blank' | 'star') => {
       const code = marksRef.current[index] ?? 0
@@ -578,7 +579,9 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
     }
     const gesture: StarGesture = {
       pointerId: event.pointerId,
-      tool: event.button === 2 ? 'star' : 'blank',
+      // A tap is a star; the secondary button is a blank — the mouse half of
+      // press-and-hold.
+      tool: event.button === 2 ? 'blank' : 'star',
       origin,
       painted: new Set([origin]),
       moved: false,
@@ -587,15 +590,16 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
       downY: event.clientY,
       longPressTimer: null,
     }
-    // Touch has no right button: holding still promotes the stroke to a star.
+    // Touch has no secondary button: holding still promotes the stroke to a
+    // blank, and a drag that follows keeps painting blanks.
     if (event.pointerType === 'touch') {
       gesture.longPressTimer = setTimeout(() => {
         if (gestureRef.current !== gesture || gesture.moved) {
           return
         }
         gesture.longPressFired = true
-        gesture.tool = 'star'
-        applySet(origin, 'star')
+        gesture.tool = 'blank'
+        applySet(origin, 'blank')
       }, LONG_PRESS_MS)
     }
     gestureRef.current = gesture
@@ -627,7 +631,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
       Math.hypot(event.clientX - gesture.downX, event.clientY - gesture.downY) > DRAG_THRESHOLD_PX
     ) {
       // The stroke became a drag: the origin takes the tool's mark now, and the
-      // click toggle on release stands down.
+      // tap toggle on release stands down.
       gesture.moved = true
       clearLongPress(gesture)
       applySet(gesture.origin, gesture.tool)
@@ -735,7 +739,9 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
     })
     const state = (() => {
       if (code === LOCKED) {
-        return copy.cell.states.locked
+        return isSolutionCell(index, puzzle)
+          ? copy.cell.states.lockedStar
+          : copy.cell.states.lockedBlank
       }
       if (code === 2) {
         if (isWrong(index, code, puzzle)) {
@@ -763,21 +769,30 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
     onKeyDown,
   }
 
+  const pipCount = Math.max(0, props.maxLives)
+
   return (
     <div className="mg-star-surface" data-status={status} data-testid="star-surface">
       <div className="mg-star-toolbar">
-        <button
-          type="button"
-          className="mg-button mg-star-toolbar__back"
-          onClick={props.onBackToPicker}
-        >
-          {copy.back}
-        </button>
         <div className="mg-star-meter">
           <span className="mg-star-meter__item">
-            <span className="mg-star-meter__label">{copy.score}</span>
-            <span className="mg-star-meter__value" data-testid="star-score">
-              {props.score}
+            <span className="mg-star-meter__label">{copy.lives}</span>
+            <span
+              className="mg-star-pips"
+              role="img"
+              data-testid="star-lives"
+              aria-label={fill(copy.livesStatus, { lives: props.lives, max: props.maxLives })}
+            >
+              {Array.from({ length: pipCount }, (_, index) => (
+                <span
+                  className="mg-star-pips__pip"
+                  key={index}
+                  data-spent={index < props.lives ? undefined : 'true'}
+                  aria-hidden="true"
+                >
+                  ♥
+                </span>
+              ))}
             </span>
           </span>
           <span className="mg-star-meter__item">
@@ -826,26 +841,62 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
             }}
           />
         </div>
+        {/* Starting lives: same idiom again, the live configured maximum as the
+           checked chip, the domain range as the options. */}
+        <div className="mg-star-lives" data-testid="star-max-lives">
+          <SegmentedControl
+            id="mg-star-max-lives"
+            label={copy.maxLives.label}
+            value={String(props.maxLives)}
+            options={boardSizes(props.minLives, props.maxLivesCeiling).map((lives) => ({
+              value: String(lives),
+              label: String(lives),
+            }))}
+            disabled={status === 'generating'}
+            onChange={(value) => {
+              props.onMaxLivesChange(Number(value))
+            }}
+          />
+        </div>
       </div>
 
-      <ConstraintCounters
-        kind="rows"
-        counters={derived.rows}
-        satisfied={derived.satisfied.rows}
-        copy={copy}
-      />
-      <ConstraintCounters
-        kind="columns"
-        counters={derived.columns}
-        satisfied={derived.satisfied.columns}
-        copy={copy}
-      />
-      <ConstraintCounters
-        kind="colours"
-        counters={derived.colours}
-        satisfied={derived.satisfied.colours}
-        copy={copy}
-      />
+      {/* The rules and legend: the three placement rules and the adjacency
+          rule, what the player's own marks mean, and the gestures — the
+          discoverability answer for "how do I switch", stated where the
+          phone player meets it, above the board. */}
+      <section className="mg-star-rules" data-testid="star-rules" aria-label={copy.rules.label}>
+        <ul className="mg-star-rules__list">
+          {copy.rules.items.map((rule, index) => (
+            <li className="mg-star-rules__rule" key={index}>
+              {rule}
+            </li>
+          ))}
+        </ul>
+        <ul className="mg-star-rules__legend">
+          <li className="mg-star-rules__legend-item">
+            <span className="mg-star-rules__swatch" data-swatch="star" aria-hidden="true">
+              ★
+            </span>
+            {copy.rules.marks.star}
+          </li>
+          <li className="mg-star-rules__legend-item">
+            <span className="mg-star-rules__swatch" data-swatch="blank" aria-hidden="true">
+              ·
+            </span>
+            {copy.rules.marks.blank}
+          </li>
+          <li className="mg-star-rules__legend-item">
+            <span className="mg-star-rules__swatch" data-swatch="locked" aria-hidden="true">
+              ★
+            </span>
+            {copy.rules.marks.locked}
+          </li>
+        </ul>
+        <p className="mg-star-rules__gestures">{copy.rules.gestures}</p>
+        <p className="mg-star-rules__gestures" data-keys="true">
+          {copy.rules.keys}
+        </p>
+      </section>
 
       {status === 'idle' || status === 'generating' ? (
         <div className="mg-star-empty" data-testid="star-empty">
@@ -875,6 +926,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
                 {Array.from({ length: n }, (_, col) => {
                   const index = row * n + col
                   const code = marks[index] ?? 0
+                  const shown = displayMark(index, code, puzzle)
                   const wrong = code !== 0 && code !== LOCKED && isWrong(index, code, puzzle)
                   return (
                     <div
@@ -885,12 +937,12 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
                       data-row={row}
                       data-col={col}
                       data-colour={puzzle.colours[index] ?? 0}
-                      data-mark={
-                        code === LOCKED ? 'locked' : code === 2 ? 'star' : code === 1 ? 'blank' : 'unmarked'
-                      }
+                      data-mark={shown}
                       data-wrong={wrong ? 'true' : undefined}
                       data-conflict={
-                        code !== 0 && code !== LOCKED && derived.conflicts.has(index) ? 'true' : undefined
+                        shown !== 'unmarked' && shown !== 'locked-blank' && derived.conflicts.has(index)
+                          ? 'true'
+                          : undefined
                       }
                       data-inert={playing ? undefined : 'true'}
                       data-testid="star-cell"
@@ -904,7 +956,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
                       }}
                     >
                       <span className="mg-star-cell__glyph" aria-hidden="true">
-                        {code === 1 ? '·' : '★'}
+                        {shown === 'blank' || shown === 'locked-blank' ? '·' : '★'}
                       </span>
                     </div>
                   )
@@ -915,14 +967,12 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
         </div>
       )}
 
-      <p className="mg-star-hint">{copy.hint}</p>
-
       {status === 'won' ? (
         <div className="mg-star-banner" data-tone="won" data-testid="star-banner">
           <div className="mg-star-banner__body">
             <h2 className="mg-star-banner__title">{copy.banner.wonTitle}</h2>
             <p className="mg-star-banner__text">
-              {fill(copy.banner.wonBody, { score: props.score })}
+              {fill(copy.banner.wonBody, { lives: props.lives })}
             </p>
             <div className="mg-star-banner__actions">
               <button
@@ -962,48 +1012,6 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
 
       <div className="mg-star-live" role="status" aria-live="polite" ref={liveRef}>
         {notice}
-      </div>
-    </div>
-  )
-}
-
-function ConstraintCounters({
-  kind,
-  counters,
-  satisfied,
-  copy,
-}: {
-  readonly kind: 'rows' | 'columns' | 'colours'
-  readonly counters: readonly StarLineCounter[]
-  readonly satisfied: number
-  readonly copy: StarCopy
-}) {
-  const label = copy.counters[kind]
-  return (
-    <div
-      className="mg-star-counters__group"
-      data-kind={kind}
-      data-testid={`star-counters-${kind}`}
-      aria-label={fill(copy.counters.group, {
-        label,
-        done: satisfied,
-        total: counters.length,
-      })}
-    >
-      <p className="mg-star-counters__label">{label}</p>
-      <div className="mg-star-counters__chips">
-        {counters.map((counter) => (
-          <span
-            key={counter.index}
-            className="mg-star-chip"
-            data-kind={kind === 'colours' ? 'colour' : 'line'}
-            data-colour={kind === 'colours' ? counter.index : undefined}
-            data-state={counter.state}
-            data-testid={`counter-${kind}-${counter.index}`}
-          >
-            {counter.index + 1}
-          </span>
-        ))}
       </div>
     </div>
   )
