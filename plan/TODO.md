@@ -641,6 +641,55 @@ test was run against the pre-fix code first (the fix was saved to
 (`'Resume round {round}'`, `继续第 {round} 局`, the English headline inside the
 zh sweep). The patch was then re-applied and the full suite re-run green.
 
+## Star Battle
+
+Minegram gains a second mini-game, Star Battle (星战), plus a game picker that is the
+app's entry point on every load. Uniqueness is guaranteed by construction and certified
+by a wave propagation solver on every board — never by rejection sampling, which
+measurement rejected (uniqueness is measure-zero among well-spread colourings past
+about n = 8).
+
+- [x] Domain: n × n star/colour puzzle types, the four wire-format mark constants, and
+  the size bounds — `MIN_STAR_SIDE` 4 (no admissible column permutation exists at n = 2
+  or 3), `MAX_STAR_SIDE` 15, `DEFAULT_STAR_SIDE` 10 (`src/domain/starBattle.ts`).
+- [x] Engine: the exact solution counter with a budget-limited variant whose exhaustion
+  can never be misread as a count (`count.ts`), the deduction-depth analyser
+  (`analyze.ts`), the wave propagation solver that is both the depth metric and the
+  production uniqueness certificate (`propagate.ts`), and the CHAIN constructive
+  generator whose acceptance is that certificate (`construct.ts`). The three tiers
+  (starter / steady / challenging) differ only in how decoys are biased across the
+  valid proof regions; measured wave bands are starter 3–5, steady ≈ 1.7n,
+  challenging up to ~2n, pinned by tests at every supported side.
+- [x] Application: the play reducer mirroring the Minegram scoring contract (correct
+  marks lock and silently refuse later assertions, wrong marks cost one point without
+  refund, score clamps at zero and zero loses, re-assertion is free and silent, the win
+  predicate runs after the batch), plus mark retraction (`'clear'`) so a misclick
+  cannot permanently void a round in which every one of the n² cells must be asserted —
+  Star Battle has no auto-reveal and the game never writes a mark
+  (`src/application/starBattleReducer.ts`).
+- [x] Worker + store: the typed generation Worker with the same request/cancel and
+  identity-based stale-result protection as Minegram's, and the closure-private store
+  owning the `generating` lifecycle, the persisted difficulty preference
+  (`minegram.star-battle.difficulty`, never a generation setting), the win interlude
+  (2500 ms, never elapsing while hidden) and generation-failure retry.
+- [x] UI: the game picker (`src/ui/components/GamePicker.tsx`, per-game record of
+  rounds played and best streak, ring on the last-played game) and the props-driven
+  Star Battle surface with pointer drag, 500 ms long-press, roving-tab-stop keyboard
+  play, per-cell `aria-label` and one polite `role="status"` region, styled purely in
+  CSS so larger boards scroll rather than break (`src/styles/starbattle.css`).
+  Designer lane: `0dcb549`.
+- [x] Widen the ceiling from 13 to 15 and correct its rationale (`4debee8`): the exact
+  counter's 14 × 14 cliff on adversarial colourings is irrelevant because production
+  acceptance is the propagation certificate, which forces all n stars and is strictly
+  stronger than a count of 1 at a fraction of the cost; no repair loop can exist,
+  because uniqueness is measure-zero past n ≈ 8 so repair-by-recolouring is a random
+  walk on a non-monotone objective; and 15 is the largest board the shipped palette
+  and grid already cover. The counter stays as a test cross-check at n ≤ 10.
+- [ ] **Add a Star Battle board-size selector.** The spec supports n = 4..15 and
+  `MIN_STAR_SIDE` / `MAX_STAR_SIDE` in `src/domain/starBattle.ts` are the single
+  source of truth for it, but the store always sends the default 10 and no control
+  exposes the choice, so players currently cannot pick a size.
+
 ## Lessons
 
 - **A measurement probe that reads the WRONG element will report a defect that does not exist — and the fix is to print the element, not just the count.** The first run of this round's probe reported `openTapes=1` with the layer off and I was one step from calling it a leak. The one surviving tape is the LEGEND's own key: the legend deliberately carries no `data-hints` so it always teaches the true shape, and its swatch is literally `<span class="mg-run-tape" data-run="tape" data-cap="only">`, which a document-wide `.mg-run-tape[data-run="tape"]` selector matches. Scoped to the board stage the count is 0 → 34 → 0 as designed. This is lesson (1) from the Phase 4 round recurring in its sharpest form: the same shape of mistake, three rounds apart, in a file I wrote myself. The generalisation: **when a count disagrees with a design claim, dump `outerHTML` of the offender before theorising** — a two-line diagnostic that would have cost thirty seconds and is now built into the probe permanently (`offenders`).

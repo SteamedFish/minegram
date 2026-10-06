@@ -4,8 +4,15 @@ Minegram is a browser puzzle game about ordered mine runs. Every row and column 
 described by its significant run lengths, and every generated board is **proven** to
 have exactly one solution before you are ever shown it.
 
-The game is playable. See [`plan/PLAN.md`](plan/PLAN.md) for the full product contract,
-generation algorithm, delivery phases, and verification budget.
+The app now holds two games behind one front door: **Minegram**, the ordered
+mine-run puzzle documented below, and **Star Battle**, an n × n star-placement
+puzzle whose boards are likewise unique — by construction, with the uniqueness
+certificate computed on every board. On load you choose between them on the game
+picker, which shows each game's record (rounds played, best streak) once you have
+one and marks the game you last played.
+
+Both games are playable. See [`plan/PLAN.md`](plan/PLAN.md) for the full product
+contract, generation algorithm, delivery phases, and verification budget.
 
 ## How to play
 
@@ -41,6 +48,111 @@ never appears and no line is vacuous.
   navigation, so the game is fully playable from the keyboard.
 - Theme follows your system, or is pinned to light or dark from the footer. The interface
   is available in English and Simplified Chinese.
+
+## Star Battle (星战)
+
+Star Battle is the second game, a peer of Minegram rather than a mode of it. The
+app opens on a **game picker** on every load: each game is a card carrying its
+name, a one-line description, and your record once you have one, and a ring marks
+the game you last played.
+
+### Rules
+
+- The board is an **n × n** grid carrying exactly **n stars** and **n colours**, with
+  every cell coloured.
+- Exactly **one star per row**, exactly **one per column**, and exactly **one per
+  colour**.
+- No two stars may touch — not even diagonally. Every star rules out its whole
+  3 × 3 neighbourhood.
+- `n` defaults to **10** and is supported from **4 to 15**. Four is the floor
+  because no valid star placement exists below it: the stars form a permutation of
+  the columns with adjacent rows at distance two or more, and no such permutation
+  exists at n = 2 or n = 3. Fifteen is a product choice — the largest board the
+  shipped palette and grid already cover. There is no size selector yet; choosing
+  `n` is open work, recorded in [`plan/TODO.md`](plan/TODO.md).
+
+### How to play
+
+Every cell must eventually carry your mark: **blank** (no star) or **star**. The
+game never fills a cell for you — there is no auto-reveal, and every mark on the
+board is yours.
+
+- **Mark** a cell. A correct mark locks the cell; a locked cell silently refuses
+  any later assertion and is never charged.
+- A **wrong** mark costs one point. It stays visible so you can fix it, but the
+  point is not refunded. Score starts at 5 and reaching zero ends the round.
+- **Retract** a cell — Backspace / Delete, or clicking the mark it already carries —
+  to return it to unmarked. Retraction is free, refunds nothing, and never locks.
+- Re-stating the mark a cell already carries is free and changes nothing.
+- Row, column and colour **counters** above the board state, for each unit, whether
+  it holds no star yet, exactly one correct star, or a star that is misplaced; two
+  stars inside one 3 × 3 neighbourhood are flagged on both cells.
+- The round is won when **every cell carries a correct mark**.
+
+### Controls
+
+- **Left-click** cycles a cell toward blank; **right-click** (or a **500 ms
+  long-press** on touch) toggles a star. **Drag** paints with the stroke's tool and
+  visits each cell at most once.
+- Keyboard: one roving tab stop on the grid. **Arrow keys** move, **Home** / **End**
+  jump within the row (with Ctrl, to the board's ends), **Space** or **Enter**
+  toggles blank, **s** or **\*** toggles a star, and **Backspace** / **Delete**
+  retracts.
+
+### Difficulty
+
+Star Battle difficulty is the measured **depth of the deduction path** — how many
+simultaneous propagation waves a pure-logic solver needs to place all n stars —
+not a guess count. The three tiers differ only in how the generator spreads
+non-star cells across the colour regions:
+
+| Tier | Construction | Measured depth at n = 10 |
+| --- | --- | --- |
+| `starter` | decoys biased to the largest valid region; the early regions stay singletons, so the colour hidden-single resolves most of the board at once — these are the boards containing a one-cell colour | 3–5 waves |
+| `steady` | decoys uniform over the valid range | ≈ 1.7 n (13–17 waves) |
+| `challenging` | decoys biased to the smallest valid region, plus a bounded search over the proof order for the deepest construction | up to ~2 n (19 waves, the deepest measured band) |
+
+A higher wave count is a longer deduction path, not necessarily harder human
+reasoning — that caveat is stated plainly rather than smoothed over. Generation
+itself is cheap: about 1.3 ms at n = 10 for the hardest tier, rising to about
+3.0 ms at n = 15. The tier choice persists, and changing it prints a fresh board
+with the same seed.
+
+### Uniqueness is by construction — and certified
+
+Unlike Minegram's search-and-proof generator, a Star Battle board is unique **by
+construction**, and the acceptance test certifies it on every board:
+
+- A board is solvable exactly when some permutation `T` of the columns with
+  `|T(r) − T(r+1)| >= 2` — one star per row and column, never orthogonally or
+  diagonally adjacent — selects n cells of pairwise-distinct colours.
+- The generator paints colours by **chain**. Writing `pos[r]` for the position of
+  row `r` in a proof order, row `r`'s own star cell takes colour `pos[r]`, and its
+  non-star cells flow **forward** into the next proof region. Region `R_k` is then
+  the forced star `m_k` plus the previous row's decoys, every one of which shares
+  a row with an already-forced star and is therefore provably blank — so `R_k`
+  holds exactly one viable cell and the colour rule forces it. Induction forces
+  all n stars, and a fully forced star set is the unique one.
+- Acceptance is a **wave propagation solver** (`propagateStarBoard`): freeze the
+  state, compute every forced move, apply them all simultaneously, and count one
+  wave. A board ships only if propagation solves it to completion — strictly
+  stronger than a solution count of 1. Every generated board therefore carries its
+  own uniqueness certificate, and no counting is needed in production.
+- `countStarSolutions` remains as an **independent exact counter** for test
+  cross-checks (exhaustive agreement at n ≤ 10), alongside a budget-limited
+  variant whose exhaustion result can never be misread as a count.
+- Rejection sampling was measured and rejected: among well-spread colourings,
+  uniqueness is measure-zero past about n = 8, so no amount of resampling could
+  ever serve as the acceptance gate.
+
+Generation runs in a Web Worker with cancellation and stale-result protection; a
+generation failure is shown with a retry, never swallowed. Every cell's full
+state is in its `aria-label`, and one polite `role="status"` region carries wrong
+marks, proximity conflicts and the round's end. The palette and grid are pure
+CSS, so a larger board scrolls inside its pane rather than breaking the layout.
+A won round holds its banner for 2500 ms and then generates the next board
+automatically; the interlude never elapses while the document is hidden, and the
+banner's own button starts the next board immediately.
 
 ## Configuration
 
@@ -100,6 +212,31 @@ puzzle, a proof, or a trace.
   immutable and never leaves this layer except as a projection.
 - `src/ui/` — components, the closure-private store, copy dictionaries, and the snapshot
   projection. A component can only ever see selector output.
+
+The same inward-pointing layering holds for Star Battle, and the Worker adapts the
+engine without changing domain types:
+
+- `src/domain/starBattle.ts` — puzzle types, the mark constants, and the size
+  bounds. `MIN_STAR_SIDE` / `MAX_STAR_SIDE` / `DEFAULT_STAR_SIDE` are the single
+  source of truth for the supported range.
+- `src/engine/starBattle/construct.ts` — the CHAIN constructive generator; every
+  accepted board is certified by the propagation solver before it leaves the engine.
+- `src/engine/starBattle/propagate.ts` — the wave propagation solver: the
+  production uniqueness certificate and the depth metric in one pass.
+- `src/engine/starBattle/count.ts` — the independent exact solution counter and its
+  budget-limited variant; a test cross-check, never a production gate.
+- `src/engine/starBattle/analyze.ts` — deduction-depth analysis over the same rule
+  set.
+- `src/application/starBattleReducer.ts` — the play-state transitions: locking,
+  scoring, retraction, and the single win predicate.
+- `src/workers/starBattleWorker.ts` — the typed Worker adapter with cancellation
+  and stale-result protection.
+- `src/ui/starBattleStore.ts` — the closure-private store: generation lifecycle,
+  the persisted difficulty preference, and the win interlude with its visibility
+  guard.
+- `src/ui/components/GamePicker.tsx` and `src/ui/components/StarBattleSurface.tsx`
+  — the front door and the whole second game as props-driven views, styled by
+  `src/styles/starbattle.css`.
 
 ### Uniqueness is proven, never assumed
 
