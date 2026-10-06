@@ -257,7 +257,15 @@ describe('propagateStarBoard cross-validated against independent brute force', (
     }
   })
 
-  it('never contradicts the brute force at n=15 within an honest budget', () => {
+  // The 30s budget is deliberate: this case expands a 20M-node search tree
+  // at n=15 and measures ~4s alone, ~5.5s under full-suite CPU contention —
+  // against vitest's 5s default that margin is negative, so the default
+  // timeout flakes. The cost is inherent (exhausting 15! is infeasible by
+  // design; count.ts is the instrument for exact small-n uniqueness), and
+  // shrinking the node budget would weaken the very coverage this test
+  // exists for — the certificate must never contradict the partial
+  // evidence. Do not lower the budget to silence a slow machine.
+  it('never contradicts the brute force at n=15 within an honest budget', { timeout: 30_000 }, () => {
     // Exhausting 15! is infeasible by design (the exact counter in
     // count.ts is the instrument for small-n uniqueness). Within the
     // budget the brute force must find no solution other than the planted
