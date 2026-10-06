@@ -3,13 +3,30 @@
    Owned by the designer lane; registered in scripts/style-check.mjs.
 
    PALETTE RULE
-   n can reach 20, so hues are distributed by a 132° step (360/20 would land
-   neighbours 18° apart; 132° keeps every ADJACENT index a third of the wheel
-   away) and lightness steps through three levels by index mod 3, so the close
-   non-adjacent pairs the step leaves behind (12° of hue) are always split by
-   value. Light theme: pastel fills (S 56%, L 68/74/80). Dark theme: deep fills
-   (S 46%, L 24/32/40). The star/blank glyph ink is the theme's own --ink role,
-   which already flips with the palette.
+   Colour identity is the puzzle, so the palette is derived, not picked: the
+   objective is MAXIMUM MINIMUM pairwise distance, because any two regions can
+   end up adjacent and it is the worst pair that must survive, not the
+   average. Structure: 5 hue slots × 4 lightness levels; slot = index mod 5,
+   level = floor(index / 5), hue = slot × 72° + level × 36° (a level never
+   repeats a slot's hue, so same-lightness pairs are always ≥72° apart in hue
+   and cross-level pairs add ≥36° of hue to their lightness step). Chroma is
+   the largest value that stays inside the sRGB gamut at that L and hue, then
+   capped at S 72% — the fills speak in the product's muted voice even where
+   the gamut would let them shout. Light theme levels (OKLCH L): 0.84 / 0.70 /
+   0.56 / 0.42, C ≤ 0.12; dark theme: 0.60 / 0.50 / 0.40 / 0.30, C ≤ 0.14 —
+   separate palettes, not inversions. Every prefix n = 4..20 keeps the same
+   shape: small boards are five pastels, each added block of five is one step
+   darker, so at n = 15 the player reads three value families, not fifteen
+   hues. Measured (CIEDE2000, rounded shipping values, verified by
+   src/styles/starbattle.palette.test.ts): light theme minimum 26.4 at n=4,
+   18.4 at n=15, 18.0 at n=20; dark theme minimum 34.1 at n=4, 14.7 at n=15,
+   13.6 at n=20. For large flat patches a ΔE00 of ~5 reads clearly at a
+   glance, so no second non-colour channel is needed — the old palette's
+   defect was pairs like 12° of hue at equal lightness (ΔE00 ≈ 4), and the
+   new rule makes the worst pair three times safer than that threshold in
+   both themes. The star/blank glyph rides on a small plate chip (see the
+   glyph rule) so mark ink is ink-on-plate — a token-guaranteed pairing — on
+   every fill, and state rings sit on the plate, not on a fill.
 
    THEME WIRING
    Same contract as tokens.css: light is :root's default; Auto-dark re-points
@@ -22,47 +39,47 @@
    ============================================================================ */
 
 :root {
-  --star-light-c0: hsl(0 56% 68%);
-  --star-light-c1: hsl(132 56% 74%);
-  --star-light-c2: hsl(264 56% 80%);
-  --star-light-c3: hsl(36 56% 68%);
-  --star-light-c4: hsl(168 56% 74%);
-  --star-light-c5: hsl(300 56% 80%);
-  --star-light-c6: hsl(72 56% 68%);
-  --star-light-c7: hsl(204 56% 74%);
-  --star-light-c8: hsl(336 56% 80%);
-  --star-light-c9: hsl(108 56% 68%);
-  --star-light-c10: hsl(240 56% 74%);
-  --star-light-c11: hsl(12 56% 80%);
-  --star-light-c12: hsl(144 56% 68%);
-  --star-light-c13: hsl(276 56% 74%);
-  --star-light-c14: hsl(48 56% 80%);
-  --star-light-c15: hsl(180 56% 68%);
-  --star-light-c16: hsl(312 56% 74%);
-  --star-light-c17: hsl(84 56% 80%);
-  --star-light-c18: hsl(216 56% 68%);
-  --star-light-c19: hsl(348 56% 74%);
+  --star-light-c0: hsl(343 70.7% 83.6%);
+  --star-light-c1: hsl(33 71.1% 74.4%);
+  --star-light-c2: hsl(119 52.7% 73.6%);
+  --star-light-c3: hsl(192 71.1% 73.8%);
+  --star-light-c4: hsl(244 70.4% 86.5%);
+  --star-light-c5: hsl(13 64% 64.1%);
+  --star-light-c6: hsl(59 43.2% 45.4%);
+  --star-light-c7: hsl(171 66.8% 42.9%);
+  --star-light-c8: hsl(211 70.8% 64.9%);
+  --star-light-c9: hsl(295 38.7% 65.2%);
+  --star-light-c10: hsl(36 69.3% 36%);
+  --star-light-c11: hsl(121 33.2% 39.5%);
+  --star-light-c12: hsl(190 68.4% 35.1%);
+  --star-light-c13: hsl(248 35.2% 56%);
+  --star-light-c14: hsl(339 34.7% 49.9%);
+  --star-light-c15: hsl(59 68.4% 19%);
+  --star-light-c16: hsl(171 68.1% 20.9%);
+  --star-light-c17: hsl(210 70.2% 30.7%);
+  --star-light-c18: hsl(295 38.9% 32%);
+  --star-light-c19: hsl(13 69.3% 30%);
 
-  --star-dark-c0: hsl(0 46% 24%);
-  --star-dark-c1: hsl(132 46% 32%);
-  --star-dark-c2: hsl(264 46% 40%);
-  --star-dark-c3: hsl(36 46% 24%);
-  --star-dark-c4: hsl(168 46% 32%);
-  --star-dark-c5: hsl(300 46% 40%);
-  --star-dark-c6: hsl(72 46% 24%);
-  --star-dark-c7: hsl(204 46% 32%);
-  --star-dark-c8: hsl(336 46% 40%);
-  --star-dark-c9: hsl(108 46% 24%);
-  --star-dark-c10: hsl(240 46% 32%);
-  --star-dark-c11: hsl(12 46% 40%);
-  --star-dark-c12: hsl(144 46% 24%);
-  --star-dark-c13: hsl(276 46% 32%);
-  --star-dark-c14: hsl(48 46% 40%);
-  --star-dark-c15: hsl(180 46% 24%);
-  --star-dark-c16: hsl(312 46% 32%);
-  --star-dark-c17: hsl(84 46% 40%);
-  --star-dark-c18: hsl(216 46% 24%);
-  --star-dark-c19: hsl(348 46% 32%);
+  --star-dark-c0: hsl(339 45.8% 55%);
+  --star-dark-c1: hsl(36 69.2% 39.6%);
+  --star-dark-c2: hsl(121 37.5% 42.5%);
+  --star-dark-c3: hsl(190 68.3% 38.6%);
+  --star-dark-c4: hsl(249 49.1% 62.4%);
+  --star-dark-c5: hsl(13 65% 38.8%);
+  --star-dark-c6: hsl(59 68.1% 24.5%);
+  --star-dark-c7: hsl(171 67.7% 26.8%);
+  --star-dark-c8: hsl(210 70.1% 39.3%);
+  --star-dark-c9: hsl(295 36.7% 41.2%);
+  --star-dark-c10: hsl(36 69.6% 22.3%);
+  --star-dark-c11: hsl(125 68.5% 20.2%);
+  --star-dark-c12: hsl(191 68.9% 21.8%);
+  --star-dark-c13: hsl(253 45.7% 38%);
+  --star-dark-c14: hsl(334 67.4% 29.6%);
+  --star-dark-c15: hsl(59 69.2% 11.3%);
+  --star-dark-c16: hsl(170 68.9% 12.4%);
+  --star-dark-c17: hsl(210 70.4% 18.5%);
+  --star-dark-c18: hsl(295 69.9% 18.2%);
+  --star-dark-c19: hsl(13 70.5% 18%);
 
   /* The resolved roles — the light pair is the default. */
   --star-c0: var(--star-light-c0);
@@ -458,38 +475,61 @@
 }
 
 .mg-star-cell:focus-visible {
+  /* The ring sits on the plate, never on a region fill: a halo of plate
+     colour separates it from whatever hue the cell carries, so focus reads
+     the same on a 19% olive as on an 87% pastel. */
   outline: var(--rule-w-heavy) solid var(--focus);
-  outline-offset: calc(var(--rule-w) * -1);
+  outline-offset: var(--rule-w);
+  box-shadow: 0 0 0 calc(var(--rule-w-heavy) + var(--rule-w) * 2) var(--surface-2);
   z-index: 1;
 }
 
 .mg-star-cell__glyph {
   display: none;
+  /* The mark rides on a small plate chip: mark ink is ink-on-plate, the
+     token-guaranteed pairing, on every fill in both themes. On the light
+     fills the chip nearly agrees with the fill and vanishes; on the dark
+     fills it appears exactly where ink-on-fill would fall below 1.5:1. */
+  inline-size: 1.3em;
+  block-size: 1.3em;
+  place-items: center;
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
   font-size: clamp(9px, calc(60cqi / var(--cols)), 22px);
   line-height: 1;
 }
 
 .mg-star-cell[data-mark='star'] .mg-star-cell__glyph,
 .mg-star-cell[data-mark='locked'] .mg-star-cell__glyph {
-  display: block;
+  display: grid;
 }
 
 .mg-star-cell[data-mark='blank'] .mg-star-cell__glyph {
-  display: block;
+  display: grid;
   font-size: clamp(9px, calc(90cqi / var(--cols)), 26px);
   color: var(--ink-3);
 }
 
 /* A locked star is the game's own acknowledgement: a confirm ring, never a
-   charge. */
+   charge. The ring sits on the plate, not the fill — plate gaps on both
+   sides — so it reads the same on a 21% teal as on an 84% pastel, and as a
+   box-shadow (not an outline) it still composes with a keyboard focus ring. */
 .mg-star-cell[data-mark='locked'] {
-  box-shadow: inset 0 0 0 var(--rule-w-heavy) var(--confirm);
+  box-shadow:
+    0 0 0 var(--rule-w) var(--surface-2),
+    0 0 0 calc(var(--rule-w) + var(--rule-w-heavy)) var(--confirm),
+    0 0 0 calc(var(--rule-w-heavy) + var(--rule-w) * 2) var(--surface-2);
+  z-index: 1;
 }
 
-/* A wrong mark is the accent's dashed border plus a hatch — the same
-   vocabulary Minegram's wrong-mine speaks, so it cannot read as pending. */
+/* A wrong mark is the accent's dashed ring plus a hatch — the same
+   vocabulary Minegram's wrong-mine speaks, so it cannot read as pending.
+   The ring is drawn on the plate like every state ring, not on the fill. */
 .mg-star-cell[data-wrong='true'] {
-  border: var(--rule-w-strong) dashed var(--accent);
+  outline: var(--rule-w-strong) dashed var(--accent);
+  outline-offset: var(--rule-w);
+  box-shadow: 0 0 0 calc(var(--rule-w-strong) + var(--rule-w) * 2) var(--surface-2);
+  z-index: 1;
 }
 
 .mg-star-cell[data-wrong='true']::after {
@@ -505,10 +545,13 @@
 }
 
 /* Two stars within one cell of each other: the proximity constraint is the
-   one with no counter, so it is stated on the cells themselves. */
+   one with no counter, so it is stated on the cells themselves. The ring
+   sits on the plate like every state ring, so it reads on any fill. */
 .mg-star-cell[data-conflict='true'] {
   outline: var(--rule-w-heavy) solid var(--accent);
-  outline-offset: calc(var(--rule-w-heavy) * -1);
+  outline-offset: var(--rule-w);
+  box-shadow: 0 0 0 calc(var(--rule-w-heavy) + var(--rule-w) * 2) var(--surface-2);
+  z-index: 1;
 }
 
 .mg-star-cell[data-inert='true'] {
