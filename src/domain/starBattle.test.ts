@@ -37,7 +37,10 @@ describe('star battle domain constants', () => {
 
   it('exposes a defensible side range with the default at 10', () => {
     expect(MIN_STAR_SIDE).toBe(4)
-    expect(MAX_STAR_SIDE).toBe(13)
+    // 15 is a product ceiling, not a solver one: production acceptance is the
+    // propagation certificate, and the palette/grid cover 20 colours. The test
+    // pins the VALUE so a future widening is a deliberate, visible change.
+    expect(MAX_STAR_SIDE).toBe(15)
     expect(DEFAULT_STAR_SIDE).toBe(10)
     expect(DEFAULT_STAR_SIDE).toBeGreaterThan(MIN_STAR_SIDE)
     expect(DEFAULT_STAR_SIDE).toBeLessThan(MAX_STAR_SIDE)

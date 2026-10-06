@@ -38,22 +38,36 @@ export interface StarBattlePuzzle {
 // generator can only fail there, so the supported range starts at 4.
 export const MIN_STAR_SIDE = 4
 
-// The ceiling is driven by the exact solution counter in
-// `src/engine/starBattle/count.ts`, not by taste. The counter memoises DFS
-// states keyed by (columnsUsedMask, coloursUsedMask) with an n-slot vector
-// per key for the previous column; its cost is dominated by the number of
-// reachable masks, and it degrades dramatically on highly symmetric
-// 0-solution colourings, where the search must exhaust the whole tree.
-// Measured (cap = 2, this machine, 2026-10): at 13×13 the worst case across
-// hundreds of adversarial colourings — random, planted-solution, block,
-// row-permutation and the full cyclic torus family (a·col + b·row mod n for
-// every a, b) — is under 4ms. At 14×14 the cyclic Latin stripes alone
-// (a = 1, b odd, which are 0-solution boards) take ~4.4s, three orders of
-// magnitude over the 13×13 worst, so 14 is over the cliff and 13 is the
-// largest side with comfortable headroom for the repair loop the generator
-// runs on top. A player-chosen size is a settings field that must read this
-// constant rather than repeat a literal.
-export const MAX_STAR_SIDE = 13
+// The ceiling is a product decision, NOT a solver limit, and it is worth being
+// explicit about why the obvious argument no longer applies.
+//
+// The counter in `src/engine/starBattle/count.ts` memoises DFS states keyed by
+// (columnsUsedMask, coloursUsedMask) with an n-slot vector per key for the
+// previous column, and it degrades sharply on highly symmetric 0-solution
+// colourings, where the search must exhaust the whole tree. Measured
+// (cap = 2, this machine, 2026-10): at 13×13 the worst case across hundreds of
+// adversarial colourings — random, planted-solution, block, row-permutation
+// and the full cyclic torus family (a·col + b·row mod n for every a, b) — is
+// under 4ms, while at 14×14 the cyclic Latin stripes alone (a = 1, b odd) take
+// ~4.4s. That cliff is real, and it is ALSO irrelevant here: the generator
+// accepts a board only when the propagation certificate in
+// `src/engine/starBattle/propagate.ts` forces all n stars, which is a strictly
+// stronger statement than a count of 1 and costs ~0.03ms at n = 5 rising to
+// ~26ms at n = 40. The counter is a TEST cross-check at n <= 10 and never a
+// production gate, so no shipped size can trip the 14 cliff.
+//
+// (An earlier version of this comment set the ceiling at 13 "with headroom
+// for the repair loop the generator runs on top". There is no repair loop, and
+// there never will be one: uniqueness is MEASURE-ZERO among well-spread
+// colourings past n ~ 8, so a repair-by-recolouring walk is a random walk on
+// a non-monotone objective rather than a descent. The CHAIN construction in
+// `src/engine/starBattle/construct.ts` makes uniqueness structural instead.)
+//
+// 15 is therefore a choice, and the choice is: the largest board the shipped
+// palette and grid already cover without new CSS, which is the size the player
+// actually tried by hand. A player-chosen size must read this constant rather
+// than repeat a literal.
+export const MAX_STAR_SIDE = 15
 export const DEFAULT_STAR_SIDE = 10
 
 export function assertStarBattleSide(value: unknown, context = 'star battle side'): asserts value is number {
