@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_INITIAL_SCORE } from '../application/gameReducer'
 import { MAX_BOARD_CELLS, MAX_BOARD_SIDE, MIN_BOARD_SIDE } from '../domain/board'
 import { DEFAULT_STAR_SIDE, MAX_STAR_SIDE, MIN_STAR_SIDE } from '../domain/starBattle'
+import { DEFAULT_STAR_LIVES, MAX_STAR_LIVES, MIN_STAR_LIVES } from '../domain/starBattle'
 import {
   DEFAULT_GENERATION_COLUMNS,
   DEFAULT_GENERATION_DENSITY_PERCENT,
@@ -35,7 +36,8 @@ const RULE = [
   'from src/domain, src/engine, and src/application (erased at build time) and may import',
   'pure constant tables from them — DIFFICULTY_BANDS, the DEFAULT_GENERATION_* defaults,',
   'DEFAULT_INITIAL_SCORE, MAX_BOARD_SIDE, and the Star Battle side bounds (MIN_STAR_SIDE,',
-  'MAX_STAR_SIDE, DEFAULT_STAR_SIDE) — so the settings form and the form default values',
+  'MAX_STAR_SIDE, DEFAULT_STAR_SIDE) and lives bounds (MIN_STAR_LIVES, MAX_STAR_LIVES,',
+  'DEFAULT_STAR_LIVES) — so the settings form and the form default values',
   'share one source of truth instead of duplicating literals. They must not import any',
   'function, class, or value that can reach a board, puzzle, solver proof, or generation trace.',
 ].join(' ')
@@ -62,6 +64,13 @@ const SANCTIONED_VALUES: readonly string[] = [
   'MIN_STAR_SIDE',
   'MAX_STAR_SIDE',
   'DEFAULT_STAR_SIDE',
+  // The Star Battle lives bounds are the same shape of constant as the side
+  // bounds: plain numbers in src/domain/starBattle.ts, the single source of
+  // truth the lives selector must read instead of repeating literals. None of
+  // them can reach a board, a puzzle or a solver.
+  'MIN_STAR_LIVES',
+  'MAX_STAR_LIVES',
+  'DEFAULT_STAR_LIVES',
   'DIFFICULTY_BANDS',
   'DEFAULT_GENERATION_ROWS',
   'DEFAULT_GENERATION_COLUMNS',
@@ -627,6 +636,7 @@ describe('layer boundary import parser', () => {
       "import { MAX_BOARD_SIDE } from '../../domain/board'",
       "import { MIN_BOARD_SIDE, MAX_BOARD_CELLS } from '../../domain/board'",
       "import { MIN_STAR_SIDE, MAX_STAR_SIDE, DEFAULT_STAR_SIDE } from '../../domain/starBattle'",
+      "import { MIN_STAR_LIVES, MAX_STAR_LIVES, DEFAULT_STAR_LIVES } from '../../domain/starBattle'",
       "import type { LineProgress } from '../../application/lineProgress'",
       "import type { generateBoard } from '../../engine/generator'",
       "import { type BoardDimensions } from '../../domain/board'",
@@ -755,6 +765,9 @@ describe('sanctioned UI layer constants', () => {
     expect(typeof MIN_STAR_SIDE).toBe('number')
     expect(typeof MAX_STAR_SIDE).toBe('number')
     expect(typeof DEFAULT_STAR_SIDE).toBe('number')
+    expect(typeof MIN_STAR_LIVES).toBe('number')
+    expect(typeof MAX_STAR_LIVES).toBe('number')
+    expect(typeof DEFAULT_STAR_LIVES).toBe('number')
     expect(typeof DEFAULT_GENERATION_ROWS).toBe('number')
     expect(typeof DEFAULT_GENERATION_COLUMNS).toBe('number')
     expect(typeof DEFAULT_GENERATION_DENSITY_PERCENT).toBe('number')
@@ -777,6 +790,9 @@ describe('sanctioned UI layer constants', () => {
       MIN_STAR_SIDE,
       MAX_STAR_SIDE,
       DEFAULT_STAR_SIDE,
+      MIN_STAR_LIVES,
+      MAX_STAR_LIVES,
+      DEFAULT_STAR_LIVES,
       DIFFICULTY_BANDS,
       DEFAULT_GENERATION_ROWS,
       DEFAULT_GENERATION_COLUMNS,

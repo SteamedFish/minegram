@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_STAR_LIVES,
   DEFAULT_STAR_SIDE,
+  MAX_STAR_LIVES,
   MAX_STAR_SIDE,
+  MIN_STAR_LIVES,
   MIN_STAR_SIDE,
   STAR_BLANK,
   STAR_LOCKED,
   STAR_STAR,
   STAR_UNMARKED,
+  assertStarBattleLives,
   assertStarBattlePuzzle,
   type StarBattlePuzzle,
 } from './starBattle'
@@ -44,6 +48,34 @@ describe('star battle domain constants', () => {
     expect(DEFAULT_STAR_SIDE).toBe(10)
     expect(DEFAULT_STAR_SIDE).toBeGreaterThan(MIN_STAR_SIDE)
     expect(DEFAULT_STAR_SIDE).toBeLessThan(MAX_STAR_SIDE)
+  })
+
+  it('exposes a lives range with the default at 5', () => {
+    expect(MIN_STAR_LIVES).toBe(1)
+    expect(MAX_STAR_LIVES).toBe(9)
+    // 5, not 3: the hard tier runs ~19 deduction waves and a wrong star is
+    // the only way to lose a life, so a smaller default would end rounds the
+    // player is still actively solving. The test pins the VALUE so a future
+    // change is deliberate and visible.
+    expect(DEFAULT_STAR_LIVES).toBe(5)
+    expect(DEFAULT_STAR_LIVES).toBeGreaterThan(MIN_STAR_LIVES)
+    expect(DEFAULT_STAR_LIVES).toBeLessThan(MAX_STAR_LIVES)
+  })
+})
+
+describe('assertStarBattleLives', () => {
+  it('accepts integers within the range, including the boundaries', () => {
+    expect(() => assertStarBattleLives(MIN_STAR_LIVES)).not.toThrow()
+    expect(() => assertStarBattleLives(DEFAULT_STAR_LIVES)).not.toThrow()
+    expect(() => assertStarBattleLives(MAX_STAR_LIVES)).not.toThrow()
+  })
+
+  it('rejects non-integers and out-of-range values', () => {
+    expect(() => assertStarBattleLives(2.5)).toThrow(TypeError)
+    expect(() => assertStarBattleLives('3')).toThrow(TypeError)
+    expect(() => assertStarBattleLives(Number.NaN)).toThrow(TypeError)
+    expect(() => assertStarBattleLives(MIN_STAR_LIVES - 1)).toThrow(RangeError)
+    expect(() => assertStarBattleLives(MAX_STAR_LIVES + 1)).toThrow(RangeError)
   })
 })
 

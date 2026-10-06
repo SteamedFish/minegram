@@ -70,6 +70,17 @@ export const MIN_STAR_SIDE = 4
 export const MAX_STAR_SIDE = 15
 export const DEFAULT_STAR_SIDE = 10
 
+// Lives are the round's mistake budget: a wrong assertion costs exactly one,
+// zero loses. 5 is the default: the hard tier runs ~19 deduction waves, and a
+// wrong star is the only way to lose a life, so a smaller budget would end
+// rounds the player is still actively solving. 1 is the floor because a round
+// that ends on the first mistake is a round that cannot be played, and 9 is
+// the ceiling a settings stepper needs. A player-chosen maximum must read
+// these constants rather than repeat literals.
+export const MIN_STAR_LIVES = 1
+export const MAX_STAR_LIVES = 9
+export const DEFAULT_STAR_LIVES = 5
+
 export function assertStarBattleSide(value: unknown, context = 'star battle side'): asserts value is number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
     throw new TypeError(`${context} must be an integer; received ${String(value)}`)
@@ -77,6 +88,17 @@ export function assertStarBattleSide(value: unknown, context = 'star battle side
   if (value < MIN_STAR_SIDE || value > MAX_STAR_SIDE) {
     throw new RangeError(
       `${context} must be between ${MIN_STAR_SIDE} and ${MAX_STAR_SIDE}; received ${value}`,
+    )
+  }
+}
+
+export function assertStarBattleLives(value: unknown, context = 'star battle lives'): asserts value is number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+    throw new TypeError(`${context} must be an integer; received ${String(value)}`)
+  }
+  if (value < MIN_STAR_LIVES || value > MAX_STAR_LIVES) {
+    throw new RangeError(
+      `${context} must be between ${MIN_STAR_LIVES} and ${MAX_STAR_LIVES}; received ${value}`,
     )
   }
 }

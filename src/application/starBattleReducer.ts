@@ -2,21 +2,43 @@
  * Star Battle play-state transitions. Mirrors the Minegram gameplay contract
  * (see `src/application/gameReducer.ts`, which this module deliberately does
  * NOT import): correct marks lock and refuse any later assertion, wrong marks
- * cost one point and stay visible so the player can fix them, re-asserting
- * the mark a cell already carries is free, an all-inert batch is silent and
- * charges nothing, score clamps at zero and zero loses, and the single win
- * predicate runs AFTER the batch is applied so the batch that completes the
- * round wins instead of soft-locking it.
+ * cost one life and stay visible so the player can fix them, re-asserting the
+ * mark a cell already carries is free, an all-inert batch is silent and charges
+ * nothing, lives clamp at zero and zero loses, and the single win predicate
+ * runs AFTER the batch is applied — after the auto-fill below — so the batch
+ * that completes the round wins instead of soft-locking it.
  *
- * One deliberate difference from Minegram: there is no auto-reveal. A Star
- * Battle round is complete only when EVERY cell carries a correct mark, and
- * the game never writes marks itself — every mark on the board is the
- * player's, so `roundIsComplete` reads the mark array directly with no
- * reveal pass between the batch and the win gate. Because every one of the
- * n² cells must be asserted, the player can also RETRACT a cell back to
- * unmarked (`'clear'`): a misclick would otherwise make the round
- * permanently unwinnable. Retraction is free, refunds nothing, never locks,
- * and a locked cell refuses it silently — see `StarCellAssertion`.
+ * The resource is LIVES, not score: a wrong non-retract assertion costs
+ * exactly one life, clamped at zero, and zero is `status: 'lost'`. There is no
+ * positive score alongside it — a resource that only ever decreases by one
+ * per mistake is lives.
+ *
+ * Auto-fill, mirroring Minegram's auto-reveal: when a star assertion is
+ * CORRECT the cell becomes `STAR_LOCKED`, and the rules themselves then
+ * exclude every other cell of the star's row, column, colour and 3×3
+ * neighbourhood (one star per row, one per column, one per colour, none
+ * adjacent). The reducer records that exclusion for free, in the SAME commit
+ * as the star batch, writing `STAR_LOCKED` blanks — proven correct, and
+ * refusing any later assertion, exactly as a locked blank would in Minegram.
+ * This is what makes the fill leak-free: it fires only on a correct star, so
+ * it never tells the player where a star is — it only records exclusion the
+ * rules already imply. A wrong star locks nothing and fills nothing. The fill
+ * never overwrites a cell the player already marked (including a wrong mark
+ * they already paid a life for) and never the star's own cell, it runs AFTER
+ * the player's cells are applied and BEFORE the win gate, and one pass is
+ * already the fixpoint: every write lands on a cell that is blank in the
+ * solution, so it can neither complete nor break a row, column, colour or
+ * neighbourhood, and there is deliberately no cascade loop.
+ *
+ * One deliberate difference from Minegram remains: a Star Battle round is
+ * complete only when EVERY cell carries a correct mark, and the player can
+ * RETRACT a cell back to unmarked (`'clear'`): a misclick would otherwise
+ * make the round permanently unwinnable. Retraction is free, refunds nothing,
+ * never locks, and a locked cell refuses it silently — see
+ * `StarCellAssertion`. A retracted cell the rules exclude is simply refilled
+ * as a locked blank by the next correct star, so the auto-fill can never need
+ * undoing: a correct star locks immediately, and a locked cell refuses every
+ * later assertion, retraction included.
  */
 import {
   STAR_BLANK,
@@ -24,16 +46,15 @@ import {
   STAR_STAR,
   STAR_UNMARKED,
   assertStarBattlePuzzle,
+  DEFAULT_STAR_LIVES,
   type StarBattlePuzzle,
 } from '../domain/starBattle'
-
-export const DEFAULT_STAR_INITIAL_SCORE = 5
 
 export type StarBattleStatus = 'idle' | 'playing' | 'won' | 'lost'
 /**
  * The player's assertion vocabulary. `'blank'` and `'star'` place a mark;
  * `'clear'` retracts the cell back to unmarked. `clear` is FREE — it costs no
- * score and refunds nothing, because a retraction is not a new assertion: it
+ * life and refunds nothing, because a retraction is not a new assertion: it
  * follows Minegram's rule that a wrong mark "may be corrected without refund"
  * one step further, letting the player undo the assertion itself. It never
  * writes a mark that is wrong for the solution and it never locks; a locked
@@ -43,17 +64,18 @@ export type StarCellAssertion = 'blank' | 'star' | 'clear'
 
 /**
  * Play state. `marks` is a flat array of the domain mark constants with
- * `STAR_LOCKED` written only by the reducer. State objects are frozen and
- * every transition emits a fresh `Uint8Array`; callers must treat the array
- * as read-only (a frozen `Uint8Array` does not freeze its elements, so the
- * discipline is enforced by convention here, exactly as Minegram's frozen
- * mark arrays are).
+ * `STAR_LOCKED` written only by the reducer — by a correct player assertion
+ * or by the auto-fill, which are indistinguishable in the stored state.
+ * State objects are frozen and every transition emits a fresh `Uint8Array`;
+ * callers must treat the array as read-only (a frozen `Uint8Array` does not
+ * freeze its elements, so the discipline is enforced by convention here,
+ * exactly as Minegram's frozen mark arrays are).
  */
 export interface StarBattleState {
   readonly status: StarBattleStatus
   readonly puzzle: StarBattlePuzzle | null
   readonly marks: Uint8Array
-  readonly score: number
+  readonly lives: number
   readonly mistakes: number
   readonly streak: number
 }
@@ -64,11 +86,11 @@ export interface StarCellAssertionInput {
 }
 
 export interface InitialStarBattleStateOptions {
-  readonly initialScore?: number
+  readonly maxLives?: number
 }
 
 export type StarBattleAction =
-  | { readonly type: 'round/start'; readonly puzzle: StarBattlePuzzle; readonly initialScore?: number }
+  | { readonly type: 'round/start'; readonly puzzle: StarBattlePuzzle; readonly maxLives?: number }
   | { readonly type: 'round/markBatch'; readonly cells: readonly StarCellAssertionInput[] }
 
 export type StarBattleTransition = 'round-started' | 'marks-applied' | 'round-won' | 'round-lost'
@@ -93,8 +115,9 @@ export interface StarBatchPreview {
   readonly valid: boolean
   /** Cells the commit would actually change; 0 means the gesture is inert. */
   readonly affectedCount: number
-  readonly scoreCost: number
-  readonly projectedScore: number
+  /** Lives the commit would cost; a retraction previews as affected but never as a cost. */
+  readonly livesLost: number
+  readonly projectedLives: number
   readonly reachesZero: boolean
   readonly reason?: StarBattleResultReason
 }
@@ -112,20 +135,20 @@ function isStarCellAssertion(value: unknown): value is StarCellAssertion {
   return value === 'blank' || value === 'star' || value === 'clear'
 }
 
-function assertInitialStarScore(value: unknown): asserts value is number {
+function assertInitialStarLives(value: unknown): asserts value is number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
-    throw new TypeError(`initialScore must be a positive safe integer; received ${String(value)}`)
+    throw new TypeError(`maxLives must be a positive safe integer; received ${String(value)}`)
   }
 }
 
 export function createInitialStarBattleState(options: InitialStarBattleStateOptions = {}): StarBattleState {
-  const initialScore = options.initialScore ?? DEFAULT_STAR_INITIAL_SCORE
-  assertInitialStarScore(initialScore)
+  const maxLives = options.maxLives ?? DEFAULT_STAR_LIVES
+  assertInitialStarLives(maxLives)
   return Object.freeze({
     status: 'idle',
     puzzle: null,
     marks: new Uint8Array(0),
-    score: initialScore,
+    lives: maxLives,
     mistakes: 0,
     streak: 0,
   })
@@ -206,12 +229,16 @@ function prepareStarBatch(state: StarBattleState, value: unknown): PreparedStarB
 
 /**
  * The single win predicate: every cell carries a mark that is correct for the
- * solution. `STAR_LOCKED` always counts (the reducer writes it only on a
- * correct assertion); an unlocked `STAR_STAR`/`STAR_BLANK` counts only when
- * it matches the solution — unreachable in real play, since a correct first
- * assertion locks immediately, but the semantic check keeps the predicate
- * honest if the locking invariant ever breaks. A wrong mark therefore never
- * coexists with a win.
+ * solution. `STAR_LOCKED` always counts (the reducer writes it only where the
+ * solution is blank — on a correct star assertion or on an auto-filled
+ * exclusion — and never a wrong mark); an unlocked `STAR_STAR`/`STAR_BLANK`
+ * counts only when it matches the solution — unreachable in real play, since
+ * a correct first assertion locks immediately, but the semantic check keeps
+ * the predicate honest if the locking invariant ever breaks. A wrong mark
+ * therefore never coexists with a win: a round holding an incorrect mark is
+ * not won, and correcting it is the player's job. A blank the player typed
+ * and a blank the game filled are indistinguishable here — provenance is a
+ * property of the mark array, never of the renderer.
  */
 export function roundIsComplete(puzzle: StarBattlePuzzle, marks: Uint8Array): boolean {
   const { n, solution } = puzzle
@@ -234,10 +261,56 @@ export function roundIsComplete(puzzle: StarBattlePuzzle, marks: Uint8Array): bo
   return true
 }
 
+/**
+ * Records the exclusion a correct star implies, mirroring Minegram's
+ * `revealEligibleLines` fill: writes `STAR_LOCKED` over the star's row,
+ * column, colour and 3×3 neighbourhood — never the star's own cell, which is
+ * already locked, and never a cell that already carries any mark. A player
+ * mark keeps it, a wrong star included: the player paid a life for that
+ * information and the game neither deletes it nor charges for it again. The
+ * player is never charged for a cell the game filled, and the game never
+ * writes a mark that is wrong for the solution — every excluded cell is blank
+ * in the solution by the puzzle's own rules.
+ */
+function fillStarExclusions(puzzle: StarBattlePuzzle, marks: Uint8Array, index: number): void {
+  const { n, colours } = puzzle
+  const row = Math.floor(index / n)
+  const column = index % n
+  const colour = colours[index]!
+
+  const fill = (target: number): void => {
+    if (marks[target] !== STAR_UNMARKED) {
+      return
+    }
+    marks[target] = STAR_LOCKED
+  }
+
+  for (let offset = 0; offset < n; offset += 1) {
+    fill(row * n + offset)
+    fill(offset * n + column)
+  }
+  for (let cell = 0; cell < marks.length; cell += 1) {
+    if (colours[cell] === colour) {
+      fill(cell)
+    }
+  }
+  for (let neighbourRow = row - 1; neighbourRow <= row + 1; neighbourRow += 1) {
+    if (neighbourRow < 0 || neighbourRow >= n) {
+      continue
+    }
+    for (let neighbourColumn = column - 1; neighbourColumn <= column + 1; neighbourColumn += 1) {
+      if (neighbourColumn < 0 || neighbourColumn >= n) {
+        continue
+      }
+      fill(neighbourRow * n + neighbourColumn)
+    }
+  }
+}
+
 function startStarBattleRound(
   state: StarBattleState,
   puzzle: unknown,
-  requestedInitialScore: number | undefined,
+  requestedMaxLives: number | undefined,
 ): StarBattleReducerResult {
   if (state.status === 'playing') {
     return ignored(state, 'round-not-startable')
@@ -247,9 +320,9 @@ function startStarBattleRound(
   } catch {
     return rejected(state, 'invalid-puzzle')
   }
-  const initialScore = requestedInitialScore ?? DEFAULT_STAR_INITIAL_SCORE
+  const maxLives = requestedMaxLives ?? DEFAULT_STAR_LIVES
   try {
-    assertInitialStarScore(initialScore)
+    assertInitialStarLives(maxLives)
   } catch {
     return rejected(state, 'invalid-puzzle')
   }
@@ -260,7 +333,7 @@ function startStarBattleRound(
       status: 'playing',
       puzzle,
       marks: new Uint8Array(puzzle.n * puzzle.n).fill(STAR_UNMARKED),
-      score: initialScore,
+      lives: maxLives,
       mistakes: 0,
       streak: 0,
     }),
@@ -282,11 +355,13 @@ function applyStarMarkBatch(state: StarBattleState, value: unknown): StarBattleR
   }
 
   const marks = new Uint8Array(state.marks)
-  let score = state.score
+  let lives = state.lives
   let mistakes = state.mistakes
   let streak = state.streak
   let changed = false
   let sawLockedCell = false
+  /** Cells that became a locked star in THIS batch; only they trigger the fill. */
+  const freshStars: number[] = []
 
   for (const { index, mark } of prepared.cells) {
     // Strict contract, as in Minegram: re-asserting the mark a cell already
@@ -314,17 +389,25 @@ function applyStarMarkBatch(state: StarBattleState, value: unknown): StarBattleR
     if (assertionMatchesPuzzle(puzzle, index, mark)) {
       marks[index] = STAR_LOCKED
       streak += 1
+      if (mark === 'star') {
+        freshStars.push(index)
+      }
       continue
     }
-    // Wrong mark: one point, no lock, the player's mark stays so they can see
+    // Wrong mark: one life, no lock, the player's mark stays so they can see
     // and fix it. Correcting it later is a fresh first assertion on that
     // value — no refund, and (when the correction is right) no charge.
-    score = Math.max(0, score - 1)
+    lives = Math.max(0, lives - 1)
     mistakes += 1
     streak = 0
-    if (score === 0) {
+    if (lives === 0) {
+      // The auto-fill deliberately does NOT run before this, exactly as
+      // Minegram's reveal does not: the round is over and nothing further
+      // can be asserted, so filling gaps here would only repaint a board the
+      // player can no longer act on. The fill runs on the committed array
+      // below, after the loop, and the win gate runs after that.
       return transition(
-        Object.freeze({ ...state, status: 'lost', score, marks, mistakes, streak }),
+        Object.freeze({ ...state, status: 'lost', lives, marks, mistakes, streak }),
         'round-lost',
       )
     }
@@ -341,16 +424,24 @@ function applyStarMarkBatch(state: StarBattleState, value: unknown): StarBattleR
     return ignored(state, 'cell-already-marked')
   }
 
-  // The win gate runs AFTER the batch is applied. A gate evaluated on the
-  // pre-batch marks would soft-lock the round: the batch that marks the last
-  // correct cells locks them, and a locked cell accepts no further batch that
-  // could re-evaluate the gate.
+  // The auto-fill runs on the committed array, and the win gate runs AFTER
+  // it. Ordering matters: the batch that places the round's last star leaves
+  // the remaining cells unmarked, so evaluating `roundIsComplete` first would
+  // return false, return 'marks-applied', and then soft-lock the round —
+  // every cell is now locked, so no further batch can ever arrive to
+  // re-evaluate the gate. One pass is already the fixpoint: every write lands
+  // on a cell that is blank in the solution, so it can neither complete nor
+  // break a row, column, colour or neighbourhood, and there is deliberately
+  // no cascade loop.
+  for (const index of freshStars) {
+    fillStarExclusions(puzzle, marks, index)
+  }
   const completed = roundIsComplete(puzzle, marks)
   return transition(
     Object.freeze({
       ...state,
       status: completed ? 'won' : state.status,
-      score,
+      lives,
       marks,
       mistakes,
       streak,
@@ -362,7 +453,7 @@ function applyStarMarkBatch(state: StarBattleState, value: unknown): StarBattleR
 export function starBattleReducer(state: StarBattleState, action: StarBattleAction): StarBattleReducerResult {
   switch (action.type) {
     case 'round/start':
-      return startStarBattleRound(state, action.puzzle, action.initialScore)
+      return startStarBattleRound(state, action.puzzle, action.maxLives)
     case 'round/markBatch':
       return applyStarMarkBatch(state, action.cells)
   }
@@ -381,8 +472,8 @@ export function previewStarMarkBatch(state: StarBattleState, value: unknown): St
     return Object.freeze({
       valid: false,
       affectedCount: 0,
-      scoreCost: 0,
-      projectedScore: state.score,
+      livesLost: 0,
+      projectedLives: state.lives,
       reachesZero: false,
       reason: prepared.reason,
     })
@@ -392,15 +483,15 @@ export function previewStarMarkBatch(state: StarBattleState, value: unknown): St
     return Object.freeze({
       valid: false,
       affectedCount: 0,
-      scoreCost: 0,
-      projectedScore: state.score,
+      livesLost: 0,
+      projectedLives: state.lives,
       reachesZero: false,
       reason: 'round-not-playing',
     })
   }
 
   let affectedCount = 0
-  let scoreCost = 0
+  let livesLost = 0
   for (const { index, mark } of prepared.cells) {
     if (state.marks[index] === assertionToMark(mark)) {
       continue
@@ -415,18 +506,18 @@ export function previewStarMarkBatch(state: StarBattleState, value: unknown): St
       continue
     }
     if (!assertionMatchesPuzzle(puzzle, index, mark)) {
-      scoreCost += 1
-      if (scoreCost >= state.score) {
+      livesLost += 1
+      if (livesLost >= state.lives) {
         break
       }
     }
   }
-  const projectedScore = Math.max(0, state.score - scoreCost)
+  const projectedLives = Math.max(0, state.lives - livesLost)
   return Object.freeze({
     valid: true,
     affectedCount,
-    scoreCost,
-    projectedScore,
-    reachesZero: projectedScore === 0,
+    livesLost,
+    projectedLives,
+    reachesZero: projectedLives === 0,
   })
 }

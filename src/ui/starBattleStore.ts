@@ -35,9 +35,13 @@ import {
 } from '../application/starBattleReducer'
 import type { GameFailureDiagnostics } from '../application/gameReducer'
 import {
+  DEFAULT_STAR_LIVES,
   DEFAULT_STAR_SIDE,
+  MAX_STAR_LIVES,
   MAX_STAR_SIDE,
+  MIN_STAR_LIVES,
   MIN_STAR_SIDE,
+  assertStarBattleLives,
   assertStarBattlePuzzle,
   assertStarBattleSide,
   type StarBattlePuzzle,
@@ -74,7 +78,8 @@ export interface StarBattleSnapshot {
   readonly status: StarBattleUiStatus
   readonly puzzle: StarBattlePuzzle | null
   readonly marks: Uint8Array
-  readonly score: number
+  readonly lives: number
+  readonly maxLives: number
   readonly mistakes: number
   readonly streak: number
   readonly difficulty: StarDifficulty
@@ -94,6 +99,16 @@ export interface StarBattleStoreActions {
    * no throw, no failure state, no launch. No-op while generating.
    */
   setSide(n: number): void
+  /**
+   * Persists the maximum lives and relaunches the round with the SAME seed
+   * and the SAME difficulty tier — the max is a round parameter applied at
+   * `round/start`, not an input to generation, so the board itself is
+   * unchanged and only the mistake budget restarts at the new maximum. An
+   * out-of-range or non-integer value is refused silently, exactly like an
+   * unusable side: no throw, no failure state, no launch. No-op while
+   * generating; the persisted maximum applies to the next launch.
+   */
+  setMaxLives(n: number): void
   /**
    * Starts a round. With no seed — the picker entry — derives a fresh seed
    * from the last used one; an explicit seed (numeric or text) becomes the
@@ -153,6 +168,8 @@ export interface StarBattleStoreOptions {
   readonly initialState?: StarBattleState
   /** Board side sent to the generator; the domain default unless overridden. */
   readonly side?: number
+  /** Maximum lives a fresh round starts with; the persisted preference wins when omitted. */
+  readonly maxLives?: number
   /** Initial tier; the persisted preference wins when this is omitted. */
   readonly difficulty?: StarDifficulty
   readonly workerFactory?: StarWorkerFactory
@@ -166,6 +183,8 @@ export interface StarBattleStoreOptions {
   readonly storageKey?: string
   /** Persistence key for the board-side preference (test seam). */
   readonly sideStorageKey?: string
+  /** Persistence key for the maximum-lives preference (test seam). */
+  readonly livesStorageKey?: string
 }
 
 export const DEFAULT_STAR_WIN_INTERLUDE_MS = 2_500
@@ -185,6 +204,8 @@ export const STAR_PICKER_ENTRY_SEED_LABEL = 'star-battle:picker-entry'
 const STAR_DIFFICULTY_STORAGE_KEY = 'minegram.star-battle.difficulty'
 
 const STAR_SIDE_STORAGE_KEY = 'minegram.star-battle.side'
+
+const STAR_LIVES_STORAGE_KEY = 'minegram.star-battle.lives'
 
 const DEFAULT_STAR_DIFFICULTY: StarDifficulty = 'starter'
 
@@ -264,6 +285,22 @@ function readPersistedSide(storageKey: string): number {
   return isSupportedSide(parsed) ? parsed : DEFAULT_STAR_SIDE
 }
 
+/** The lives vocabulary the store accepts: the domain bounds, nothing else. */
+function isSupportedLives(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= MIN_STAR_LIVES &&
+    value <= MAX_STAR_LIVES
+  )
+}
+
+function readPersistedMaxLives(storageKey: string): number {
+  const stored = readStored(storageKey)
+  const parsed = stored === null ? Number.NaN : Number(stored)
+  return isSupportedLives(parsed) ? parsed : DEFAULT_STAR_LIVES
+}
+
 /** The UI wire value to the reducer's assertion: `null` is the retract gesture. */
 function wireToAssertion(next: 'blank' | 'star' | null): 'blank' | 'star' | 'clear' {
   return next ?? 'clear'
@@ -279,6 +316,8 @@ interface ActiveStarRequest {
   readonly worker: StarWorkerEndpoint
   /** The normalised seed in flight; the next round derives from it after a win. */
   readonly seed: number
+  /** The maximum lives captured at launch; the round starts at it on success. */
+  readonly maxLives: number
 }
 
 export function createStarBattleStore(options: StarBattleStoreOptions = {}): StarBattleStore {
@@ -289,6 +328,14 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
   // tier below.
   let side = options.side ?? readPersistedSide(sideStorageKey)
   assertStarBattleSide(side, 'star battle store side')
+  const livesStorageKey = options.livesStorageKey ?? STAR_LIVES_STORAGE_KEY
+  // The max lives is `let`, not `const`: `setMaxLives` retargets it, and every
+  // later `round/start` reads it here in the closure. The explicit option
+  // wins; otherwise the persisted preference wins over the domain default,
+  // exactly like the side and the tier below. It is a round parameter, not a
+  // generation input: the worker request never carries it.
+  let maxLives = options.maxLives ?? readPersistedMaxLives(livesStorageKey)
+  assertStarBattleLives(maxLives, 'star battle store max lives')
   const setTimer =
     options.setTimer ?? ((handler: () => void, ms: number): TimerHandle => setTimeout(handler, ms))
   const clearTimer = options.clearTimer ?? ((handle: TimerHandle): void => clearTimeout(handle))
@@ -297,7 +344,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
   const storageKey = options.storageKey ?? STAR_DIFFICULTY_STORAGE_KEY
 
   // ---- closure state (never reachable from a property, a snapshot, or `this`) ----
-  let state: StarBattleState = options.initialState ?? createInitialStarBattleState()
+  let state: StarBattleState = options.initialState ?? createInitialStarBattleState({ maxLives })
   let difficulty: StarDifficulty =
     options.difficulty ?? readPersistedDifficulty(storageKey)
   let failure: GameFailureDiagnostics | null = null
@@ -322,7 +369,8 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       status: active !== null ? 'generating' : state.status,
       puzzle: state.puzzle,
       marks: state.marks,
-      score: state.score,
+      lives: state.lives,
+      maxLives,
       mistakes: state.mistakes,
       streak: state.streak,
       difficulty,
@@ -440,7 +488,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       return false
     }
 
-    active = { requestId, generationId, worker, seed }
+    active = { requestId, generationId, worker, seed, maxLives }
     authoredSeed = seed
     failure = null
     const request: StarBattleRequestMessage = {
@@ -520,15 +568,18 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       publish()
       return
     }
-    const result = starBattleReducer(state, { type: 'round/start', puzzle: data.puzzle })
+    // The round starts at the maximum lives captured when the request LAUNCHED:
+    // a `setMaxLives` while this round was printing applies next time, exactly
+    // as `setSide`'s persisted side applies to the next launch.
+    const result = starBattleReducer(state, { type: 'round/start', puzzle: data.puzzle, maxLives: current.maxLives })
     if (result.type !== 'transition') {
       // The reducer refuses to replace a PLAYING round. A player-initiated new
       // round (difficulty change, restart) discards the old board by contract,
       // so the store resets to the picker-shaped idle state and starts once
       // more; a refusal from THAT is a genuine bad board.
       if (result.reason === 'round-not-startable' && !internalTeardown) {
-        state = createInitialStarBattleState()
-        const restarted = starBattleReducer(state, { type: 'round/start', puzzle: data.puzzle })
+        state = createInitialStarBattleState({ maxLives: current.maxLives })
+        const restarted = starBattleReducer(state, { type: 'round/start', puzzle: data.puzzle, maxLives: current.maxLives })
         if (restarted.type === 'transition') {
           active = null
           terminateWorker(worker)
@@ -661,6 +712,19 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       }
       launch(authoredSeed)
     },
+    setMaxLives(next) {
+      if (disposed || !isSupportedLives(next)) {
+        return
+      }
+      maxLives = next
+      writeStored(livesStorageKey, String(next))
+      publish()
+      if (active !== null) {
+        // A round is already printing; the persisted maximum applies next time.
+        return
+      }
+      launch(authoredSeed)
+    },
     startNewRound(seed) {
       clearInterlude()
       if (seed !== undefined) {
@@ -734,7 +798,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
         internalTeardown = false
       }
       failure = null
-      state = createInitialStarBattleState()
+      state = createInitialStarBattleState({ maxLives })
       publish()
     },
   }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MAX_STAR_SIDE, MIN_STAR_SIDE, type StarBattlePuzzle } from '../domain/starBattle'
+import { MAX_STAR_LIVES, MAX_STAR_SIDE, MIN_STAR_LIVES, MIN_STAR_SIDE, type StarBattlePuzzle } from '../domain/starBattle'
 import { deriveRandomSeed, normalizeRandomSeed } from '../engine/rng'
 import {
   STAR_NEXT_ROUND_SEED_LABEL,
@@ -260,7 +260,8 @@ describe('star battle store: generation', () => {
     succeed(harness.workers[0]!, PUZZLE_A)
     expect(harness.snapshot().status).toBe('playing')
     expect(harness.snapshot().puzzle).toBe(PUZZLE_A)
-    expect(harness.snapshot().score).toBe(5)
+    expect(harness.snapshot().lives).toBe(5)
+    expect(harness.snapshot().maxLives).toBe(5)
   })
 
   it('a difficulty change persists the tier and re-generates with the same seed', () => {
@@ -493,6 +494,107 @@ describe('star battle store: board size', () => {
 })
 
 // ======================================================================================
+// Lives setting
+// ======================================================================================
+
+describe('star battle store: lives setting', () => {
+  it('setMaxLives refuses a value below MIN_STAR_LIVES or above MAX_STAR_LIVES without throwing or launching', () => {
+    const harness = createHarness()
+
+    expect(() => harness.store.actions.setMaxLives(MIN_STAR_LIVES - 1)).not.toThrow()
+    expect(() => harness.store.actions.setMaxLives(MAX_STAR_LIVES + 1)).not.toThrow()
+    expect(() => harness.store.actions.setMaxLives(2.5)).not.toThrow()
+    expect(() => harness.store.actions.setMaxLives(Number.NaN)).not.toThrow()
+
+    expect(harness.workers).toHaveLength(0)
+    expect(harness.snapshot().status).toBe('idle')
+    expect(harness.snapshot().maxLives).toBe(5)
+    expect(window.localStorage.getItem('minegram.star-battle.lives')).toBeNull()
+  })
+
+  it('setMaxLives accepts the boundary values MIN_STAR_LIVES and MAX_STAR_LIVES', () => {
+    const harness = createHarness()
+
+    harness.store.actions.setMaxLives(MIN_STAR_LIVES)
+    expect(harness.workers).toHaveLength(1)
+    succeed(harness.workers[0]!, PUZZLE_A)
+    expect(harness.snapshot().lives).toBe(MIN_STAR_LIVES)
+
+    harness.store.actions.setMaxLives(MAX_STAR_LIVES)
+    expect(harness.workers).toHaveLength(2)
+    succeed(harness.workers[1]!, PUZZLE_B)
+    expect(harness.snapshot().lives).toBe(MAX_STAR_LIVES)
+    expect(harness.snapshot().maxLives).toBe(MAX_STAR_LIVES)
+  })
+
+  it('setMaxLives relaunches with the SAME seed and tier, and the fresh round starts at the new maximum', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('star-fixture-a')
+    succeed(harness.workers[0]!, PUZZLE_A)
+    harness.store.actions.setDifficulty('challenging')
+    succeed(harness.workers[1]!, PUZZLE_B)
+
+    // Spend a life, then raise the maximum: the relaunch must restore lives
+    // to the new maximum, not carry the spent total over.
+    const [blankIndex] = nonSolutionCells(PUZZLE_B)
+    harness.store.actions.onMark(Math.floor(blankIndex! / SIDE), blankIndex! % SIDE, 'star')
+    expect(harness.snapshot().lives).toBe(4)
+
+    harness.store.actions.setMaxLives(7)
+
+    expect(harness.snapshot().maxLives).toBe(7)
+    expect(harness.workers).toHaveLength(3)
+    const request = lastRequest(harness.workers[2]!)
+    expect(request.seed).toBe(normalizeRandomSeed('star-fixture-a'))
+    expect(request.difficulty).toBe('challenging')
+    expect(request.n).toBe(SIDE)
+
+    succeed(harness.workers[2]!, PUZZLE_B)
+    expect(harness.snapshot().status).toBe('playing')
+    expect(harness.snapshot().lives).toBe(7)
+    expect(harness.snapshot().mistakes).toBe(0)
+  })
+
+  it('setMaxLives is a no-op while a round is generating', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('star-fixture-a')
+    harness.store.actions.setMaxLives(8)
+
+    expect(harness.workers).toHaveLength(1)
+    expect(harness.snapshot().maxLives).toBe(8)
+    expect(window.localStorage.getItem('minegram.star-battle.lives')).toBe('8')
+
+    // The in-flight round still starts at the old maximum; the persisted
+    // maximum applies to the next launch.
+    succeed(harness.workers[0]!, PUZZLE_A)
+    expect(harness.snapshot().lives).toBe(5)
+  })
+
+  it('setMaxLives persists the maximum and a freshly created store reads it back', () => {
+    const harness = createHarness()
+    harness.store.actions.setMaxLives(6)
+    expect(window.localStorage.getItem('minegram.star-battle.lives')).toBe('6')
+
+    // `maxLives: undefined` overrides the harness default, so the store
+    // falls back to the persisted preference — a player re-entering the game.
+    const returning = createHarness({ maxLives: undefined })
+    expect(returning.snapshot().maxLives).toBe(6)
+    returning.store.actions.startNewRound('star-fixture-a')
+    succeed(returning.workers[0]!, PUZZLE_A)
+    expect(returning.snapshot().lives).toBe(6)
+  })
+
+  it('an explicit maxLives option wins over the persisted preference', () => {
+    window.localStorage.setItem('minegram.star-battle.lives', '8')
+    const harness = createHarness({ maxLives: 2 })
+    expect(harness.snapshot().maxLives).toBe(2)
+    harness.store.actions.startNewRound('seed')
+    succeed(harness.workers[0]!, PUZZLE_A)
+    expect(harness.snapshot().lives).toBe(2)
+  })
+})
+
+// ======================================================================================
 // Picker entry
 // ======================================================================================
 
@@ -588,7 +690,7 @@ describe('star battle store: marking', () => {
     harness.store.actions.onMark(row, col, 'star')
 
     expect(harness.snapshot().marks[starIndex!]).toBe(3) // STAR_LOCKED
-    expect(harness.snapshot().score).toBe(5)
+    expect(harness.snapshot().lives).toBe(5)
     expect(harness.snapshot().mistakes).toBe(0)
     expect(harness.snapshot().streak).toBe(1)
   })
@@ -601,7 +703,7 @@ describe('star battle store: marking', () => {
     harness.store.actions.onMark(Math.floor(blankIndex! / SIDE), blankIndex! % SIDE, 'blank')
 
     expect(harness.snapshot().marks[blankIndex!]).toBe(3)
-    expect(harness.snapshot().score).toBe(5)
+    expect(harness.snapshot().lives).toBe(5)
   })
 
   it('a wrong assertion costs one point and stays unlocked so it can be fixed', () => {
@@ -612,7 +714,7 @@ describe('star battle store: marking', () => {
     harness.store.actions.onMark(Math.floor(blankIndex! / SIDE), blankIndex! % SIDE, 'star')
 
     expect(harness.snapshot().marks[blankIndex!]).toBe(2) // STAR_STAR, unlocked
-    expect(harness.snapshot().score).toBe(4)
+    expect(harness.snapshot().lives).toBe(4)
     expect(harness.snapshot().mistakes).toBe(1)
     expect(harness.snapshot().streak).toBe(0)
   })
@@ -630,7 +732,7 @@ describe('star battle store: marking', () => {
     harness.store.actions.onMark(Math.floor(starIndex! / SIDE), starIndex! % SIDE, 'blank')
 
     expect(harness.snapshot().version).toBe(versionAfterLock)
-    expect(harness.snapshot().score).toBe(5)
+    expect(harness.snapshot().lives).toBe(5)
     // start + accept + lock; both re-assertions dispatched nothing.
     expect(listener).toHaveBeenCalledTimes(3)
   })
@@ -655,12 +757,12 @@ describe('star battle store: marking', () => {
 
     harness.store.actions.onMark(row, col, 'star')
     expect(harness.snapshot().marks[blankIndex!]).toBe(2) // STAR_STAR, wrong
-    expect(harness.snapshot().score).toBe(4)
+    expect(harness.snapshot().lives).toBe(4)
 
     harness.store.actions.onMark(row, col, null)
 
     expect(harness.snapshot().marks[blankIndex!]).toBe(0) // STAR_UNMARKED
-    expect(harness.snapshot().score).toBe(4) // free, and the earlier charge is not refunded
+    expect(harness.snapshot().lives).toBe(4) // free, and the earlier charge is not refunded
     expect(harness.snapshot().mistakes).toBe(1)
   })
 
@@ -676,14 +778,16 @@ describe('star battle store: marking', () => {
     // 'star' on a star cell locks it.
     harness.store.actions.onMark(Math.floor(stars[0]! / SIDE), stars[0]! % SIDE, 'star')
     expect(harness.snapshot().marks[stars[0]!]).toBe(3)
-    // 'star' on another blank cell is wrong; null retracts it to unmarked for free.
-    const target = blanks[1]!
+    // 'star' on another blank cell is wrong; null retracts it to unmarked for
+    // free. The target must be a cell the correct star's auto-fill did NOT
+    // already lock — pick the first still-unmarked blank.
+    const target = blanks.find((index) => harness.snapshot().marks[index] === 0)!
     harness.store.actions.onMark(Math.floor(target / SIDE), target % SIDE, 'star')
     expect(harness.snapshot().marks[target]).toBe(2)
-    const scoreAfterWrong = harness.snapshot().score
+    const livesAfterWrong = harness.snapshot().lives
     harness.store.actions.onMark(Math.floor(target / SIDE), target % SIDE, null)
     expect(harness.snapshot().marks[target]).toBe(0)
-    expect(harness.snapshot().score).toBe(scoreAfterWrong)
+    expect(harness.snapshot().lives).toBe(livesAfterWrong)
   })
 
   it("a locked cell's retract never reaches the reducer: no dispatch, no charge, no announcement", () => {
@@ -705,7 +809,7 @@ describe('star battle store: marking', () => {
     expect(listener).toHaveBeenCalledTimes(3)
   })
 
-  it('score clamps at zero and zero ends the game', () => {
+  it('lives clamp at zero and zero ends the game', () => {
     const harness = createHarness()
     startPlaying(harness)
     const wrongCells = nonSolutionCells(PUZZLE_A).slice(0, 5)
@@ -715,7 +819,7 @@ describe('star battle store: marking', () => {
     }
 
     expect(harness.snapshot().status).toBe('lost')
-    expect(harness.snapshot().score).toBe(0)
+    expect(harness.snapshot().lives).toBe(0)
     expect(harness.snapshot().mistakes).toBe(5)
 
     // A lost round accepts nothing further.
