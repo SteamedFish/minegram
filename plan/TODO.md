@@ -690,6 +690,12 @@ about n = 8).
   source of truth for it, but the store always sends the default 10 and no control
   exposes the choice, so players currently cannot pick a size.
 
+- [ ] **Give the game picker a real per-game record.** `GamePicker` already renders
+  a rounds-played / best-streak line and rings the selected card, but `src/App.tsx`
+  passes `selected={null}` and no `stats`, so every card reads "Not played yet".
+  Nothing is missing on the UI side; no game records those figures, and fabricating
+  them would be worse than the honest empty state. Needs a durable per-game tally.
+
 ## Lessons
 
 - **A measurement probe that reads the WRONG element will report a defect that does not exist — and the fix is to print the element, not just the count.** The first run of this round's probe reported `openTapes=1` with the layer off and I was one step from calling it a leak. The one surviving tape is the LEGEND's own key: the legend deliberately carries no `data-hints` so it always teaches the true shape, and its swatch is literally `<span class="mg-run-tape" data-run="tape" data-cap="only">`, which a document-wide `.mg-run-tape[data-run="tape"]` selector matches. Scoped to the board stage the count is 0 → 34 → 0 as designed. This is lesson (1) from the Phase 4 round recurring in its sharpest form: the same shape of mistake, three rounds apart, in a file I wrote myself. The generalisation: **when a count disagrees with a design claim, dump `outerHTML` of the offender before theorising** — a two-line diagnostic that would have cost thirty seconds and is now built into the probe permanently (`offenders`).

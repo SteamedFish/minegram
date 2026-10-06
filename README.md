@@ -8,8 +8,10 @@ The app now holds two games behind one front door: **Minegram**, the ordered
 mine-run puzzle documented below, and **Star Battle**, an n × n star-placement
 puzzle whose boards are likewise unique — by construction, with the uniqueness
 certificate computed on every board. On load you choose between them on the game
-picker, which shows each game's record (rounds played, best streak) once you have
-one and marks the game you last played.
+picker. The picker supports a per-game record (rounds played, best streak) and a
+ring on the game you last played, but neither is wired up yet — no game currently
+records those figures, and inventing numbers would be a lie — so every card reads
+"Not played yet".
 
 Both games are playable. See [`plan/PLAN.md`](plan/PLAN.md) for the full product
 contract, generation algorithm, delivery phases, and verification budget.
@@ -52,9 +54,9 @@ never appears and no line is vacuous.
 ## Star Battle (星战)
 
 Star Battle is the second game, a peer of Minegram rather than a mode of it. The
-app opens on a **game picker** on every load: each game is a card carrying its
-name, a one-line description, and your record once you have one, and a ring marks
-the game you last played.
+app opens on a **game picker** on every load — deliberately not on your last game,
+so a returning player always chooses: each game is a card carrying its name and a
+one-line description.
 
 ### Rules
 
