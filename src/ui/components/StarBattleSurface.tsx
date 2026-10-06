@@ -52,9 +52,13 @@ export interface StarBattleSurfaceProps {
   readonly mistakes: number
   readonly streak: number
   readonly difficulty: StarDifficulty
+  /** The supported board-side range; the host reads it off the domain constants. */
+  readonly minSide: number
+  readonly maxSide: number
   readonly onMark: (row: number, col: number, next: StarMark) => void
   readonly onNewRound: () => void
   readonly onDifficultyChange: (difficulty: StarDifficulty) => void
+  readonly onSizeChange: (n: number) => void
   readonly onBackToPicker: () => void
 }
 
@@ -69,6 +73,10 @@ interface StarCopy {
   readonly streak: string
   readonly back: string
   readonly difficultyLabel: string
+  readonly size: {
+    /** The radiogroup's accessible name; the options are the numerals themselves. */
+    readonly label: string
+  }
   readonly difficulties: Record<StarDifficulty, string>
   readonly counters: {
     readonly rows: string
@@ -118,6 +126,7 @@ const en: StarCopy = {
   streak: 'Streak',
   back: 'All games',
   difficultyLabel: 'Difficulty',
+  size: { label: 'Board size' },
   difficulties: { starter: 'Starter', steady: 'Steady', challenging: 'Challenging' },
   counters: {
     rows: 'Rows',
@@ -167,6 +176,7 @@ const zhCN: StarCopy = {
   streak: '连胜',
   back: '全部游戏',
   difficultyLabel: '难度',
+  size: { label: '棋盘尺寸' },
   difficulties: { starter: '入门', steady: '进阶', challenging: '挑战' },
   counters: {
     rows: '行',
@@ -217,6 +227,14 @@ function fill(template: string, vars: Record<string, number | string>): string {
   return template.replace(/\{(\w+)\}/g, (raw, name: string) =>
     name in vars ? String(vars[name]) : raw,
   )
+}
+
+/** Every supported board side, inclusive. An inverted range yields nothing. */
+function boardSizes(minSide: number, maxSide: number): readonly number[] {
+  if (!Number.isSafeInteger(minSide) || !Number.isSafeInteger(maxSide) || maxSide < minSide) {
+    return []
+  }
+  return Array.from({ length: maxSide - minSide + 1 }, (_, index) => minSide + index)
 }
 
 /* --------------------------------------------------------------------------------------
@@ -790,6 +808,24 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
           disabled={status === 'generating'}
           onChange={props.onDifficultyChange}
         />
+        {/* Board size: the same segmented idiom as difficulty, one chip per
+           supported side, the numerals themselves as the labels so nothing is
+           locale-specific. The current side is the live board's own n. */}
+        <div className="mg-star-size" data-testid="star-size">
+          <SegmentedControl
+            id="mg-star-size"
+            label={copy.size.label}
+            value={String(puzzle.n)}
+            options={boardSizes(props.minSide, props.maxSide).map((side) => ({
+              value: String(side),
+              label: String(side),
+            }))}
+            disabled={status === 'generating'}
+            onChange={(value) => {
+              props.onSizeChange(Number(value))
+            }}
+          />
+        </div>
       </div>
 
       <ConstraintCounters

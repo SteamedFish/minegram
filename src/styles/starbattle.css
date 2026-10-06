@@ -305,6 +305,18 @@
   color: var(--accent);
 }
 
+/* Board size: same segmented idiom as difficulty, one chip per side. The
+   dozen numerals get the tighter inline rhythm so the group sits beside its
+   sibling on one toolbar row until the flex wrap takes over. */
+.mg-star-size {
+  display: flex;
+  align-items: center;
+}
+
+.mg-star-size .mg-seg__label {
+  padding-inline: var(--sp-1);
+}
+
 /* ---- the four constraints, counted ---- */
 
 .mg-star-counters {

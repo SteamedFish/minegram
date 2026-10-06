@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { MAX_STAR_SIDE, MIN_STAR_SIDE } from './domain/starBattle'
 import { DEFAULT_LOCALE, failureCopy, getCopy, interpolate, type Copy, type Locale } from './ui/copy'
 import {
   getGameStore,
@@ -269,6 +270,8 @@ export function App() {
               mistakes={starSnapshot.mistakes}
               streak={starSnapshot.streak}
               difficulty={starSnapshot.difficulty}
+              minSide={MIN_STAR_SIDE}
+              maxSide={MAX_STAR_SIDE}
               onMark={(row, col, next) => {
                 // `null` is a real retract and must pass through untouched.
                 starStore.actions.onMark(row, col, next)
@@ -278,6 +281,9 @@ export function App() {
               }}
               onDifficultyChange={(difficulty) => {
                 starStore.actions.setDifficulty(difficulty)
+              }}
+              onSizeChange={(next) => {
+                starStore.actions.setSide(next)
               }}
               onBackToPicker={backToPicker}
             />

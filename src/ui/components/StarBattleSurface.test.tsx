@@ -51,9 +51,12 @@ function defaults(): StarBattleSurfaceProps {
     mistakes: 0,
     streak: 0,
     difficulty: 'starter',
+    minSide: 4,
+    maxSide: 15,
     onMark: () => {},
     onNewRound: () => {},
     onDifficultyChange: () => {},
+    onSizeChange: () => {},
     onBackToPicker: () => {},
   }
 }
@@ -451,6 +454,66 @@ describe('StarBattleSurface — chrome', () => {
     expect(back?.textContent).toBe('All games')
     click(back as Element)
     expect(onBackToPicker).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders every size in the given range as a segmented option', () => {
+    render({ minSide: 4, maxSide: 15 })
+    const group = container.querySelector<HTMLElement>('[data-testid="star-size"] .mg-seg')
+    expect(group?.getAttribute('role')).toBe('radiogroup')
+    expect(group?.getAttribute('aria-label')).toBe('Board size')
+    const options = container.querySelectorAll<HTMLInputElement>("[data-testid='star-size'] input[type='radio']")
+    expect(options).toHaveLength(12)
+    expect(Array.from(options).map((option) => option.value)).toEqual([
+      '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15',
+    ])
+    // A narrowed range renders exactly what it is given.
+    render({ minSide: 6, maxSide: 8 })
+    const narrowed = container.querySelectorAll<HTMLInputElement>("[data-testid='star-size'] input[type='radio']")
+    expect(Array.from(narrowed).map((option) => option.value)).toEqual(['6', '7', '8'])
+  })
+
+  it('marks the live board side as the checked option and calls onSizeChange with the chosen n', () => {
+    const onSizeChange = vi.fn()
+    render({ onSizeChange })
+    const checked = container.querySelector<HTMLInputElement>("[data-testid='star-size'] input:checked")
+    expect(checked?.value).toBe('4')
+    const twelve = container.querySelector<HTMLInputElement>("[data-testid='star-size'] input[value='12']")
+    expect(twelve).not.toBeNull()
+    act(() => {
+      ;(twelve as HTMLInputElement).click()
+    })
+    expect(onSizeChange).toHaveBeenCalledTimes(1)
+    expect(onSizeChange).toHaveBeenCalledWith(12)
+  })
+
+  it('announces the size group the way the difficulty group does, in Chinese too', () => {
+    render({ locale: 'zh' })
+    const group = container.querySelector<HTMLElement>("[data-testid='star-size'] .mg-seg")
+    expect(group?.getAttribute('aria-label')).toBe('棋盘尺寸')
+    const difficulty = container.querySelector<HTMLElement>("[id='mg-star-difficulty']")
+    expect(difficulty?.getAttribute('aria-label')).toBe('难度')
+  })
+
+  it('disables the size control while a board is printing, like difficulty', () => {
+    render({ status: 'generating' })
+    const options = container.querySelectorAll<HTMLInputElement>("[data-testid='star-size'] input[type='radio']")
+    expect(options.length).toBeGreaterThan(0)
+    for (const option of Array.from(options)) {
+      expect(option.disabled).toBe(true)
+    }
+  })
+
+  it('cell keyboard roving still works with the size control present', () => {
+    render()
+    const first = cell(0)
+    expect(first.getAttribute('tabindex')).toBe('0')
+    act(() => {
+      first.focus()
+    })
+    key(first, 'ArrowRight')
+    expect(document.activeElement).toBe(cell(1))
+    key(cell(1), 'ArrowDown')
+    expect(document.activeElement).toBe(cell(5))
   })
 
   it('renders Chinese copy when the locale says zh', () => {

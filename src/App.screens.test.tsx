@@ -2,6 +2,7 @@ import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
+import { DEFAULT_STAR_SIDE } from './domain/starBattle'
 import { getCopy } from './ui/copy'
 import { createGameStore, disposeGameStore, setGameStore } from './ui/gameStore'
 import {
@@ -40,6 +41,7 @@ function starSnapshot(overrides: Partial<StarBattleSnapshot> = {}): StarBattleSn
     mistakes: 0,
     streak: 0,
     difficulty: 'starter',
+    side: DEFAULT_STAR_SIDE,
     failure: null,
     version: 0,
     ...overrides,
@@ -59,6 +61,7 @@ function installStarStore(initial: StarBattleSnapshot): FakeStarStore {
   let listener: (() => void) | null = null
   const actions = {
     setDifficulty: vi.fn(),
+    setSide: vi.fn(),
     startNewRound: vi.fn(),
     nextRound: vi.fn(),
     retry: vi.fn(),
@@ -288,6 +291,45 @@ describe('App screens — picker to star battle and back', () => {
     click(one('.mg-star-toolbar__back'))
     expect(fake.actions.backToPicker).toHaveBeenCalledTimes(1)
     expect(one('[data-testid="game-picker"]')).toBeTruthy()
+  })
+
+  it('renders the size selector across the sanctioned domain range', () => {
+    fake = installStarStore(
+      starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
+    )
+    render(<App />)
+    click(pickerCard('starbattle'))
+    fake.advance(
+      starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
+    )
+    const options = container.querySelectorAll<HTMLInputElement>(
+      "[data-testid='star-size'] input[type='radio']",
+    )
+    // The range comes from the domain constants the app passes down — 4..15
+    // today — never from literals restated here.
+    expect(Array.from(options).map((option) => option.value)).toEqual([
+      '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15',
+    ])
+  })
+
+  it('choosing a size reaches the store as setSide with the chosen n', () => {
+    fake = installStarStore(
+      starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
+    )
+    render(<App />)
+    click(pickerCard('starbattle'))
+    fake.advance(
+      starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
+    )
+    const twelve = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-size'] input[value='12']",
+    )
+    expect(twelve).not.toBeNull()
+    act(() => {
+      ;(twelve as HTMLInputElement).click()
+    })
+    expect(fake.actions.setSide).toHaveBeenCalledTimes(1)
+    expect(fake.actions.setSide).toHaveBeenCalledWith(12)
   })
 
   it('surfaces a generation failure with retry, and the card is honest about the reason', () => {
