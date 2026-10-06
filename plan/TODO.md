@@ -685,10 +685,14 @@ about n = 8).
   because uniqueness is measure-zero past n ≈ 8 so repair-by-recolouring is a random
   walk on a non-monotone objective; and 15 is the largest board the shipped palette
   and grid already cover. The counter stays as a test cross-check at n ≤ 10.
-- [ ] **Add a Star Battle board-size selector.** The spec supports n = 4..15 and
-  `MIN_STAR_SIDE` / `MAX_STAR_SIDE` in `src/domain/starBattle.ts` are the single
-  source of truth for it, but the store always sends the default 10 and no control
-  exposes the choice, so players currently cannot pick a size.
+- [x] **Add a Star Battle board-size selector.** Shipped: `setSide(n)` in
+  `src/ui/starBattleStore.ts` refuses anything outside `MIN_STAR_SIDE`..`MAX_STAR_SIDE`
+  without throwing, persists under `minegram.star-battle.side`, and is a no-op while
+  a board is generating; a `SegmentedControl` beside the difficulty control in
+  `src/ui/components/StarBattleSurface.tsx` renders `minSide..maxSide` from props,
+  and `src/App.tsx` passes the bounds read from `src/domain/starBattle.ts` — which is
+  why those three names joined the layer-boundary allowlist in
+  `src/ui/layerBoundary.test.ts` rather than being written as literals in the shell.
 
 - [ ] **Give the game picker a real per-game record.** `GamePicker` already renders
   a rounds-played / best-streak line and rings the selected card, but `src/App.tsx`

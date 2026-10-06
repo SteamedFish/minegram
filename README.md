@@ -70,8 +70,9 @@ one-line description.
   because no valid star placement exists below it: the stars form a permutation of
   the columns with adjacent rows at distance two or more, and no such permutation
   exists at n = 2 or n = 3. Fifteen is a product choice — the largest board the
-  shipped palette and grid already cover. There is no size selector yet; choosing
-  `n` is open work, recorded in [`plan/TODO.md`](plan/TODO.md).
+  shipped palette and grid already cover. A **board size** control in the toolbar
+  chooses `n` and the choice persists; the bounds come from `MIN_STAR_SIDE` /
+  `MAX_STAR_SIDE` rather than from a repeated literal.
 
 ### How to play
 
