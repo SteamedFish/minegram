@@ -130,9 +130,9 @@ non-star cells across the colour regions:
 
 A higher wave count is a longer deduction path, not necessarily harder human
 reasoning — that caveat is stated plainly rather than smoothed over. Generation
-itself is cheap: about 1.3 ms at n = 10 for the hardest tier, rising to about
-3.0 ms at n = 15. The tier choice persists, and changing it prints a fresh board
-with the same seed.
+itself is cheap: about 1.1 ms at n = 10 for the hardest tier, rising to about
+2.8 ms at n = 15, measured over 200 boards per point. The tier choice persists,
+and changing it prints a fresh board with the same seed.
 
 ### Uniqueness is by construction — and certified
 
@@ -142,13 +142,32 @@ construction**, and the acceptance test certifies it on every board:
 - A board is solvable exactly when some permutation `T` of the columns with
   `|T(r) − T(r+1)| >= 2` — one star per row and column, never orthogonally or
   diagonally adjacent — selects n cells of pairwise-distinct colours.
-- The generator paints colours by **chain**. Writing `pos[r]` for the position of
-  row `r` in a proof order, row `r`'s own star cell takes colour `pos[r]`, and its
-  non-star cells flow **forward** into the next proof region. Region `R_k` is then
-  the forced star `m_k` plus the previous row's decoys, every one of which shares
-  a row with an already-forced star and is therefore provably blank — so `R_k`
-  holds exactly one viable cell and the colour rule forces it. Induction forces
-  all n stars, and a fully forced star set is the unique one.
+- The generator paints colours by **strips and a sea**. The star placement is
+  chosen so its first two stars take the two edge columns, and each difficulty
+  decides how many horizontal strips to lay down; everything not claimed by a
+  strip or a star becomes one large absorbing **sea** region. A strip cell always
+  shares a row with an already-forced star, so it is provably blank, which means
+  each region holds exactly one viable cell and the colour rule forces it.
+  Induction forces all n stars, and a fully forced star set is the unique one.
+- **Every colour is a single contiguous region.** The generator counts connected
+  components per colour and rejects any board where a region splits, so the
+  property is structural rather than incidental. The previous construction could
+  not deliver this — it produced **zero** fully-connected boards at any tier,
+  because a colour's cells formed a horizontal strip with a hole where the
+  neighbouring region's star sat. The difficult tier is not the one that suffered
+  most: `starter` was the worst offender, with the worst region splitting into 13
+  pieces at n = 10 and 25 at n = 15.
+- **The sea dominates the board, and that is by design.** Because it absorbs
+  everything unclaimed, one colour covers most of the grid: on `starter`, where
+  no strips are laid, it reaches 81% of the board at n = 4 and 94% at n = 15,
+  leaving n single cells of distinct colours scattered on a field. `steady` and
+  `challenging` sit between 48% and 68%. Read it as a background with islands.
+- That dominance sets a hard limit on "keep similar colours apart". The sea is
+  adjacent to **every** other region at every board size and tier, so no
+  renumbering and no hue assignment can move its colour away from anything —
+  that separation has to come from the palette, which is why the palette below
+  is built on maximum minimum pairwise distance rather than on a nice-looking
+  sequence.
 - Acceptance is a **wave propagation solver** (`propagateStarBoard`): freeze the
   state, compute every forced move, apply them all simultaneously, and count one
   wave. A board ships only if propagation solves it to completion — strictly
@@ -160,6 +179,29 @@ construction**, and the acceptance test certifies it on every board:
 - Rejection sampling was measured and rejected: among well-spread colourings,
   uniqueness is measure-zero past about n = 8, so no amount of resampling could
   ever serve as the acceptance gate.
+
+### Telling the colours apart
+
+Colour identity carries the rules, so the palette is derived rather than
+hand-picked. It is a **5 hue slots × 4 lightness levels** grid — `slot = i mod 5`
+sets the hue, `level = floor(i / 5)` sets the lightness, and the hue shifts by a
+further 36° per level so a cross-level pair differs in hue *as well as* lightness.
+The objective is the **maximum minimum pairwise perceptual distance** over every
+prefix of 4 to 20 colours, because any pair can end up adjacent and only the worst
+pair matters.
+
+Measured worst pair (CIEDE2000): 26.4 at n = 4 falling to 18.0 at n = 20 in the
+light theme, and 34.1 falling to 13.7 at n = 20 in the dark theme. For comparison
+the previous palette's worst pair was about **4** — effectively indistinguishable
+adjacent cells, which is what the player reported. Light and dark are two separate
+palettes, not inversions of each other.
+
+The reason no hue assignment could have solved this on its own: 15 colours spread
+evenly around the wheel is 24° apart, already at the edge of what the eye
+resolves between large flat patches. Hue alone cannot carry 15 colours, so the
+palette spends lightness as well. No hatch or glyph channel was needed on top —
+the numbers say two channels suffice, and adding a third would only have made
+cells harder to read.
 
 Generation runs in a Web Worker with cancellation and stale-result protection; a
 generation failure is shown with a retry, never swallowed. Every cell's full
@@ -235,8 +277,10 @@ engine without changing domain types:
 - `src/domain/starBattle.ts` — puzzle types, the mark constants, and the size
   bounds. `MIN_STAR_SIDE` / `MAX_STAR_SIDE` / `DEFAULT_STAR_SIDE` are the single
   source of truth for the supported range.
-- `src/engine/starBattle/construct.ts` — the CHAIN constructive generator; every
-  accepted board is certified by the propagation solver before it leaves the engine.
+- `src/engine/starBattle/construct.ts` — the strips-and-sea constructive generator,
+  which enforces one contiguous region per colour by counting connected
+  components; every accepted board is certified by the propagation solver before
+  it leaves the engine.
 - `src/engine/starBattle/propagate.ts` — the wave propagation solver: the
   production uniqueness certificate and the depth metric in one pass.
 - `src/engine/starBattle/count.ts` — the independent exact solution counter and its

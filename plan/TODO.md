@@ -725,6 +725,58 @@ about n = 8).
   and `src/App.tsx` passes the bounds read from `src/domain/starBattle.ts` — which is
   why those three names joined the layer-boundary allowlist in
   `src/ui/layerBoundary.test.ts` rather than being written as literals in the shell.
+- [x] **Make every colour one contiguous region.** Player: 「同一颜色的格子组成的色块全部连续，
+  不分裂」. Measured before touching anything: the shipped chain construction produced
+  **0 fully-connected boards at every tier**, and the worst offender was `starter`, not
+  the hard tier — the worst region split into 13 pieces at n = 10 and 25 at n = 15, because
+  a region was a horizontal strip with a hole punched by the neighbouring region's star.
+  Research settled that connectivity is achievable inside the construction's existing
+  validity-window freedom rather than by adding a constraint, so uniqueness and the
+  propagation certificate come free. Shipped as **strips + a sea**: the first two stars
+  take the two edge columns, each tier lays down a set of horizontal strips, and
+  everything unclaimed becomes one absorbing sea region. Connectivity is now STRUCTURAL —
+  the generator counts components per colour and rejects any split board. Measured 100%
+  across {4,5,6,8,10,12,13,15} × 3 tiers × 4 seeds, and independently re-verified with a
+  union-find traversal written separately from the implementing lane's flood fill.
+  Wave bands stay in tier order (starter 3, steady ≈1.35n, challenging ≈1.8n) and no
+  existing test floor moved. `2ae31f2`.
+  Two deviations worth remembering: the n = 4/5 fallback is NOT the briefed uniform-random
+  assignment, because that was measured at 7/2000 and 0/2000 connected — literally unfillable
+  — so it paints parented dominoes instead, exhaustively validated at n = 4 (only two
+  admissible permutations exist) and 2000-sample validated at n = 5. And the n = 6–8
+  steady/challenging collision is PRE-EXISTING, deliberately not retuned: it is a shipped
+  difficulty-semantics decision, not a side effect. See the open items below.
+- [x] **Rebuild the palette for maximum minimum pairwise distance.** Player: 「颜色较多的
+  时候不太容易区分相邻颜色」. Measured: the old palette's worst pair was ΔE00 ≈ 4, i.e.
+  effectively indistinguishable adjacent cells. Landed a derived 5 hue slots × 4 lightness
+  levels grid optimised for maximum minimum pairwise CIEDE2000 over every prefix 4..20,
+  with the hue shifting 36° per level so cross-level pairs differ in hue as well as
+  lightness. Worst pair is now 18.4 (light) and 14.7 (dark) at n = 15. Why a smarter hue
+  sequence could not have worked: 15 colours evenly spread is 24° apart, already at the edge
+  of what the eye resolves between flat patches, so hue alone cannot carry 15 colours and
+  lightness has to be spent as well. No hatch or glyph channel was needed — the numbers say
+  two channels suffice. Light and dark are separate palettes, not inversions. `352d86a`.
+- [ ] **`starter` is now almost one colour, and the sea cannot be moved away.** The
+  strip+sea construction makes the sea absorb everything unclaimed, so on `starter`
+  (no strips) it covers 81% of the board at n = 4 and 94% at n = 15, leaving n distinct
+  single cells on a field; `steady`/`challenging` sit at 48–68%. Read as background plus
+  islands, but it is a large visual change and the player has not seen it yet. Separately,
+  the sea is adjacent to EVERY other region at every size and tier, so the player's second
+  request — 「相近颜色的色块尽量远离」 — is only half-achievable in layout: no renumbering
+  and no hue assignment can move the sea's colour, and the separation has to come from
+  the palette. Both need a real player's eye, not a static check.
+- [ ] **Separate `steady` from `challenging` at n = 6–8.** At those sides
+  `s = round(0.7n)` puts steady's strip set equal to challenging's, so the two difficulty
+  buttons print equal-depth boards. Pre-existing (today's generator also collides: n = 6
+  steady median 9 = challenging median 9), not introduced here, and not fixed here
+  because retuning a shipped difficulty band is its own decision. Dropping steady to
+  `s = 4..5` measures 7–11 waves at n = 8 and would separate them; needs the player's
+  agreement that mid boards should get easier.
+- [ ] **Run the desktop/mobile browser check.** Still the one unclosed AGENTS.md pre-release
+  gate. Attempted twice and abandoned twice: the built bundle serves correctly under
+  `/minegram/` (200, correct asset paths) but the Playwright backend has no network route
+  to this host — `ERR_CONNECTION_REFUSED` while loopback answers 200. It has to be run
+  against the live Pages URL after a rebuild.
 
 - [ ] **Give the game picker a real per-game record.** `GamePicker` already renders
   a rounds-played / best-streak line and rings the selected card, but `src/App.tsx`
