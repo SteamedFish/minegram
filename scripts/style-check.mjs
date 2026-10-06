@@ -3,7 +3,7 @@
 //   node scripts/style-check.mjs
 // 1. every sheet parses as CSS
 // 2. every var(--x) referenced is defined by tokens.css, base.css, or one of the
-//    five sheets this lane wrote
+//    six sheets this lane wrote
 // 3. the §7.2 ceiling: no ID selectors, no element selectors, no chain deeper
 //    than two compounds, and no !important outside a reduced-motion block
 import { readFileSync } from 'node:fs'
@@ -13,7 +13,7 @@ import postcss from 'postcss'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
-const MINE = ['layout', 'board', 'clues', 'forms', 'overlays']
+const MINE = ['layout', 'board', 'clues', 'forms', 'overlays', 'starbattle']
 const BASE = ['tokens', 'base']
 const read = (f) => readFileSync(join(root, 'src/styles', `${f}.css`), 'utf8')
 

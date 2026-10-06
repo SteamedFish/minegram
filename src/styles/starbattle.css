@@ -1,0 +1,642 @@
+/* =============================================================================
+   Star Battle + game picker — the second game's sheet
+   Owned by the designer lane; registered in scripts/style-check.mjs.
+
+   PALETTE RULE
+   n can reach 20, so hues are distributed by a 132° step (360/20 would land
+   neighbours 18° apart; 132° keeps every ADJACENT index a third of the wheel
+   away) and lightness steps through three levels by index mod 3, so the close
+   non-adjacent pairs the step leaves behind (12° of hue) are always split by
+   value. Light theme: pastel fills (S 56%, L 68/74/80). Dark theme: deep fills
+   (S 46%, L 24/32/40). The star/blank glyph ink is the theme's own --ink role,
+   which already flips with the palette.
+
+   THEME WIRING
+   Same contract as tokens.css: light is :root's default; Auto-dark re-points
+   under a dark OS unless data-theme='light'; an explicit data-theme='dark'
+   wins everywhere. `html[...]` would be an element selector (banned by §7.2),
+   so the explicit-dark block keys on the bare [data-theme] attribute, which
+   matches the same element. These are the ONLY colour literals in the lane:
+   the 20 hue pairs, declared as --star-light-cN / --star-dark-cN pairs exactly
+   like tokens.css pairs its roles.
+   ============================================================================ */
+
+:root {
+  --star-light-c0: hsl(0 56% 68%);
+  --star-light-c1: hsl(132 56% 74%);
+  --star-light-c2: hsl(264 56% 80%);
+  --star-light-c3: hsl(36 56% 68%);
+  --star-light-c4: hsl(168 56% 74%);
+  --star-light-c5: hsl(300 56% 80%);
+  --star-light-c6: hsl(72 56% 68%);
+  --star-light-c7: hsl(204 56% 74%);
+  --star-light-c8: hsl(336 56% 80%);
+  --star-light-c9: hsl(108 56% 68%);
+  --star-light-c10: hsl(240 56% 74%);
+  --star-light-c11: hsl(12 56% 80%);
+  --star-light-c12: hsl(144 56% 68%);
+  --star-light-c13: hsl(276 56% 74%);
+  --star-light-c14: hsl(48 56% 80%);
+  --star-light-c15: hsl(180 56% 68%);
+  --star-light-c16: hsl(312 56% 74%);
+  --star-light-c17: hsl(84 56% 80%);
+  --star-light-c18: hsl(216 56% 68%);
+  --star-light-c19: hsl(348 56% 74%);
+
+  --star-dark-c0: hsl(0 46% 24%);
+  --star-dark-c1: hsl(132 46% 32%);
+  --star-dark-c2: hsl(264 46% 40%);
+  --star-dark-c3: hsl(36 46% 24%);
+  --star-dark-c4: hsl(168 46% 32%);
+  --star-dark-c5: hsl(300 46% 40%);
+  --star-dark-c6: hsl(72 46% 24%);
+  --star-dark-c7: hsl(204 46% 32%);
+  --star-dark-c8: hsl(336 46% 40%);
+  --star-dark-c9: hsl(108 46% 24%);
+  --star-dark-c10: hsl(240 46% 32%);
+  --star-dark-c11: hsl(12 46% 40%);
+  --star-dark-c12: hsl(144 46% 24%);
+  --star-dark-c13: hsl(276 46% 32%);
+  --star-dark-c14: hsl(48 46% 40%);
+  --star-dark-c15: hsl(180 46% 24%);
+  --star-dark-c16: hsl(312 46% 32%);
+  --star-dark-c17: hsl(84 46% 40%);
+  --star-dark-c18: hsl(216 46% 24%);
+  --star-dark-c19: hsl(348 46% 32%);
+
+  /* The resolved roles — the light pair is the default. */
+  --star-c0: var(--star-light-c0);
+  --star-c1: var(--star-light-c1);
+  --star-c2: var(--star-light-c2);
+  --star-c3: var(--star-light-c3);
+  --star-c4: var(--star-light-c4);
+  --star-c5: var(--star-light-c5);
+  --star-c6: var(--star-light-c6);
+  --star-c7: var(--star-light-c7);
+  --star-c8: var(--star-light-c8);
+  --star-c9: var(--star-light-c9);
+  --star-c10: var(--star-light-c10);
+  --star-c11: var(--star-light-c11);
+  --star-c12: var(--star-light-c12);
+  --star-c13: var(--star-light-c13);
+  --star-c14: var(--star-light-c14);
+  --star-c15: var(--star-light-c15);
+  --star-c16: var(--star-light-c16);
+  --star-c17: var(--star-light-c17);
+  --star-c18: var(--star-light-c18);
+  --star-c19: var(--star-light-c19);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --star-c0: var(--star-dark-c0);
+    --star-c1: var(--star-dark-c1);
+    --star-c2: var(--star-dark-c2);
+    --star-c3: var(--star-dark-c3);
+    --star-c4: var(--star-dark-c4);
+    --star-c5: var(--star-dark-c5);
+    --star-c6: var(--star-dark-c6);
+    --star-c7: var(--star-dark-c7);
+    --star-c8: var(--star-dark-c8);
+    --star-c9: var(--star-dark-c9);
+    --star-c10: var(--star-dark-c10);
+    --star-c11: var(--star-dark-c11);
+    --star-c12: var(--star-dark-c12);
+    --star-c13: var(--star-dark-c13);
+    --star-c14: var(--star-dark-c14);
+    --star-c15: var(--star-dark-c15);
+    --star-c16: var(--star-dark-c16);
+    --star-c17: var(--star-dark-c17);
+    --star-c18: var(--star-dark-c18);
+    --star-c19: var(--star-dark-c19);
+  }
+}
+
+[data-theme='dark'] {
+  --star-c0: var(--star-dark-c0);
+  --star-c1: var(--star-dark-c1);
+  --star-c2: var(--star-dark-c2);
+  --star-c3: var(--star-dark-c3);
+  --star-c4: var(--star-dark-c4);
+  --star-c5: var(--star-dark-c5);
+  --star-c6: var(--star-dark-c6);
+  --star-c7: var(--star-dark-c7);
+  --star-c8: var(--star-dark-c8);
+  --star-c9: var(--star-dark-c9);
+  --star-c10: var(--star-dark-c10);
+  --star-c11: var(--star-dark-c11);
+  --star-c12: var(--star-dark-c12);
+  --star-c13: var(--star-dark-c13);
+  --star-c14: var(--star-dark-c14);
+  --star-c15: var(--star-dark-c15);
+  --star-c16: var(--star-dark-c16);
+  --star-c17: var(--star-dark-c17);
+  --star-c18: var(--star-dark-c18);
+  --star-c19: var(--star-dark-c19);
+}
+
+/* The cell reads its region's hue off data-colour — the only channel colour
+   ever arrives by. Twenty bindings, one compound each, hue never in JS. */
+.mg-star-cell[data-colour='0'] { --star-cell: var(--star-c0); }
+.mg-star-cell[data-colour='1'] { --star-cell: var(--star-c1); }
+.mg-star-cell[data-colour='2'] { --star-cell: var(--star-c2); }
+.mg-star-cell[data-colour='3'] { --star-cell: var(--star-c3); }
+.mg-star-cell[data-colour='4'] { --star-cell: var(--star-c4); }
+.mg-star-cell[data-colour='5'] { --star-cell: var(--star-c5); }
+.mg-star-cell[data-colour='6'] { --star-cell: var(--star-c6); }
+.mg-star-cell[data-colour='7'] { --star-cell: var(--star-c7); }
+.mg-star-cell[data-colour='8'] { --star-cell: var(--star-c8); }
+.mg-star-cell[data-colour='9'] { --star-cell: var(--star-c9); }
+.mg-star-cell[data-colour='10'] { --star-cell: var(--star-c10); }
+.mg-star-cell[data-colour='11'] { --star-cell: var(--star-c11); }
+.mg-star-cell[data-colour='12'] { --star-cell: var(--star-c12); }
+.mg-star-cell[data-colour='13'] { --star-cell: var(--star-c13); }
+.mg-star-cell[data-colour='14'] { --star-cell: var(--star-c14); }
+.mg-star-cell[data-colour='15'] { --star-cell: var(--star-c15); }
+.mg-star-cell[data-colour='16'] { --star-cell: var(--star-c16); }
+.mg-star-cell[data-colour='17'] { --star-cell: var(--star-c17); }
+.mg-star-cell[data-colour='18'] { --star-cell: var(--star-c18); }
+.mg-star-cell[data-colour='19'] { --star-cell: var(--star-c19); }
+
+/* =============================================================================
+   Game picker — the front door
+   ============================================================================ */
+
+.mg-picker {
+  max-inline-size: 52rem;
+  margin-inline: auto;
+  padding: var(--sp-6) var(--sp-4);
+  display: grid;
+  gap: var(--sp-5);
+}
+
+.mg-picker__title {
+  font-family: var(--font-display);
+  font-size: var(--fs-display);
+  line-height: var(--lh-display);
+  letter-spacing: var(--track-display);
+  margin: 0;
+}
+
+.mg-picker__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: var(--sp-4);
+}
+
+.mg-picker__card {
+  display: grid;
+  gap: var(--sp-2);
+  align-content: start;
+  text-align: start;
+  padding: var(--sp-5);
+  min-block-size: 11rem;
+  background: var(--surface-1);
+  border: var(--rule-w) solid var(--rule-cell);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) ease-out, translate var(--dur-fast) ease-out;
+}
+
+.mg-picker__card:hover {
+  border-color: var(--ink-3);
+  translate: 0 -2px;
+}
+
+.mg-picker__card:focus-visible {
+  outline: var(--rule-w-heavy) solid var(--focus);
+  outline-offset: var(--rule-w);
+}
+
+.mg-picker__card[data-selected='true'] {
+  border-color: var(--confirm);
+}
+
+.mg-picker__name {
+  font-family: var(--font-display);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+}
+
+.mg-picker__blurb {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+.mg-picker__stats {
+  margin: 0;
+  padding-block-start: var(--sp-2);
+  border-block-start: var(--rule-w) solid var(--rule-cell);
+  display: grid;
+  gap: var(--sp-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  color: var(--ink-2);
+}
+
+.mg-picker__stats[data-empty='true'] {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+/* =============================================================================
+   Star Battle surface
+   ============================================================================ */
+
+.mg-star-surface {
+  display: grid;
+  gap: var(--sp-3);
+  inline-size: 100%;
+}
+
+/* ---- toolbar: back, meter, difficulty ---- */
+
+.mg-star-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-1);
+  border: var(--rule-w) solid var(--rule-cell);
+  border-radius: var(--radius-panel);
+}
+
+.mg-star-toolbar__back {
+  margin-inline-end: auto;
+}
+
+.mg-star-meter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+.mg-star-meter__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-1);
+}
+
+.mg-star-meter__label {
+  color: var(--ink-2);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  letter-spacing: var(--track-micro);
+  text-transform: uppercase;
+}
+
+.mg-star-meter__value {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--ink);
+}
+
+.mg-star-meter__value[data-tone='danger'] {
+  color: var(--accent);
+}
+
+/* ---- the four constraints, counted ---- */
+
+.mg-star-counters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+.mg-star-counters__group {
+  display: grid;
+  gap: var(--sp-2);
+  align-content: start;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-1);
+  border: var(--rule-w) solid var(--rule-cell);
+  border-radius: var(--radius-panel);
+}
+
+.mg-star-counters__label {
+  margin: 0;
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  letter-spacing: var(--track-micro);
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.mg-star-counters__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+/* The colour group is the one a Star Battle player reads first: bigger chips,
+   airier wrapping, and the swatch IS the palette colour. */
+.mg-star-counters__group[data-kind='colours'] .mg-star-chip {
+  min-inline-size: var(--target-min);
+  min-block-size: var(--target-min);
+  font-size: var(--fs-small);
+}
+
+.mg-star-chip {
+  display: inline-grid;
+  place-items: center;
+  min-inline-size: 1.25rem;
+  min-block-size: 1.25rem;
+  padding: 0 var(--sp-1);
+  border-radius: var(--radius-pill);
+  border: var(--rule-w) solid var(--rule-cell);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  transition: border-color var(--dur-fast) ease-out, color var(--dur-fast) ease-out;
+}
+
+.mg-star-chip[data-state='satisfied'] {
+  border-color: var(--confirm);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 var(--rule-w) var(--confirm);
+}
+
+.mg-star-chip[data-state='violated'] {
+  border-color: var(--accent);
+  border-style: dashed;
+  color: var(--accent);
+}
+
+.mg-star-chip[data-kind='colour'] {
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
+  background: var(--star-cell);
+  color: var(--ink);
+}
+
+.mg-star-chip[data-kind='colour'][data-state='satisfied'] {
+  box-shadow: inset 0 0 0 var(--rule-w-heavy) var(--confirm);
+  border-color: transparent;
+}
+
+.mg-star-chip[data-kind='colour'][data-state='violated'] {
+  box-shadow: inset 0 0 0 var(--rule-w-heavy) var(--accent);
+  border-color: transparent;
+  color: var(--ink);
+}
+
+/* ---- the board ---- */
+
+.mg-star-gridwrap {
+  overflow: auto;
+  padding: var(--sp-2);
+  background: var(--surface-2);
+  border: var(--rule-w) solid var(--rule-cell);
+  border-radius: var(--radius-panel);
+  /* The container the cell glyph size is measured in (cqi). */
+  container-type: inline-size;
+}
+
+.mg-star-grid {
+  inline-size: min(100%, 74dvh);
+  margin-inline: auto;
+  display: grid;
+  gap: 0;
+  touch-action: none;
+}
+
+.mg-star-row {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+}
+
+.mg-star-cell {
+  position: relative;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  background: var(--star-cell);
+  border: var(--rule-w) solid color-mix(in srgb, var(--ink) 12%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background-color var(--dur-fast) ease-out;
+}
+
+.mg-star-cell:focus-visible {
+  outline: var(--rule-w-heavy) solid var(--focus);
+  outline-offset: calc(var(--rule-w) * -1);
+  z-index: 1;
+}
+
+.mg-star-cell__glyph {
+  display: none;
+  font-size: clamp(9px, calc(60cqi / var(--cols)), 22px);
+  line-height: 1;
+}
+
+.mg-star-cell[data-mark='star'] .mg-star-cell__glyph,
+.mg-star-cell[data-mark='locked'] .mg-star-cell__glyph {
+  display: block;
+}
+
+.mg-star-cell[data-mark='blank'] .mg-star-cell__glyph {
+  display: block;
+  font-size: clamp(9px, calc(90cqi / var(--cols)), 26px);
+  color: var(--ink-3);
+}
+
+/* A locked star is the game's own acknowledgement: a confirm ring, never a
+   charge. */
+.mg-star-cell[data-mark='locked'] {
+  box-shadow: inset 0 0 0 var(--rule-w-heavy) var(--confirm);
+}
+
+/* A wrong mark is the accent's dashed border plus a hatch — the same
+   vocabulary Minegram's wrong-mine speaks, so it cannot read as pending. */
+.mg-star-cell[data-wrong='true'] {
+  border: var(--rule-w-strong) dashed var(--accent);
+}
+
+.mg-star-cell[data-wrong='true']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--accent) 16%, transparent) 0 var(--sp-1),
+    transparent var(--sp-1) calc(var(--sp-1) * 2)
+  );
+  pointer-events: none;
+}
+
+/* Two stars within one cell of each other: the proximity constraint is the
+   one with no counter, so it is stated on the cells themselves. */
+.mg-star-cell[data-conflict='true'] {
+  outline: var(--rule-w-heavy) solid var(--accent);
+  outline-offset: calc(var(--rule-w-heavy) * -1);
+}
+
+.mg-star-cell[data-inert='true'] {
+  cursor: default;
+}
+
+.mg-star-surface[data-status='won'] .mg-star-cell,
+.mg-star-surface[data-status='lost'] .mg-star-cell {
+  opacity: var(--cell-dim);
+}
+
+/* ---- idle / generating placeholder ---- */
+
+.mg-star-empty {
+  display: grid;
+  gap: var(--sp-2);
+  place-content: center;
+  text-align: center;
+  min-block-size: min(40dvh, 24rem);
+  padding: var(--sp-5);
+  background: var(--surface-2);
+  border: var(--rule-w) solid var(--rule-cell);
+  border-radius: var(--radius-panel);
+}
+
+.mg-star-empty__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+}
+
+.mg-star-empty__body {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+/* ---- keyboard hint ---- */
+
+.mg-star-hint {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+/* ---- win / loss banner ---- */
+
+.mg-star-banner {
+  display: grid;
+  place-items: center;
+  padding: var(--sp-4);
+  background: var(--surface-1);
+  border: var(--rule-w) solid var(--rule-cell);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+  animation: mg-star-banner-in var(--dur-fast) ease-out;
+}
+
+@keyframes mg-star-banner-in {
+  from {
+    opacity: 0;
+    translate: 0 var(--sp-2);
+  }
+}
+
+.mg-star-banner[data-tone='won'] {
+  border-color: var(--confirm);
+}
+
+.mg-star-banner[data-tone='lost'] {
+  border-color: var(--accent);
+}
+
+.mg-star-banner__body {
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: center;
+  text-align: center;
+  max-inline-size: 30rem;
+}
+
+.mg-star-banner__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+}
+
+.mg-star-banner__text {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+.mg-star-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  justify-content: center;
+  padding-block-start: var(--sp-1);
+}
+
+/* ---- the one polite live region ---- */
+
+.mg-star-live {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- narrow screens: the counters wrap under the board's width and the
+       toolbar rows itself; nothing is hidden, nothing needs a second tap ---- */
+
+@media (width < 48rem) {
+  .mg-star-counters {
+    grid-template-columns: 1fr;
+  }
+
+  .mg-star-toolbar {
+    row-gap: var(--sp-2);
+  }
+
+  .mg-star-toolbar .mg-seg {
+    inline-size: 100%;
+  }
+}
+
+@media (pointer: coarse) {
+  .mg-star-cell {
+    min-inline-size: var(--target-min);
+    min-block-size: var(--target-min);
+  }
+
+  .mg-star-toolbar__back,
+  .mg-star-banner__actions .mg-button {
+    min-block-size: var(--target-touch);
+  }
+}
+
+/* ---- reduced motion: every transition and animation this file spends,
+       stilled by this file (§7.3) ---- */
+
+@media (prefers-reduced-motion: reduce) {
+  .mg-picker__card,
+  .mg-star-chip,
+  .mg-star-cell,
+  .mg-star-banner {
+    transition: none;
+    animation: none;
+  }
+}
