@@ -3,6 +3,7 @@ import type { StarBattlePuzzle } from '../domain/starBattle'
 import { deriveRandomSeed, normalizeRandomSeed } from '../engine/rng'
 import {
   STAR_NEXT_ROUND_SEED_LABEL,
+  STAR_PICKER_ENTRY_SEED_LABEL,
   createStarBattleStore,
   type StarBattleSnapshot,
   type StarBattleStoreOptions,
@@ -397,6 +398,82 @@ describe('star battle store: generation', () => {
     // A late answer to the cancelled request is dropped.
     succeed(harness.workers[0]!, PUZZLE_A)
     expect(harness.snapshot().status).toBe('idle')
+  })
+})
+
+// ======================================================================================
+// Picker entry
+// ======================================================================================
+
+describe('star battle store: picker entry', () => {
+  it('two consecutive picker entries print different boards, not a replay of the authored seed', () => {
+    const harness = createHarness()
+    const authored = normalizeRandomSeed('star-fixture-a')
+    harness.store.actions.startNewRound('star-fixture-a')
+    succeed(harness.workers[0]!, PUZZLE_A)
+
+    harness.store.actions.backToPicker()
+    harness.store.actions.startNewRound()
+    const firstEntry = lastRequest(harness.workers[1]!).seed
+    expect(firstEntry).not.toBe(authored)
+    expect(firstEntry).toBe(deriveRandomSeed(authored, STAR_PICKER_ENTRY_SEED_LABEL))
+    succeed(harness.workers[1]!, PUZZLE_A)
+
+    // The player leaves and picks Star Battle again: a fresh board, never a replay.
+    harness.store.actions.backToPicker()
+    harness.store.actions.startNewRound()
+    const secondEntry = lastRequest(harness.workers[2]!).seed
+    expect(secondEntry).not.toBe(firstEntry)
+    expect(secondEntry).not.toBe(authored)
+    expect(secondEntry).toBe(deriveRandomSeed(firstEntry, STAR_PICKER_ENTRY_SEED_LABEL))
+  })
+
+  it('the picker-entry derivation is a pure function of the prior seed and its label', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound()
+    expect(lastRequest(harness.workers[0]!).seed).toBe(
+      deriveRandomSeed(0, STAR_PICKER_ENTRY_SEED_LABEL),
+    )
+    succeed(harness.workers[0]!, PUZZLE_A)
+
+    // Same inputs, a second store built and driven identically: same seed.
+    const twin = createHarness()
+    twin.store.actions.startNewRound()
+    expect(lastRequest(twin.workers[0]!).seed).toBe(
+      deriveRandomSeed(0, STAR_PICKER_ENTRY_SEED_LABEL),
+    )
+    twin.store.dispose()
+    harness.store.dispose()
+  })
+
+  it('an explicit seed is honoured and becomes the authored seed for later entries', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('my seed')
+    expect(lastRequest(harness.workers[0]!).seed).toBe(normalizeRandomSeed('my seed'))
+    succeed(harness.workers[0]!, PUZZLE_A)
+
+    // A later no-argument picker entry derives from the explicit seed, not from 0.
+    harness.store.actions.backToPicker()
+    harness.store.actions.startNewRound()
+    const derived = normalizeRandomSeed('my seed')
+    expect(lastRequest(harness.workers[1]!).seed).toBe(
+      deriveRandomSeed(derived, STAR_PICKER_ENTRY_SEED_LABEL),
+    )
+  })
+
+  it('a picker entry after a failure does not resurrect the failed request: retry still owns that seed', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('star-fixture-a')
+    fail(harness.workers[0]!)
+
+    harness.store.actions.startNewRound()
+    const entrySeed = lastRequest(harness.workers[1]!).seed
+    expect(entrySeed).not.toBe(normalizeRandomSeed('star-fixture-a'))
+    fail(harness.workers[1]!)
+
+    // Retry means "try that again": the failed request's exact seed, even here.
+    harness.store.actions.retry()
+    expect(lastRequest(harness.workers[2]!).seed).toBe(entrySeed)
   })
 })
 

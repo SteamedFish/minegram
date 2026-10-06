@@ -83,7 +83,11 @@ export interface StarBattleSnapshot {
 export interface StarBattleStoreActions {
   /** Persists the tier and prints a fresh board with the same seed. No-op while generating. */
   setDifficulty(difficulty: StarDifficulty): void
-  /** Starts a round; an explicit seed (numeric or text) becomes the authored one. */
+  /**
+   * Starts a round. With no seed — the picker entry — derives a fresh seed
+   * from the last used one; an explicit seed (numeric or text) becomes the
+   * authored one.
+   */
   startNewRound(seed?: RandomSeed): void
   /** The banner accelerator: clears the interlude and starts immediately (won → derived seed, lost → same seed). */
   nextRound(): void
@@ -155,6 +159,15 @@ export const DEFAULT_STAR_WIN_INTERLUDE_MS = 2_500
 
 /** The pure label the next-round derivation mixes into the last used seed. */
 export const STAR_NEXT_ROUND_SEED_LABEL = 'star-battle:next-round'
+
+/**
+ * The pure label the picker-entry derivation mixes into the last used seed.
+ * It is a fixed string — never a counter or a timestamp — so a picker entry
+ * stays a deterministic function of the prior seed, and the picker, unlike
+ * Minegram's seed field, is the ONLY way into Star Battle: without a fresh
+ * derivation every re-entry would replay the same authored board forever.
+ */
+export const STAR_PICKER_ENTRY_SEED_LABEL = 'star-battle:picker-entry'
 
 const STAR_DIFFICULTY_STORAGE_KEY = 'minegram.star-battle.difficulty'
 
@@ -599,11 +612,18 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       launch(authoredSeed)
     },
     startNewRound(seed) {
+      clearInterlude()
       if (seed !== undefined) {
         authoredSeed = seed
+        launch(authoredSeed)
+        return
       }
-      clearInterlude()
-      launch(authoredSeed)
+      // Picker entry: the picker is Star Battle's only door, and it exposes no
+      // seed field, so an entry must print a fresh board — deriving from the
+      // last used seed, exactly as `nextRound()` does after a win. `launch`
+      // normalises the derivation and installs it as the new authored seed, so
+      // the next entry derives again and never replays this one.
+      launch(deriveRandomSeed(activeSeed(), STAR_PICKER_ENTRY_SEED_LABEL))
     },
     nextRound() {
       clearInterlude()
