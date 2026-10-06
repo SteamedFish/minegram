@@ -237,7 +237,12 @@ describe('propagateStarBoard cross-validated against independent brute force', (
     }
   }
 
-  it('agrees at n=4..7 across many seeds and every difficulty', () => {
+  // Measured cost (isolated run, this machine): every one of the 36
+  // brute forces finishes in under 1ms, the whole case in under 5ms. The
+  // explicit timeout is the suite-wide generous ceiling — far above any
+  // CPU-contention slowdown the full run can produce — so a hang fails
+  // here instead of tripping vitest's 5s default for the wrong reason.
+  it('agrees at n=4..7 across many seeds and every difficulty', { timeout: 30_000 }, () => {
     for (const n of [4, 5, 6, 7]) {
       for (const difficulty of difficulties) {
         for (const seed of [1, 17, 4242]) {
@@ -248,7 +253,10 @@ describe('propagateStarBoard cross-validated against independent brute force', (
     }
   })
 
-  it('agrees at n=8..10 where exhaustion is still cheap', () => {
+  // Measured cost (isolated run, this machine): at most 2ms per board,
+  // under 10ms for the whole case. Same policy as the n=4..7 case: the
+  // explicit timeout only catches hangs, never measures speed.
+  it('agrees at n=8..10 where exhaustion is still cheap', { timeout: 30_000 }, () => {
     for (const n of [8, 9, 10]) {
       for (const difficulty of difficulties) {
         const { puzzle } = generateStarBattle({ n, seed: 99, difficulty })
@@ -257,14 +265,17 @@ describe('propagateStarBoard cross-validated against independent brute force', (
     }
   })
 
-  // The 30s budget is deliberate: this case expands a 20M-node search tree
-  // at n=15 and measures ~4s alone, ~5.5s under full-suite CPU contention —
-  // against vitest's 5s default that margin is negative, so the default
-  // timeout flakes. The cost is inherent (exhausting 15! is infeasible by
-  // design; count.ts is the instrument for exact small-n uniqueness), and
-  // shrinking the node budget would weaken the very coverage this test
-  // exists for — the certificate must never contradict the partial
-  // evidence. Do not lower the budget to silence a slow machine.
+  // The explicit timeout is deliberate: this case expands three
+  // 20-million-node search trees at n=15, measuring 3.9s total isolated
+  // (worst single board 2.1s) on this machine, and exceeding vitest's 5s
+  // default under full-suite CPU contention — observed directly as a
+  // 5000ms timeout failure when the suite runs all files at once. 30s is
+  // ~8x the isolated cost, absorbing any worker contention. The cost is
+  // inherent (exhausting 15! is infeasible by design; count.ts is the
+  // instrument for exact small-n uniqueness), and shrinking the node
+  // budget would weaken the very coverage this test exists for — the
+  // certificate must never contradict the partial evidence. Do not lower
+  // the budget to silence a slow machine.
   it('never contradicts the brute force at n=15 within an honest budget', { timeout: 30_000 }, () => {
     // Exhausting 15! is infeasible by design (the exact counter in
     // count.ts is the instrument for small-n uniqueness). Within the
