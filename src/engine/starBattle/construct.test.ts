@@ -256,3 +256,172 @@ describe('generateStarBattle input validation', () => {
     expect(() => assertStarBattleSide(4.5)).toThrow(TypeError)
   })
 })
+
+/**
+ * Own flood fill: returns the number of 4-connected components per colour.
+ * Written here rather than imported — the connectivity contract is pinned
+ * by this test, not by the generator's internal (identical) check.
+ */
+function countComponentsPerRegion(colours: Uint8Array, n: number): number[] {
+  const seen = new Uint8Array(n * n)
+  const components = new Array<number>(n).fill(0)
+  for (let start = 0; start < n * n; start += 1) {
+    if (seen[start] !== 0) {
+      continue
+    }
+    const region = colours[start]
+    components[region] += 1
+    const stack = [start]
+    seen[start] = 1
+    while (stack.length > 0) {
+      const cell = stack.pop() as number
+      const row = (cell / n) | 0
+      const column = cell % n
+      if (row > 0 && seen[cell - n] === 0 && colours[cell - n] === region) {
+        seen[cell - n] = 1
+        stack.push(cell - n)
+      }
+      if (row + 1 < n && seen[cell + n] === 0 && colours[cell + n] === region) {
+        seen[cell + n] = 1
+        stack.push(cell + n)
+      }
+      if (column > 0 && seen[cell - 1] === 0 && colours[cell - 1] === region) {
+        seen[cell - 1] = 1
+        stack.push(cell - 1)
+      }
+      if (column + 1 < n && seen[cell + 1] === 0 && colours[cell + 1] === region) {
+        seen[cell + 1] = 1
+        stack.push(cell + 1)
+      }
+    }
+  }
+  return components
+}
+
+describe('generateStarBattle connected regions (player contract)', () => {
+  it('every colour forms exactly one 4-connected region, on every generated board', () => {
+    for (const n of [4, 5, 6, 8, 10, 12, 13, 15]) {
+      for (const difficulty of DIFFICULTIES) {
+        for (const seed of [1, 2, 3]) {
+          const { puzzle } = generateStarBattle({ n, seed, difficulty })
+          expect(countComponentsPerRegion(puzzle.colours, n)).toEqual(
+            Array.from({ length: n }, () => 1),
+          )
+        }
+      }
+    }
+  })
+
+  it('keeps the propagation certificate solving every board to completion', () => {
+    for (const n of [4, 5, 6, 8, 10, 12, 13, 15]) {
+      for (const difficulty of DIFFICULTIES) {
+        for (const seed of [1, 2, 3]) {
+          const { puzzle } = generateStarBattle({ n, seed, difficulty })
+          const result = propagateStarBoard(puzzle.colours, n)
+          expect(result.solved).toBe(true)
+          expect(result.stars.map(([, column]) => column)).toEqual([...puzzle.solution])
+        }
+      }
+    }
+  })
+
+  it('holds the validity rule cell-by-cell across the whole battery', () => {
+    for (const n of [4, 5, 6, 8, 10, 12, 13, 15]) {
+      for (const difficulty of DIFFICULTIES) {
+        for (const seed of [1, 2, 3]) {
+          const { puzzle } = generateStarBattle({ n, seed, difficulty })
+          const { colours, solution } = puzzle
+          const pos = solution.map((column, row) => colours[row * n + column])
+          const rowOfColumn = new Int16Array(n)
+          for (let row = 0; row < n; row += 1) {
+            rowOfColumn[solution[row]] = row
+          }
+          for (let row = 0; row < n; row += 1) {
+            for (let column = 0; column < n; column += 1) {
+              if (column === solution[row]) {
+                continue
+              }
+              const region = colours[row * n + column]
+              expect(region).toBeGreaterThanOrEqual(
+                Math.min(pos[row], pos[rowOfColumn[column]]) + 1,
+              )
+              expect(region).toBeLessThanOrEqual(n - 1)
+            }
+          }
+        }
+      }
+    }
+  })
+})
+
+describe('generateStarBattle exact counter agreement (cap 3)', () => {
+  it('countStarSolutions(colours, n, 3) === 1 for n=4..10 across difficulties', () => {
+    for (const n of [4, 5, 6, 8, 10]) {
+      for (const difficulty of DIFFICULTIES) {
+        for (const seed of [3, 5]) {
+          const { puzzle } = generateStarBattle({ n, seed, difficulty })
+          expect(countStarSolutions(puzzle.colours, n, 3)).toBe(1)
+        }
+      }
+    }
+  })
+})
+
+describe('generateStarBattle determinism across the battery', () => {
+  it('same (n, seed, difficulty) at n=15 yields byte-identical boards', () => {
+    for (const difficulty of DIFFICULTIES) {
+      const first = generateStarBattle({ n: 15, seed: 777, difficulty })
+      const second = generateStarBattle({ n: 15, seed: 777, difficulty })
+      expect(second.puzzle.colours).toEqual(first.puzzle.colours)
+      expect(second.puzzle.solution).toEqual(first.puzzle.solution)
+      expect(second.waves).toBe(first.waves)
+    }
+  })
+
+  it('different seeds at n=15 yield different boards', () => {
+    for (const difficulty of DIFFICULTIES) {
+      const a = generateStarBattle({ n: 15, seed: 1, difficulty })
+      const b = generateStarBattle({ n: 15, seed: 2, difficulty })
+      expect(Array.from(a.puzzle.colours)).not.toEqual(Array.from(b.puzzle.colours))
+    }
+  })
+})
+
+describe('generateStarBattle measured wave bands (connected construction)', () => {
+  it('lands the measured bands at the pinned sides', () => {
+    // Measured 2026-10-07 with the connected construction, seeds 1..24
+    // (frozen-state wave semantics). Floors sit two waves under the
+    // measured minimum so the pin catches a regression instead of
+    // flapping on seed noise; the existing suite already pins the global
+    // floors for every side.
+    const floors: ReadonlyArray<readonly [number, StarDifficulty, number]> = [
+      [8, 'steady', 11],
+      [8, 'challenging', 13],
+      [10, 'steady', 11],
+      [10, 'challenging', 17],
+      [12, 'steady', 13],
+      [12, 'challenging', 21],
+      [15, 'steady', 16],
+      [15, 'challenging', 27],
+    ]
+    for (const [n, difficulty, floor] of floors) {
+      for (const seed of [1, 2, 3, 4, 5]) {
+        const { waves } = generateStarBattle({ n, seed, difficulty })
+        expect(waves).toBeGreaterThanOrEqual(floor)
+      }
+    }
+  })
+})
+
+describe('generateStarBattle wall-clock at n=15 (connected construction)', () => {
+  it('generates n=15 challenging within the generation budget', () => {
+    const started = performance.now()
+    generateStarBattle({ n: 15, seed: 20261007, difficulty: 'challenging' })
+    const elapsed = performance.now() - started
+    // Measured ≈ a few milliseconds (rejection sampling over T plus one
+    // flood fill and one propagation per attempt); 100 ms leaves two
+    // orders of magnitude of headroom while still catching a regression
+    // that turns generation quadratic.
+    expect(elapsed).toBeLessThan(100)
+  })
+})
