@@ -660,13 +660,45 @@ about n = 8).
   (starter / steady / challenging) differ only in how decoys are biased across the
   valid proof regions; measured wave bands are starter 3–5, steady ≈ 1.7n,
   challenging up to ~2n, pinned by tests at every supported side.
-- [x] Application: the play reducer mirroring the Minegram scoring contract (correct
-  marks lock and silently refuse later assertions, wrong marks cost one point without
-  refund, score clamps at zero and zero loses, re-assertion is free and silent, the win
+- [x] Application: the play reducer mirroring the Minegram contract (correct marks lock
+  and silently refuse later assertions, a wrong star costs one life without refund,
+  lives clamp at zero and zero loses, re-assertion is free and silent, the win
   predicate runs after the batch), plus mark retraction (`'clear'`) so a misclick
-  cannot permanently void a round in which every one of the n² cells must be asserted —
-  Star Battle has no auto-reveal and the game never writes a mark
-  (`src/application/starBattleReducer.ts`).
+  cannot permanently void a round (`src/application/starBattleReducer.ts`).
+- [x] **Replace the score with lives, and let a correct star fill its exclusions.**
+  Both arrived from one phone test. The old `score` only ever fell by one per
+  mistake, so it *was* lives under a misleading name and a configurable maximum
+  beside it would have been incoherent: `MIN_STAR_LIVES` 1, `MAX_STAR_LIVES` 9,
+  `DEFAULT_STAR_LIVES` **5** (the player's 「3 只是我随便想的数字」 left to judgement;
+  the hard tier is ~19 deduction waves and a wrong star is the only way to lose a
+  life, so 3 made the hardest board a coin flip). `setMaxLives(n)` in
+  `src/ui/starBattleStore.ts` mirrors `setSide` and persists under
+  `minegram.star-battle.lives`; the three names joined the layer-boundary allowlist
+  for the same reason the side bounds did. A **wrong star now auto-fills** that
+  star's row, column, colour and 3 × 3 as locked blanks (`fillStarExclusions`),
+  which is safe on three counts recorded in `AGENTS.md`: it fires only on a
+  *correct* star so it leaks no solution, it structurally cannot overwrite a player
+  mark (the inner `fill` returns unless the target is `STAR_UNMARKED`), and it is
+  idempotent because every write lands on a cell that is blank in the solution.
+  Independently probed over 24 boards × 3 tiers: after placing one correct star
+  every other solution star is still `STAR_UNMARKED` — the failure mode that would
+  silently make a round unwinnable — a wrong star already paid for survives a later
+  fill, and placing every star wins in one commit with no life charged. `d738983`.
+- [x] **Make marking a mine discoverable on a phone, and drop the redundant
+  counters.** The player wrote 「不知道怎么切换雷或者空白」 after testing on a phone:
+  right-click does not exist on touch and a 500 ms long-press is invisible, so the
+  shipped model had no discoverable way to place a star at all. A tap now marks a
+  **star** — the assertion the game is about — and long-press / right-click toggles
+  **blank**; the rules block above the board now states that in words. The row /
+  column / colour counter groups and their ✓/✗ badges are **deleted** at the
+  player's request (「我感觉上面的图例是冗余的…不如改成游戏规则说明+图例」): they
+  only restated what the board already shows, and the space is worth more as
+  instruction. The proximity-conflict outline is **kept** — adjacency is the one
+  rule with no count to read off the board, so deleting the counters without it
+  would have removed the only feedback for that rule. Also: locked cells now render
+  from the solution rather than from the mark code, because auto-fill writes locked
+  blanks that the old renderer counted as stars. One shared `GameBar` names the
+  current game on both screens with exactly one back affordance. `932a34c`.
 - [x] Worker + store: the typed generation Worker with the same request/cancel and
   identity-based stale-result protection as Minegram's, and the closure-private store
   owning the `generating` lifecycle, the persisted difficulty preference

@@ -76,31 +76,44 @@ one-line description.
 
 ### How to play
 
-Every cell must eventually carry your mark: **blank** (no star) or **star**. The
-game never fills a cell for you — there is no auto-reveal, and every mark on the
-board is yours.
+Every cell must eventually carry a correct mark: **blank** (no star) or **star**.
 
 - **Mark** a cell. A correct mark locks the cell; a locked cell silently refuses
-  any later assertion and is never charged.
-- A **wrong** mark costs one point. It stays visible so you can fix it, but the
-  point is not refunded. Score starts at 5 and reaching zero ends the round.
+  any later assertion, retraction included, and is never charged.
+- A **wrong** star costs one **life**. It stays visible so you can fix it, but the
+  life is not refunded. Lives default to **5** and a toolbar control sets the
+  maximum from 1 to 9; reaching zero ends the round. Mistaking a cell for blank
+  costs nothing, because an untrue blank is not chargeable — only a claimed star
+  can be.
 - **Retract** a cell — Backspace / Delete, or clicking the mark it already carries —
   to return it to unmarked. Retraction is free, refunds nothing, and never locks.
 - Re-stating the mark a cell already carries is free and changes nothing.
-- Row, column and colour **counters** above the board state, for each unit, whether
-  it holds no star yet, exactly one correct star, or a star that is misplaced; two
-  stars inside one 3 × 3 neighbourhood are flagged on both cells.
+- **A correct star fills its own exclusions for you.** The rest of its row, the
+  rest of its column, every other cell of its colour, and its 3 × 3 neighbourhood
+  become locked blanks, in the same move. This is what the rules already imply, so
+  it never tells you where a star *is* — it only saves you the bookkeeping. It
+  never overwrites a mark you have already made, including a wrong star you have
+  already paid for, and it is free.
+- Two stars inside one 3 × 3 neighbourhood are flagged on both cells. That is the
+  only rule without a count you could read off the board, so it is the one
+  conflict the game still draws for you.
 - The round is won when **every cell carries a correct mark**.
 
 ### Controls
 
-- **Left-click** cycles a cell toward blank; **right-click** (or a **500 ms
-  long-press** on touch) toggles a star. **Drag** paints with the stroke's tool and
-  visits each cell at most once.
-- Keyboard: one roving tab stop on the grid. **Arrow keys** move, **Home** / **End**
-  jump within the row (with Ctrl, to the board's ends), **Space** or **Enter**
-  toggles blank, **s** or **\*** toggles a star, and **Backspace** / **Delete**
-  retracts.
+A tap marks a **star** — that is the assertion the game is about, so it is the
+one a tap should make. **Right-click**, or a **500 ms long-press** on touch,
+toggles **blank**. **Drag** paints every cell it crosses with the gesture's own
+tool, visiting each at most once. The rules block above the board states this in
+words, because having to discover it is what made it unusable on a phone.
+
+Keyboard: one roving tab stop on the grid. **Arrow keys** move, **Home** / **End**
+jump within the row (with Ctrl, to the board's ends), **Space** or **Enter**
+toggles blank, **s** or **\*** toggles a star, and **Backspace** / **Delete**
+retracts.
+
+The toolbar names the game you are playing and offers a way back to the picker;
+there is exactly one such control per screen.
 
 ### Difficulty
 
