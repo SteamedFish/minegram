@@ -37,7 +37,9 @@ function start(initialScore?: number): StarBattleState {
   return result.state
 }
 
-function apply(state: StarBattleState, cells: readonly { index: number; mark: 'blank' | 'star' }[]): StarBattleState {
+type TestCell = { index: number; mark: 'blank' | 'star' | 'clear' }
+
+function apply(state: StarBattleState, cells: readonly TestCell[]): StarBattleState {
   const result = starBattleReducer(state, { type: 'round/markBatch', cells })
   if (result.type !== 'transition') {
     throw new Error(`expected transition, received ${result.type}: ${result.reason}`)
@@ -57,11 +59,7 @@ function fullSolutionBatch(): { index: number; mark: 'blank' | 'star' }[] {
 }
 
 /** Asserts a batch is ignored for `reason` and returns the identical state. */
-function expectIgnored(
-  state: StarBattleState,
-  cells: readonly { index: number; mark: 'blank' | 'star' }[],
-  reason: string,
-): void {
+function expectIgnored(state: StarBattleState, cells: readonly TestCell[], reason: string): void {
   const result = starBattleReducer(state, { type: 'round/markBatch', cells })
   if (result.type !== 'ignored') {
     throw new Error(`expected ignored, received ${result.type}`)
@@ -196,6 +194,92 @@ describe('score and win/loss', () => {
     const rest = fullSolutionBatch().filter((cell) => Math.floor(cell.index / 4) === 3)
     const state = apply(apply(start(), first), rest)
     expect(state.status).toBe('won')
+  })
+})
+
+describe('retraction', () => {
+  it('retracting a wrong mark returns the cell to unmarked, free, with no refund', () => {
+    const wrong = apply(start(), [{ index: at(0, 0), mark: 'star' }])
+    expect(wrong.score).toBe(4)
+    const state = apply(wrong, [{ index: at(0, 0), mark: 'clear' }])
+    expect(state.marks[at(0, 0)]).toBe(STAR_UNMARKED)
+    // Free: no charge for the retract itself. No refund: the earlier wrong
+    // mark is not credited back either.
+    expect(state.score).toBe(4)
+    expect(state.mistakes).toBe(1)
+    expect(state.streak).toBe(0)
+  })
+
+  it('a round that retracts and then re-asserts correctly returns to its previous cost', () => {
+    let state = apply(start(), [{ index: at(0, 0), mark: 'star' }]) // wrong: 5 -> 4
+    state = apply(state, [{ index: at(0, 0), mark: 'clear' }]) // free, no refund: 4
+    state = apply(state, [{ index: at(0, 0), mark: 'blank' }]) // correct: locks, no charge: 4
+    expect(state.marks[at(0, 0)]).toBe(STAR_LOCKED)
+    expect(state.score).toBe(4)
+    expect(state.streak).toBe(1)
+  })
+
+  it('retract on a locked cell is inert and reports affectedCount 0', () => {
+    const locked = apply(start(), [{ index: at(0, 1), mark: 'star' }])
+    const cells = [{ index: at(0, 1), mark: 'clear' as const }]
+    const preview = previewStarMarkBatch(locked, cells)
+    expect(preview).toEqual({
+      valid: true,
+      affectedCount: 0,
+      scoreCost: 0,
+      projectedScore: 5,
+      reachesZero: false,
+    })
+    const result = starBattleReducer(locked, { type: 'round/markBatch', cells })
+    if (result.type !== 'ignored') {
+      throw new Error(`expected ignored, received ${result.type}`)
+    }
+    expect(result.reason).toBe('locked-cell')
+    expect(result.state).toBe(locked)
+  })
+
+  it('retract on an unmarked cell is inert and silent', () => {
+    expectIgnored(start(), [{ index: at(0, 0), mark: 'clear' }], 'cell-already-marked')
+  })
+
+  it('retract never locks and never writes a wrong mark', () => {
+    let state = apply(start(), [{ index: at(0, 0), mark: 'star' }]) // wrong: 4
+    state = apply(state, [{ index: at(0, 0), mark: 'clear' }])
+    expect(state.marks[at(0, 0)]).toBe(STAR_UNMARKED)
+    // The retracted cell accepts a fresh assertion and, being wrong again,
+    // is charged again — proof that the retract neither locked the cell nor
+    // left a wrong mark behind.
+    state = apply(state, [{ index: at(0, 0), mark: 'star' }])
+    expect(state.score).toBe(3)
+    expect(state.marks[at(0, 0)]).toBe(STAR_STAR)
+  })
+
+  it('a batch combining the final assertions with a retract does not win', () => {
+    // A wrong mark on (0,0), then ONE batch that retracts it and asserts
+    // every other cell correctly. The retracted cell ends unmarked, so the
+    // post-batch win gate must not fire.
+    const prepared = apply(start(), [{ index: at(0, 0), mark: 'star' }])
+    const cells = [
+      { index: at(0, 0), mark: 'clear' as const },
+      ...fullSolutionBatch().filter((cell) => cell.index !== at(0, 0)),
+    ]
+    const state = apply(prepared, cells)
+    expect(state.status).toBe('playing')
+    expect(state.marks[at(0, 0)]).toBe(STAR_UNMARKED)
+    expect(roundIsComplete(puzzle, state.marks)).toBe(false)
+  })
+
+  it('retracting a cell from a complete mark array breaks the win predicate', () => {
+    const complete = apply(start(), fullSolutionBatch())
+    expect(complete.status).toBe('won')
+    expect(roundIsComplete(puzzle, complete.marks)).toBe(true)
+    // A won round is all-locked, so no batch can reach it (the mark gate is
+    // 'playing'); the invariant itself lives in the predicate, confirmed
+    // here rather than by reading: an unmarked cell is never correct, so a
+    // retraction can only move a round away from won, never toward it.
+    const retracted = new Uint8Array(complete.marks)
+    retracted[at(2, 0)] = STAR_UNMARKED
+    expect(roundIsComplete(puzzle, retracted)).toBe(false)
   })
 })
 

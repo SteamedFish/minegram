@@ -467,16 +467,74 @@ describe('star battle store: marking', () => {
     expect(listener).toHaveBeenCalledTimes(3)
   })
 
-  it('out-of-bounds and null requests are inert', () => {
+  it('out-of-bounds requests are inert', () => {
     const harness = createHarness()
     startPlaying(harness)
     const version = harness.snapshot().version
 
     harness.store.actions.onMark(-1, 0, 'star')
     harness.store.actions.onMark(0, SIDE, 'star')
-    harness.store.actions.onMark(0, 0, null)
 
     expect(harness.snapshot().version).toBe(version)
+  })
+
+  it('onMark(row, col, null) retracts: the cell returns to unmarked, free, with no refund', () => {
+    const harness = createHarness()
+    startPlaying(harness)
+    const [blankIndex] = nonSolutionCells(PUZZLE_A)
+    const row = Math.floor(blankIndex! / SIDE)
+    const col = blankIndex! % SIDE
+
+    harness.store.actions.onMark(row, col, 'star')
+    expect(harness.snapshot().marks[blankIndex!]).toBe(2) // STAR_STAR, wrong
+    expect(harness.snapshot().score).toBe(4)
+
+    harness.store.actions.onMark(row, col, null)
+
+    expect(harness.snapshot().marks[blankIndex!]).toBe(0) // STAR_UNMARKED
+    expect(harness.snapshot().score).toBe(4) // free, and the earlier charge is not refunded
+    expect(harness.snapshot().mistakes).toBe(1)
+  })
+
+  it('the wire mapping covers all three values: blank and star assert, null retracts', () => {
+    const harness = createHarness()
+    startPlaying(harness)
+    const stars = solutionCells(PUZZLE_A)
+    const blanks = nonSolutionCells(PUZZLE_A)
+
+    // 'blank' on a blank cell locks it.
+    harness.store.actions.onMark(0, 0, 'blank')
+    expect(harness.snapshot().marks[0]).toBe(3)
+    // 'star' on a star cell locks it.
+    harness.store.actions.onMark(Math.floor(stars[0]! / SIDE), stars[0]! % SIDE, 'star')
+    expect(harness.snapshot().marks[stars[0]!]).toBe(3)
+    // 'star' on another blank cell is wrong; null retracts it to unmarked for free.
+    const target = blanks[1]!
+    harness.store.actions.onMark(Math.floor(target / SIDE), target % SIDE, 'star')
+    expect(harness.snapshot().marks[target]).toBe(2)
+    const scoreAfterWrong = harness.snapshot().score
+    harness.store.actions.onMark(Math.floor(target / SIDE), target % SIDE, null)
+    expect(harness.snapshot().marks[target]).toBe(0)
+    expect(harness.snapshot().score).toBe(scoreAfterWrong)
+  })
+
+  it("a locked cell's retract never reaches the reducer: no dispatch, no charge, no announcement", () => {
+    const harness = createHarness()
+    const listener = vi.fn()
+    harness.store.subscribe(listener)
+    startPlaying(harness)
+    const [starIndex] = solutionCells(PUZZLE_A)
+    const row = Math.floor(starIndex! / SIDE)
+    const col = starIndex! % SIDE
+    harness.store.actions.onMark(row, col, 'star')
+    const versionAfterLock = harness.snapshot().version
+
+    harness.store.actions.onMark(row, col, null)
+
+    expect(harness.snapshot().version).toBe(versionAfterLock)
+    expect(harness.snapshot().marks[starIndex!]).toBe(3)
+    // start + accept + lock; the retract dispatched nothing.
+    expect(listener).toHaveBeenCalledTimes(3)
   })
 
   it('score clamps at zero and zero ends the game', () => {

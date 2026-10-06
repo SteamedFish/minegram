@@ -12,7 +12,11 @@
  * Battle round is complete only when EVERY cell carries a correct mark, and
  * the game never writes marks itself — every mark on the board is the
  * player's, so `roundIsComplete` reads the mark array directly with no
- * reveal pass between the batch and the win gate.
+ * reveal pass between the batch and the win gate. Because every one of the
+ * n² cells must be asserted, the player can also RETRACT a cell back to
+ * unmarked (`'clear'`): a misclick would otherwise make the round
+ * permanently unwinnable. Retraction is free, refunds nothing, never locks,
+ * and a locked cell refuses it silently — see `StarCellAssertion`.
  */
 import {
   STAR_BLANK,
@@ -26,7 +30,16 @@ import {
 export const DEFAULT_STAR_INITIAL_SCORE = 5
 
 export type StarBattleStatus = 'idle' | 'playing' | 'won' | 'lost'
-export type StarCellAssertion = 'blank' | 'star'
+/**
+ * The player's assertion vocabulary. `'blank'` and `'star'` place a mark;
+ * `'clear'` retracts the cell back to unmarked. `clear` is FREE — it costs no
+ * score and refunds nothing, because a retraction is not a new assertion: it
+ * follows Minegram's rule that a wrong mark "may be corrected without refund"
+ * one step further, letting the player undo the assertion itself. It never
+ * writes a mark that is wrong for the solution and it never locks; a locked
+ * cell refuses it silently, exactly as it refuses a changed assertion.
+ */
+export type StarCellAssertion = 'blank' | 'star' | 'clear'
 
 /**
  * Play state. `marks` is a flat array of the domain mark constants with
@@ -96,7 +109,7 @@ type PreparedStarBatch =
   | { readonly valid: false; readonly reason: StarBattleResultReason }
 
 function isStarCellAssertion(value: unknown): value is StarCellAssertion {
-  return value === 'blank' || value === 'star'
+  return value === 'blank' || value === 'star' || value === 'clear'
 }
 
 function assertInitialStarScore(value: unknown): asserts value is number {
@@ -130,9 +143,20 @@ function rejected(state: StarBattleState, reason: StarBattleResultReason): StarB
   return Object.freeze({ type: 'rejected', reason, state })
 }
 
-/** The player's assertion as the domain mark it would write while unlocked. */
+/**
+ * The mark a cell carries once the assertion is applied, while it is still
+ * the player's (unlocked): `'blank'`/`'star'` write their mark, `'clear'`
+ * writes `STAR_UNMARKED`. Used both for the re-assertion test and for the
+ * write itself.
+ */
 function assertionToMark(assertion: StarCellAssertion): number {
-  return assertion === 'star' ? STAR_STAR : STAR_BLANK
+  if (assertion === 'star') {
+    return STAR_STAR
+  }
+  if (assertion === 'blank') {
+    return STAR_BLANK
+  }
+  return STAR_UNMARKED
 }
 
 function assertionMatchesPuzzle(puzzle: StarBattlePuzzle, index: number, assertion: StarCellAssertion): boolean {
@@ -266,17 +290,27 @@ function applyStarMarkBatch(state: StarBattleState, value: unknown): StarBattleR
 
   for (const { index, mark } of prepared.cells) {
     // Strict contract, as in Minegram: re-asserting the mark a cell already
-    // carries is free in any batch. Only a different mark can charge again.
+    // carries is free in any batch. Only a different assertion can charge
+    // again. For 'clear' this also makes a retract on an already-unmarked
+    // cell inert and silent.
     if (marks[index] === assertionToMark(mark)) {
       continue
     }
     if (marks[index] === STAR_LOCKED) {
-      // A locked cell's later assertions are refused, not charged.
+      // A locked cell's later assertions are refused, not charged — a
+      // retraction included: the locked state is information the player has
+      // earned and the game does not delete it.
       sawLockedCell = true
       continue
     }
     marks[index] = assertionToMark(mark)
     changed = true
+    if (mark === 'clear') {
+      // The one write 'clear' performs: back to unmarked. No charge, no
+      // refund, no lock, no streak — a retraction is not an assertion about
+      // the solution, so it can never be right or wrong for it.
+      continue
+    }
     if (assertionMatchesPuzzle(puzzle, index, mark)) {
       marks[index] = STAR_LOCKED
       streak += 1
@@ -375,6 +409,11 @@ export function previewStarMarkBatch(state: StarBattleState, value: unknown): St
       continue
     }
     affectedCount += 1
+    if (mark === 'clear') {
+      // A retraction previews as affected but never as a cost: it is neither
+      // charged nor refunded, so it cannot reach zero either.
+      continue
+    }
     if (!assertionMatchesPuzzle(puzzle, index, mark)) {
       scoreCost += 1
       if (scoreCost >= state.score) {

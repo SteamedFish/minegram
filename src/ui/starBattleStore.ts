@@ -9,20 +9,22 @@
  * visibility guard, and stale-result protection.
  *
  * The store is the string→structure seam for marks: `onMark` receives the
- * UI's `'blank' | 'star'` vocabulary plus row/column coordinates and is the
- * only place that flattens them into the reducer's `{ index, mark }` batch
- * cell. `null` is not part of the assertion contract — Star Battle marks are
- * assert-only, a wrong mark is corrected by asserting the right one, and the
- * reducer has no unmark action — so a `null` request is inert here, exactly as
- * the surface's guards already make it.
+ * UI's `'blank' | 'star' | null` vocabulary plus row/column coordinates and
+ * is the only place that flattens it into the reducer's `{ index, mark }`
+ * batch cell. The wire mapping is `'blank' → 'blank'`, `'star' → 'star'`,
+ * `null → 'clear'` — `null` is the surface's retract gesture (Backspace /
+ * Delete) and is a REAL state change: the cell returns to unmarked, for
+ * free, so a misclick cannot permanently void a round in which every one of
+ * the n² cells must be asserted.
  *
  * Inert gestures never reach the reducer: `previewStarMarkBatch` reports
- * `affectedCount === 0` for a re-assertion or an all-locked batch, and the
- * store dispatches nothing in that case, so the gesture charges, mutates and
- * announces nothing (the same structural rule Minegram's drag controller
- * enforces). A reducer refusal that nonetheless arrives is dropped silently:
- * through this store's actions a refusal is unreachable, and the surface
- * renders the locked state itself.
+ * `affectedCount === 0` for a re-assertion, an all-locked batch (a locked
+ * cell refuses a retract exactly as it refuses a changed assertion), or a
+ * retract on an already-unmarked cell — and the store dispatches nothing in
+ * that case, so the gesture charges, mutates and announces nothing (the same
+ * structural rule Minegram's drag controller enforces). A reducer refusal
+ * that nonetheless arrives is dropped silently: through this store's actions
+ * a refusal is unreachable, and the surface renders the locked state itself.
  */
 import {
   createInitialStarBattleState,
@@ -88,9 +90,10 @@ export interface StarBattleStoreActions {
   /** Reuses the exact seed of the most recent failed request. */
   retry(): void
   /**
-   * The one mark seam. `next` is the UI's `'blank' | 'star'`; `null` is
-   * inert. Row/column are validated against the current puzzle and flattened
-   * to the reducer's batch index here and nowhere else.
+   * The one mark seam. `next` is the UI's `'blank' | 'star' | null`, where
+   * `null` is the retract gesture and maps to the reducer's `'clear'`.
+   * Row/column are validated against the current puzzle and flattened to the
+   * reducer's batch index here and nowhere else.
    */
   onMark(row: number, col: number, next: 'blank' | 'star' | null): void
   /** Cancels any in-flight generation and returns to the picker-shaped idle state. */
@@ -215,6 +218,11 @@ export function createDefaultStarWorker(): StarWorkerEndpoint {
 function readPersistedDifficulty(storageKey: string): StarDifficulty {
   const stored = readStored(storageKey)
   return stored !== null && isStarDifficulty(stored) ? stored : DEFAULT_STAR_DIFFICULTY
+}
+
+/** The UI wire value to the reducer's assertion: `null` is the retract gesture. */
+function wireToAssertion(next: 'blank' | 'star' | null): 'blank' | 'star' | 'clear' {
+  return next ?? 'clear'
 }
 
 // --------------------------------------------------------------------------------------
@@ -618,7 +626,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       launch(authoredSeed)
     },
     onMark(row, col, next) {
-      if (disposed || next === null || state.status !== 'playing' || state.puzzle === null) {
+      if (disposed || state.status !== 'playing' || state.puzzle === null) {
         return
       }
       const n = state.puzzle.n
@@ -626,14 +634,16 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
         return
       }
       const index = row * n + col
-      // Structural inertness: a re-assertion or an all-locked gesture reports
-      // `affectedCount === 0`, and the store dispatches nothing — no charge,
-      // no mutation, no announcement.
-      const preview = previewStarMarkBatch(state, [{ index, mark: next }])
+      const mark = wireToAssertion(next)
+      // Structural inertness: a re-assertion, an all-locked gesture (a locked
+      // cell refuses a retract like any changed assertion) or a retract on an
+      // already-unmarked cell reports `affectedCount === 0`, and the store
+      // dispatches nothing — no charge, no mutation, no announcement.
+      const preview = previewStarMarkBatch(state, [{ index, mark }])
       if (!preview.valid || preview.affectedCount === 0) {
         return
       }
-      const result = starBattleReducer(state, { type: 'round/markBatch', cells: [{ index, mark: next }] })
+      const result = starBattleReducer(state, { type: 'round/markBatch', cells: [{ index, mark }] })
       if (result.type !== 'transition') {
         // Unreachable through the preview gate above; a refusal changes nothing.
         return
