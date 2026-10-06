@@ -1,0 +1,100 @@
+/* =============================================================================
+   The multi-game shell: the picker screen, the Star Battle screen's framing,
+   and the slim games bar that is the way back from Minegram.
+   Loaded after starrbattle.css; remaps tokens only, defines no colours of
+   its own beyond what tokens already carry.
+   ============================================================================ */
+
+/* One column for every non-minegram screen: the screen on top, the footer
+   (locale, theme, source) pinned below it. The picker and the star-battle
+   screen are simpler than minegram's three-column grid and say so. */
+.mg-shell {
+  min-block-size: 100dvh;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.mg-picker-main {
+  inline-size: 100%;
+}
+
+.mg-star-main {
+  inline-size: 100%;
+  max-inline-size: 54rem;
+  margin-inline: auto;
+  padding: var(--sp-3) var(--sp-4) var(--sp-5);
+  display: grid;
+  gap: var(--sp-3);
+  align-content: start;
+}
+
+/* The way back from Minegram. One slim row above the app's own chrome; the
+   panels, banner and dialogs below it stay exactly minegram's. */
+.mg-gamesbar {
+  display: flex;
+  align-items: center;
+  padding: var(--sp-2) var(--sp-4) 0;
+}
+
+/* The footer's seed chip is minegram's fact ("this round derives its own
+   seed" is about a minegram round), so it is hidden on the screens where no
+   minegram round is in view. Language and theme stay — they are global. */
+.mg-shell[data-screen='picker'] .mg-footer__seed,
+.mg-shell[data-screen='starbattle'] .mg-footer__seed {
+  display: none;
+}
+
+/* ---- the Star Battle generation-failure card ---- */
+
+.mg-star-failure {
+  display: grid;
+  gap: var(--sp-2);
+  max-inline-size: 40rem;
+  margin: var(--sp-5) auto 0;
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--surface-1);
+  border: var(--rule-w) solid var(--accent);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.mg-star-failure__headline {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+}
+
+.mg-star-failure__explanation {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+.mg-star-failure__remedies {
+  margin: 0;
+  padding-inline-start: var(--sp-5);
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+.mg-star-failure__remedy {
+  margin-block: var(--sp-1);
+}
+
+.mg-star-failure__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding-block-start: var(--sp-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mg-star-failure,
+  .mg-gamesbar__back {
+    transition: none;
+    animation: none;
+  }
+}

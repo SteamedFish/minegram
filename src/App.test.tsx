@@ -68,6 +68,15 @@ function render(node: ReactNode): void {
       root.unmount()
     })
   }
+  // The app opens on the game picker on every load (that is the product
+  // contract); this suite owns the minegram screen, so every render steps
+  // through the picker into it before the assertions run.
+  const minegram = container.querySelector<HTMLElement>("[data-game='minegram']")
+  if (minegram !== null) {
+    act(() => {
+      minegram.click()
+    })
+  }
 }
 
 function install(state: GameState, options: GameStoreOptions = {}): GameStore {

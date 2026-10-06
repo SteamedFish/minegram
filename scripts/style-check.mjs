@@ -13,7 +13,7 @@ import postcss from 'postcss'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
-const MINE = ['layout', 'board', 'clues', 'forms', 'overlays', 'starbattle']
+const MINE = ['layout', 'board', 'clues', 'forms', 'overlays', 'starbattle', 'screens']
 const BASE = ['tokens', 'base']
 const read = (f) => readFileSync(join(root, 'src/styles', `${f}.css`), 'utf8')
 
