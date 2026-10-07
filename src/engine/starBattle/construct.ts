@@ -53,8 +53,8 @@
  *
  * === Difficulty tiers (redefined 2026-10-07, measured bands below) ===
  *
- * Four tiers, two construction tiers solved by the base rules alone and
- * two technique tiers the base rules cannot touch:
+ * Five tiers, two construction tiers solved by the base rules alone and
+ * three technique tiers the base rules cannot touch:
  *
  * - starter:     S = ∅ — regions 0..n-2 are singletons, region n-1 is the
  *   absorber sea. Base rules solve it; collapses in 3 waves at every side.
@@ -62,11 +62,21 @@
  * - steady:      S = {1..n-2} — every possible strip; the deepest
  *   construction the theorem certifies. Base rules solve it. This IS the
  *   old 'challenging' behaviour and wave bands, moved down one step.
- * - challenging: base rules place ZERO stars, and the minimum confinement
- *   basis ({@link measureMinimumBasis}) is exactly 1: one catalogue
- *   technique idea (line confinement, box confinement, or shadow) is
- *   necessary and sufficient. Boards come from {@link walkStarBattleBoard}
- *   with rejection on k.
+ * - challenging: base rules place ZERO stars, the minimum confinement basis
+ *   ({@link measureMinimumBasis}) is exactly 1, AND that one idea is not the
+ *   whole-line freebie — {@link techniqueTierAcceptsBasis} requires
+ *   `rules ∩ {c1, c2} = ∅`, which is exact rather than a reporting artefact
+ *   because a colour owning an entire line resolves that line for free, so the
+ *   freebie would otherwise define this tier. Boards come from
+ *   {@link walkStarBattleBoard} with rejection through the same predicate.
+ *
+ *   That class exists but DECAYS WITH SIDE, so this tier is a small-side one:
+ *   per-walk acceptance is structurally all at n=4 (40/48), 18.8% at n=5, 4.2%
+ *   at n=8, 0.8% at n=10 and 0/72 at n=15 — `unavailable` at n=6 and n>=9,
+ *   including the default n=10, and `unreliable` at n=7-8. The matrix is NOT
+ *   monotonic in side and must not be smoothed. `feasibility.ts` reports it and
+ *   the picker words it honestly; nothing here or in the UI may promise this
+ *   tier at a size the probe calls unavailable.
  * - expert:      base rules place ZERO stars, and the minimum confinement
  *   basis is exactly 2: no single technique suffices, some pair of ideas
  *   does. Rejection on k = 2 over the same walk stream.
