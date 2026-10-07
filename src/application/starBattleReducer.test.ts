@@ -1,13 +1,14 @@
 /**
  * Behaviour tests for the Star Battle play reducer, mirroring the contract
- * pinned in `src/application/gameReducer.test.ts`: correct marks lock, locked
- * cells refuse silently, re-assertion is free, wrong marks cost exactly one
- * life without locking, lives clamp at zero and zero loses, a correct star
- * auto-fills its row, column, colour and 3×3 neighbourhood as locked blanks
- * in the same commit (never overwriting a player mark, never the star's own
- * cell, one pass already the fixpoint), and the win gate runs after the batch
- * AND the fill, so the batch that completes the round wins instead of
- * soft-locking it.
+ * pinned in `src/application/gameReducer.test.ts` where it applies: correct
+ * stars lock, locked cells refuse silently, re-assertion is free, wrong stars
+ * cost exactly one life without locking, blanks — right or wrong — are never
+ * charged, never lock and stay retractable (a blank is a note, not a find),
+ * lives clamp at zero and zero loses, a correct star auto-fills its row,
+ * column, colour and 3×3 neighbourhood as locked blanks in the same commit
+ * (never overwriting a player mark, never the star's own cell, one pass
+ * already the fixpoint), and the win gate runs after the batch AND the fill,
+ * so the batch that completes the round wins instead of soft-locking it.
  */
 import { describe, expect, it } from 'vitest'
 import { STAR_BLANK, STAR_LOCKED, STAR_STAR, STAR_UNMARKED, type StarBattlePuzzle } from '../domain/starBattle'
@@ -129,12 +130,50 @@ describe('createInitialStarBattleState and round/start', () => {
 })
 
 describe('marking contract', () => {
-  it('locks a correct mark and counts it as a streak point', () => {
+  it('locks a correct star and counts it as a streak point', () => {
     const state = apply(start(), [{ index: at(0, 1), mark: 'star' }])
     expect(state.marks[at(0, 1)]).toBe(STAR_LOCKED)
     expect(state.streak).toBe(1)
     expect(state.lives).toBe(5)
     expect(state.mistakes).toBe(0)
+  })
+
+  it('a correct blank stays the player\'s own mark: no lock, no streak, no charge', () => {
+    // (3,3) is blank in the solution and excluded by no star placed here.
+    const state = apply(start(), [{ index: at(3, 3), mark: 'blank' }])
+    expect(state.marks[at(3, 3)]).toBe(STAR_BLANK)
+    expect(state.marks[at(3, 3)]).not.toBe(STAR_LOCKED)
+    expect(state.streak).toBe(0)
+    expect(state.lives).toBe(5)
+    expect(state.mistakes).toBe(0)
+  })
+
+  it('a correct blank stays retractable, and retracting it is free and writes no charge', () => {
+    // The reported bug: right-click to mark a cell blank, click again, and it
+    // would not cancel — because a correct blank locked like a star. The
+    // toggle must go through: blank, then clear back to unmarked, no life
+    // spent either way.
+    let state = apply(start(), [{ index: at(3, 3), mark: 'blank' }])
+    expect(state.marks[at(3, 3)]).toBe(STAR_BLANK)
+    state = apply(state, [{ index: at(3, 3), mark: 'clear' }])
+    expect(state.marks[at(3, 3)]).toBe(STAR_UNMARKED)
+    expect(state.lives).toBe(5)
+    expect(state.mistakes).toBe(0)
+    expect(state.streak).toBe(0)
+  })
+
+  it('a blank toggled off in the SAME batch as it is asserted is inert and free', () => {
+    // A tap-computed toggle can race a drag batch; whichever shape arrives,
+    // blank-then-clear on one cell never charges: clear on an unmarked cell
+    // is inert, and here it lands on the just-asserted blank.
+    const state = apply(start(), [{ index: at(3, 3), mark: 'blank' }])
+    const retracted = apply(state, [{ index: at(3, 3), mark: 'clear' }])
+    expect(retracted.marks[at(3, 3)]).toBe(STAR_UNMARKED)
+    // And a fresh blank assertion after the retract is a first assertion
+    // again — still free, still unlocked.
+    const reblanked = apply(retracted, [{ index: at(3, 3), mark: 'blank' }])
+    expect(reblanked.marks[at(3, 3)]).toBe(STAR_BLANK)
+    expect(reblanked.lives).toBe(5)
   })
 
   it('refuses a later assertion on a locked cell, silently and for free', () => {
@@ -160,20 +199,38 @@ describe('marking contract', () => {
     expect(state.marks[at(2, 3)]).not.toBe(STAR_LOCKED)
   })
 
-  it('correcting a wrong mark costs nothing extra and does not refund', () => {
+  it('correcting a wrong star with a blank costs nothing extra and does not refund', () => {
     const wrong = apply(start(), [{ index: at(0, 0), mark: 'star' }])
     expect(wrong.lives).toBe(4)
     const fixed = apply(wrong, [{ index: at(0, 0), mark: 'blank' }])
     expect(fixed.lives).toBe(4)
     expect(fixed.mistakes).toBe(1)
-    expect(fixed.marks[at(0, 0)]).toBe(STAR_LOCKED)
+    // The correcting blank is a correct blank: free, unlocked, the player's.
+    expect(fixed.marks[at(0, 0)]).toBe(STAR_BLANK)
+    expect(fixed.streak).toBe(0)
   })
 
-  it('a wrong blank on a star cell is charged like a wrong star', () => {
+  it('a wrong blank on a star cell costs nothing: a note is never charged', () => {
+    // (2,0) IS a star cell, so this blank is wrong for the solution — and
+    // still free, still silent, still the player's own mark: an untrue blank
+    // cannot be distinguished from a note, so only a claimed star can cost.
     const state = apply(start(), [{ index: at(2, 0), mark: 'blank' }])
-    expect(state.lives).toBe(4)
-    expect(state.mistakes).toBe(1)
+    expect(state.lives).toBe(5)
+    expect(state.mistakes).toBe(0)
+    expect(state.streak).toBe(0)
     expect(state.marks[at(2, 0)]).toBe(STAR_BLANK)
+    expect(state.marks[at(2, 0)]).not.toBe(STAR_LOCKED)
+  })
+
+  it('a wrong blank after a correct star does not touch the streak', () => {
+    // Streak is visible state: resetting it on a wrong blank would leak that
+    // the cell is a star. The star's streak must survive a wrong blank whole.
+    let state = apply(start(), [{ index: at(0, 1), mark: 'star' }])
+    expect(state.streak).toBe(1)
+    state = apply(state, [{ index: at(2, 0), mark: 'blank' }]) // wrong: free
+    expect(state.streak).toBe(1)
+    expect(state.lives).toBe(5)
+    expect(state.mistakes).toBe(0)
   })
 })
 
@@ -221,7 +278,14 @@ describe('lives and win/loss', () => {
   it('win requires every cell correct and is checked after the batch commits', () => {
     const state = apply(start(), fullSolutionBatch())
     expect(state.status).toBe('won')
-    expect(state.marks.every((mark) => mark === STAR_LOCKED)).toBe(true)
+    // The four stars locked; the twelve typed blanks stayed the player's own
+    // STAR_BLANK and still counted — provenance never gates the win.
+    expect(state.marks[at(0, 1)]).toBe(STAR_LOCKED)
+    expect(state.marks[at(1, 3)]).toBe(STAR_LOCKED)
+    expect(state.marks[at(2, 0)]).toBe(STAR_LOCKED)
+    expect(state.marks[at(3, 2)]).toBe(STAR_LOCKED)
+    expect(state.marks[at(0, 0)]).toBe(STAR_BLANK)
+    expect(state.marks[at(3, 3)]).toBe(STAR_BLANK)
     expect(roundIsComplete(puzzle, state.marks)).toBe(true)
   })
 
@@ -232,6 +296,24 @@ describe('lives and win/loss', () => {
     const rest = fullSolutionBatch().filter((cell) => Math.floor(cell.index / 4) === 3)
     const state = apply(apply(start(), first), rest)
     expect(state.status).toBe('won')
+  })
+
+  it('typed blanks win with no fill: player blanks alone carry the non-star cells', () => {
+    // Type every blank in one batch — no star in it, so no fill runs and
+    // nothing locks — then place the stars. The round must complete with the
+    // non-star cells still typed STAR_BLANK, proving typed blanks count.
+    const blanks = fullSolutionBatch().filter((cell) => cell.mark === 'blank')
+    const stars = fullSolutionBatch().filter((cell) => cell.mark === 'star')
+    let state = apply(start(), blanks)
+    expect(state.status).toBe('playing')
+    expect(state.marks.every((mark) => mark === STAR_BLANK || mark === STAR_UNMARKED)).toBe(true)
+    state = apply(state, stars)
+    expect(state.status).toBe('won')
+    // The star batch's fill found every cell already marked and wrote nothing:
+    // the win rests on the player's typed blanks, not on locked fill writes.
+    expect(state.marks[at(0, 0)]).toBe(STAR_BLANK)
+    expect(state.marks[at(3, 3)]).toBe(STAR_BLANK)
+    expect(roundIsComplete(puzzle, state.marks)).toBe(true)
   })
 })
 
@@ -281,12 +363,15 @@ describe('auto-fill on a correct star', () => {
 
   it('a correct blank the player typed is not overwritten either', () => {
     let state = apply(start(), [{ index: at(3, 3), mark: 'blank' }])
-    expect(state.marks[at(3, 3)]).toBe(STAR_LOCKED)
+    expect(state.marks[at(3, 3)]).toBe(STAR_BLANK)
     state = apply(state, [{ index: at(0, 1), mark: 'star' }])
     // (3,3) is not excluded by (0,1), but (3,1) is — assert the general rule
-    // on a cell the fill DOES cover: the player's lock stands.
+    // on a cell the fill DOES cover: the player's blank stands, still the
+    // player's own mark and still retractable.
     state = apply(state, [{ index: at(1, 3), mark: 'star' }])
-    expect(state.marks[at(3, 3)]).toBe(STAR_LOCKED)
+    expect(state.marks[at(3, 3)]).toBe(STAR_BLANK)
+    const retracted = apply(state, [{ index: at(3, 3), mark: 'clear' }])
+    expect(retracted.marks[at(3, 3)]).toBe(STAR_UNMARKED)
   })
 
   it('the fill is idempotent: a second identical batch writes nothing and reports the identical state', () => {
@@ -406,10 +491,10 @@ describe('retraction', () => {
   it('a round that retracts and then re-asserts correctly returns to its previous cost', () => {
     let state = apply(start(), [{ index: at(0, 0), mark: 'star' }]) // wrong: 5 -> 4
     state = apply(state, [{ index: at(0, 0), mark: 'clear' }]) // free, no refund: 4
-    state = apply(state, [{ index: at(0, 0), mark: 'blank' }]) // correct: locks, no charge: 4
-    expect(state.marks[at(0, 0)]).toBe(STAR_LOCKED)
+    state = apply(state, [{ index: at(0, 0), mark: 'blank' }]) // correct blank: free, unlocked: 4
+    expect(state.marks[at(0, 0)]).toBe(STAR_BLANK)
     expect(state.lives).toBe(4)
-    expect(state.streak).toBe(1)
+    expect(state.streak).toBe(0)
   })
 
   it('retract on a locked cell is inert and reports affectedCount 0', () => {
@@ -545,6 +630,20 @@ describe('previewStarMarkBatch', () => {
     })
     expect(state.lives).toBe(5)
     expect(Array.from(state.marks)).toEqual(Array.from({ length: 16 }, () => STAR_UNMARKED))
+  })
+
+  it('a wrong blank previews as affected but never as a cost', () => {
+    // (2,0) is a star cell: a blank there is wrong, and still free — the
+    // preview must not charge what the commit would not charge.
+    const cells = [{ index: at(2, 0), mark: 'blank' as const }]
+    const preview = previewStarMarkBatch(start(), cells)
+    expect(preview).toEqual({
+      valid: true,
+      affectedCount: 1,
+      livesLost: 0,
+      projectedLives: 5,
+      reachesZero: false,
+    })
   })
 
   it('reports reachesZero when the drag would drain the lives', () => {
