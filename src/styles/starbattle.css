@@ -377,6 +377,15 @@
   line-height: var(--lh-small);
 }
 
+/* The live tier's contract, said in words under the control — same voice as
+   the availability note, since both are the control's fine print. */
+.mg-star-difficulty__description {
+  margin: var(--sp-1) 0 0;
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
 /* The failure card's last word: the toolbar above it is the real escape. */
 .mg-star-failure__note {
   margin: var(--sp-3) 0 0;

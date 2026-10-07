@@ -700,6 +700,93 @@ describe('StarBattleSurface — measured tier availability', () => {
   })
 })
 
+describe('StarBattleSurface — tier descriptions', () => {
+  // Pinned verbatim, both locales: a return of the stale pre-re-tier wording
+  // ("exactly one confinement technique", steady as a technique tier) fails
+  // these strings, not a reviewer noticing.
+  const EN: Record<(typeof STAR_DIFFICULTIES)[number], string> = {
+    starter: 'The placement rules alone solve it; the chains are short.',
+    steady: 'The placement rules alone solve it too, but the chains run long — routine work throughout.',
+    challenging:
+      'One idea beyond the rules finishes it — and not the free one: no single colour owns a whole row or column to hand you the line.',
+    expert: 'Two ideas beyond the rules are needed; either one alone is not enough.',
+    contradiction:
+      'No set of ideas suffices on its own; the board yields only to a proof by contradiction.',
+  }
+  const ZH: Record<(typeof STAR_DIFFICULTIES)[number], string> = {
+    starter: '只靠摆放规则就能解开，链条很短。',
+    steady: '只靠摆放规则也能解开，只是链条很长——全程都是常规推理。',
+    challenging: '需要规则之外的一个想法才能解开——但不是白送的那种：不会有颜色独占整行或整列，把答案直接交到你手上。',
+    expert: '需要规则之外的两个想法，只有一个不够。',
+    contradiction: '任何技巧组合单独都不够，只能靠反证法解开。',
+  }
+
+  it('states the live tier contract under the control, in English', () => {
+    for (const tier of STAR_DIFFICULTIES) {
+      render({ difficulty: tier })
+      expect(container.querySelector('[data-testid="star-tier-description"]')?.textContent).toBe(
+        EN[tier],
+      )
+    }
+  })
+
+  it('states the live tier contract under the control, in Chinese', () => {
+    for (const tier of STAR_DIFFICULTIES) {
+      render({ locale: 'zh', difficulty: tier })
+      expect(container.querySelector('[data-testid="star-tier-description"]')?.textContent).toBe(
+        ZH[tier],
+      )
+    }
+  })
+
+  it("steady is not described as a technique tier; challenging's one idea is never the whole-line freebie", () => {
+    render({ difficulty: 'steady' })
+    const steadyText = container.querySelector('[data-testid="star-tier-description"]')?.textContent ?? ''
+    expect(steadyText).not.toMatch(/technique|confinement|idea/i)
+    render({ difficulty: 'challenging' })
+    const challengingText =
+      container.querySelector('[data-testid="star-tier-description"]')?.textContent ?? ''
+    expect(challengingText).not.toMatch(/confinement|c1|c2/)
+    expect(challengingText).toContain('whole row or column')
+  })
+
+  it('no description implies the technique rotates board to board', () => {
+    for (const tier of STAR_DIFFICULTIES) {
+      render({ difficulty: tier })
+      const text = container.querySelector('[data-testid="star-tier-description"]')?.textContent ?? ''
+      expect(text).not.toMatch(/each board|every board|varies|different technique|每局|每盘|各不相同/i)
+    }
+  })
+
+  it('with no signal the description still states the tier — the pre-signal behaviour plus the words', () => {
+    render()
+    expect(container.querySelector('[data-testid="star-tier-description"]')?.textContent).toBe(
+      EN.starter,
+    )
+    expect(container.querySelector('[data-testid="star-tier-note"]')).toBeNull()
+  })
+
+  it('an unavailable live tier hides the description: the honest note alone is the truth there', () => {
+    render({
+      difficulty: 'challenging',
+      tierAvailability: () => ({ status: 'unavailable', samples: 1200, hits: 0 }),
+    })
+    expect(container.querySelector('[data-testid="star-tier-description"]')).toBeNull()
+    expect(container.querySelector('[data-testid="star-tier-note"]')?.textContent).toContain('1200')
+  })
+
+  it('an unreliable live tier keeps the description and adds the thin-evidence note', () => {
+    render({
+      difficulty: 'challenging',
+      tierAvailability: () => ({ status: 'unreliable', samples: 48, hits: 2 }),
+    })
+    expect(container.querySelector('[data-testid="star-tier-description"]')?.textContent).toBe(
+      EN.challenging,
+    )
+    expect(container.querySelector('[data-testid="star-tier-note"]')?.textContent).toContain('2')
+  })
+})
+
 describe('StarBattleSurface — chrome', () => {
   it('shows the lives as pips, spent ones dimmed, with a spoken total', () => {
     render({ lives: 3, maxLives: 5 })
