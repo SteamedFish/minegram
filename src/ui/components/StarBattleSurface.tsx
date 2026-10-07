@@ -206,12 +206,16 @@ interface StarCopy {
    */
   readonly difficultyDescriptions: Record<StarDifficulty, string>
   readonly size: {
-    /** The radiogroup's accessible name; the options are the numerals themselves. */
+    /** The group's visible label; the options are the numerals themselves. */
     readonly label: string
+    /** One line saying what N means here: an N × N grid carrying N stars. */
+    readonly hint: string
   }
   readonly maxLives: {
-    /** The radiogroup's accessible name; the options are the numerals themselves. */
+    /** The group's visible label; the options are the numerals themselves. */
     readonly label: string
+    /** One line on the asymmetry: a wrong star costs a life, a wrong empty does not. */
+    readonly hint: string
   }
   /** The rules and legend block: the rules, what the player's marks mean, the gestures. */
   readonly rules: {
@@ -306,8 +310,14 @@ const en: StarCopy = {
     expert: 'Two ideas beyond the rules are needed; either one alone is not enough.',
     contradiction: 'No set of ideas suffices on its own; the board yields only to a proof by contradiction.',
   },
-  size: { label: 'Board size' },
-  maxLives: { label: 'Starting lives' },
+  size: {
+    label: 'Board size',
+    hint: 'An N × N grid carrying N stars — larger is more stars to place, not just more cells.',
+  },
+  maxLives: {
+    label: 'Starting lives',
+    hint: 'A wrong star costs one life; a wrong empty costs nothing — clear it and move on.',
+  },
   rules: {
     label: 'How to play',
     items: [
@@ -392,8 +402,14 @@ const zhCN: StarCopy = {
     expert: '需要规则之外的两个想法，只有一个不够。',
     contradiction: '任何技巧组合单独都不够，只能靠反证法解开。',
   },
-  size: { label: '棋盘尺寸' },
-  maxLives: { label: '初始生命' },
+  size: {
+    label: '棋盘尺寸',
+    hint: 'N × N 的棋盘要放 N 颗星——变大不只是格子变多，要放的星也更多。',
+  },
+  maxLives: {
+    label: '初始生命',
+    hint: '星标错扣一条命；空白标错不扣命，随时可以直接改。',
+  },
   rules: {
     label: '玩法',
     items: [
@@ -1041,7 +1057,10 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
             the live size, that is said in words under the control: a marked
             pill alone would look like a rendering bug. */}
         <div className="mg-star-difficulty" data-testid="star-difficulty">
-          <div className="mg-seg" role="radiogroup" aria-label={copy.difficultyLabel} id="mg-star-difficulty">
+          <span className="mg-field__label" id="mg-star-difficulty-label">
+            {copy.difficultyLabel}
+          </span>
+          <div className="mg-seg" role="radiogroup" aria-labelledby="mg-star-difficulty-label" id="mg-star-difficulty">
             {STAR_DIFFICULTIES.map((tier) => {
               const optionId = `mg-star-difficulty-${tier}`
               const availability = availabilityOf(tier)
@@ -1111,6 +1130,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
           <SegmentedControl
             id="mg-star-size"
             label={copy.size.label}
+            hint={copy.size.hint}
             value={String(props.side)}
             options={boardSizes(props.minSide, props.maxSide).map((side) => ({
               value: String(side),
@@ -1128,6 +1148,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
           <SegmentedControl
             id="mg-star-max-lives"
             label={copy.maxLives.label}
+            hint={copy.maxLives.hint}
             value={String(props.maxLives)}
             options={boardSizes(props.minLives, props.maxLivesCeiling).map((lives) => ({
               value: String(lives),

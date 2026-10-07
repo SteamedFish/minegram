@@ -418,6 +418,14 @@
   gap: var(--sp-1);
 }
 
+/* The group's own column — visible label above the pills, optional hint
+   below. The same grid rhythm as .mg-field, so the segmented control reads
+   as one of the form primitives rather than a bare row of pills. */
+.mg-seg-group {
+  display: grid;
+  gap: var(--sp-1);
+}
+
 .mg-seg__item {
   display: contents;
 }

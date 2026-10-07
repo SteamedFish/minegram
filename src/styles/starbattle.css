@@ -277,7 +277,11 @@
 .mg-star-toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  /* Each control is now a labelled column (label, pills, fine print), and
+     those columns share one chip row only if they share the label row:
+     centre alignment would park each column's pills wherever its own height
+     put them. Start alignment keeps every group's label on one baseline. */
+  align-items: start;
   gap: var(--sp-2) var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   background: var(--surface-1);
@@ -330,15 +334,18 @@
 }
 
 /* Board size: same segmented idiom as difficulty, one chip per side. The
-   dozen numerals get the tighter inline rhythm so the group sits beside its
-   sibling on one toolbar row until the flex wrap takes over. */
-.mg-star-size {
-  display: flex;
-  align-items: center;
-}
-
+   dozen numerals get the tighter inline rhythm so the group shares a toolbar
+   row with its labelled siblings until the flex wrap takes over. */
 .mg-star-size .mg-seg__label {
   padding-inline: var(--sp-1);
+}
+
+/* Difficulty is the hand-rolled sibling of the shared SegmentedControl (it
+   adds per-option availability), so it wears the same labelled-column
+   structure: visible group label, pills, then the fine print beneath. */
+.mg-star-difficulty {
+  display: grid;
+  gap: var(--sp-1);
 }
 
 /* A tier the engine cannot print at the current size: legible but not
@@ -369,9 +376,11 @@
 }
 
 /* Said under the difficulty control when the live tier is unavailable at the
-   live size: a disabled pill alone would read as a rendering bug. */
+   live size: a disabled pill alone would read as a rendering bug. The grid
+   gap above supplies the space; the margin stays at zero so it is not added
+   twice. */
 .mg-star-difficulty__note {
-  margin: var(--sp-1) 0 0;
+  margin: 0;
   color: var(--ink-2);
   font-size: var(--fs-small);
   line-height: var(--lh-small);
@@ -380,7 +389,7 @@
 /* The live tier's contract, said in words under the control — same voice as
    the availability note, since both are the control's fine print. */
 .mg-star-difficulty__description {
-  margin: var(--sp-1) 0 0;
+  margin: 0;
   color: var(--ink-2);
   font-size: var(--fs-small);
   line-height: var(--lh-small);
@@ -735,7 +744,8 @@
     row-gap: var(--sp-2);
   }
 
-  .mg-star-toolbar .mg-seg {
+  .mg-star-toolbar .mg-seg-group,
+  .mg-star-toolbar .mg-star-difficulty {
     inline-size: 100%;
   }
 
