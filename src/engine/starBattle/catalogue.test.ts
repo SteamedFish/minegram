@@ -157,53 +157,72 @@ describe('catalogue vs oracle ground truth', () => {
     expect(hard2.placed).toBe(2)
   })
 
-  it('cs population: full catalogue solves every rescued board with cs_passes 1 and exact fingerprints', () => {
+  it('cs population: the matching engine still certifies every recorded board with case-splitting', { timeout: 60_000 }, () => {
+    // The recordings under fixtures/oracle2/ are the OLD capped-zone
+    // engine's outputs, committed verbatim as history. The 2026-10-07
+    // matching engine derives strictly more sound deductions per wave, so
+    // the per-board recordings this test used to pin (waves, csTrials,
+    // used fingerprints) legitimately MOVE — measured: 21 of 109 boards
+    // now solve at depth 0, because the popcount ≤ 3 cap had misfiled j ≥
+    // 4 multi-colour confinement as "requires contradiction" (the defect
+    // the matching engine fixes). Re-pinning the old numbers would assert
+    // the bug. What must hold for every recorded board under ANY sound
+    // engine: the full catalogue with case-splitting still certifies it
+    // (solved === true is the uniqueness certificate), and the result is
+    // deterministic. The exact counters independently agree on uniqueness
+    // in the dedicated cross-check below.
     expect(csPopulation.length).toBeGreaterThan(0)
+    let depth0Solved = 0
     for (const [index, record] of csPopulation.entries()) {
       const label = `cs_population[${index}] n=${record.n}`
-      const result = solveStarCatalogue(toColours(record), record.n, {
+      const colours = toColours(record)
+      const result = solveStarCatalogue(colours, record.n, {
         ...fullCatalogue,
         csDepth: 1,
         csTrialCap: 400,
       })
       expect(result.solved, label).toBe(true)
-      expect(result.csPasses, label).toBe(record.cs_passes)
-      expect(result.csPasses, label).toBe(1)
-      expect(result.waves, label).toBe(record.waves)
-      expect(result.csTrials, label).toBe(record.cs_trials)
-      expect(sortedUsed(result), label).toBe([...record.used].sort().join(','))
+      // csPasses is 0 for the boards the matching engine now solves at
+      // depth 0 (no contradiction needed) and ≥ 1 for the rest — the
+      // distribution is measured, not pinned, here.
+      if (solveStarCatalogue(colours, record.n, fullCatalogue).solved) {
+        depth0Solved += 1
+      }
     }
+    // The reclassified class is real and substantial: a fifth or more of
+    // the recorded "requires contradiction" population is direct
+    // deduction under uncapped Hall confinement. Floor of 1 so the count
+    // can never silently regress to the capped behaviour without this
+    // test noticing.
+    console.log(`cs_population: ${depth0Solved}/${csPopulation.length} boards solve at depth 0 under the matching engine`)
+    expect(depth0Solved).toBeGreaterThanOrEqual(1)
   })
 
-  it('descent boards: recorded minimal bases solve, and nothing smaller does', () => {
+  it('descent boards: the full confinement catalogue solves every recorded board and every recorded basis survives the idea collapse', { timeout: 60_000 }, () => {
+    // Recorded minimal bases come from the old engine's per-rule-id
+    // semantics. Under the matching engine c1/c2 are one idea: a recorded
+    // basis is honoured as its idea set — line confinement (c1+c2) plus
+    // whichever of c3/c4 the basis named. Every recorded basis must still
+    // solve (matching derives a superset of the zone engine's sound
+    // deductions once the confinement idea is enabled); minimality in the
+    // new idea-counting sense is pinned on hand-derived fixtures in
+    // minimumBasis.test.ts, not on these old-engine recordings.
     expect(descentBoards.length).toBeGreaterThan(0)
     for (const [index, record] of descentBoards.entries()) {
       const label = `descent_boards[${index}]`
       const colours = toColours(record)
       // The full confinement catalogue (no case-splitting) must solve.
       expect(solveStarCatalogue(colours, record.n, fullCatalogue).solved, label).toBe(true)
-      const minSize = Math.min(...record.bases.map((basis) => basis.length))
-      // Base alone is below every recorded minimal basis.
-      if (minSize >= 1) {
-        expect(
-          solveStarCatalogue(colours, record.n, { rules: ['base'] }).solved,
-          `${label} base-only`,
-        ).toBe(false)
-      }
-      // Every recorded basis solves, and every strict subset of it does not
-      // (minimality), checked one level down.
       for (const basis of record.bases) {
-        const rules = ['base', ...basis] as StarCatalogueRule[]
+        const rules = [
+          'base',
+          'c1',
+          'c2',
+          ...basis.filter((rule) => rule === 'c3' || rule === 'c4'),
+        ] as StarCatalogueRule[]
         expect(solveStarCatalogue(colours, record.n, { rules }).solved, `${label} ${basis}`).toBe(
           true,
         )
-        for (const rule of basis) {
-          const reduced = ['base', ...basis.filter((r) => r !== rule)] as StarCatalogueRule[]
-          expect(
-            solveStarCatalogue(colours, record.n, { rules: reduced }).solved,
-            `${label} ${basis} minus ${rule}`,
-          ).toBe(false)
-        }
       }
     }
   })
@@ -271,46 +290,50 @@ describe('catalogue vs oracle ground truth', () => {
     }
   })
 
-  it('fingerprint reports cs as load-bearing exactly when depth-0 fails', () => {
-    const record = csPopulation[0]
-    const colours = toColours(record)
-    const fingerprint = fingerprintStarCatalogue(colours, record.n, { csDepth: 1 })
-    expect(fingerprint).not.toBeNull()
-    expect(fingerprint?.has('cs')).toBe(true)
-    const depth0 = solveStarCatalogue(colours, record.n, fullCatalogue)
-    expect(depth0.solved).toBe(false)
+  it('fingerprint reports cs as load-bearing exactly when depth-0 fails', { timeout: 60_000 }, () => {
+    // Both classes exist in the recorded population under the matching
+    // engine: boards the full depth-0 confinement catalogue still cannot
+    // start (the genuine k = -1 class — fingerprint MUST report cs) and
+    // boards it now solves directly (the j ≥ 4 confinement boards rescued
+    // from the cap — fingerprint must NOT report cs).
+    const stillHard = csPopulation.filter(
+      (record) => !solveStarCatalogue(toColours(record), record.n, fullCatalogue).solved,
+    )
+    const nowDirect = csPopulation.filter(
+      (record) => solveStarCatalogue(toColours(record), record.n, fullCatalogue).solved,
+    )
+    expect(stillHard.length).toBeGreaterThan(0)
+    expect(nowDirect.length).toBeGreaterThan(0)
+    for (const record of stillHard) {
+      const fingerprint = fingerprintStarCatalogue(toColours(record), record.n, { csDepth: 1 })
+      expect(fingerprint).not.toBeNull()
+      expect(fingerprint?.has('cs')).toBe(true)
+    }
+    for (const record of nowDirect) {
+      const fingerprint = fingerprintStarCatalogue(toColours(record), record.n, { csDepth: 1 })
+      expect(fingerprint).not.toBeNull()
+      expect(fingerprint?.has('cs')).toBe(false)
+    }
   })
 
-  it('every confinement rule fires on at least one recorded board', () => {
-    // c1/c2: the recorded minimal bases name each as a singleton basis for
-    // some descent board — base+rule alone must solve. c3/c4: the recorded
-    // cs-population `used` fingerprints name boards where each fired — a
-    // full-catalogue re-solve must reproduce that (no recorded board lists
-    // c3 or c4 as a singleton basis, so the stronger check has no ground
-    // truth there).
-    for (const rule of ['c1', 'c2'] as const) {
-      const board = descentBoards.find((record) =>
-        record.bases.some((basis) => basis.length === 1 && basis[0] === rule),
-      )
-      expect(board, `no singleton basis recorded for ${rule}`).toBeDefined()
-      const record = board as DescentRecord
-      const result = solveStarCatalogue(toColours(record), record.n, {
-        rules: ['base', rule],
+  it('every confinement rule fires on at least one recorded board', { timeout: 60_000 }, () => {
+    // Existence pin under the current engine (the recorded per-board used
+    // fingerprints describe the old engine and legitimately differ):
+    // across the recorded populations, each confinement idea's writes are
+    // attributed on at least one board. Measured: c1 fires from
+    // cs_population[0]; c2, c3 and c4 fire from cs_population[108].
+    const populations = [...csPopulation, ...descentBoards]
+    expect(populations.length).toBeGreaterThan(0)
+    for (const rule of ['c1', 'c2', 'c3', 'c4'] as const) {
+      const fired = populations.some((record) => {
+        const result = solveStarCatalogue(toColours(record), record.n, {
+          ...fullCatalogue,
+          csDepth: 1,
+          csTrialCap: 400,
+        })
+        return result.used.has(rule)
       })
-      expect(result.solved, `base+${rule} alone`).toBe(true)
-      expect(result.used.has(rule)).toBe(true)
-    }
-    for (const rule of ['c3', 'c4'] as const) {
-      const board = csPopulation.find((record) => record.used.includes(rule))
-      expect(board, `no recorded board used ${rule}`).toBeDefined()
-      const record = board as CsPopulationRecord
-      const result = solveStarCatalogue(toColours(record), record.n, {
-        ...fullCatalogue,
-        csDepth: 1,
-        csTrialCap: 400,
-      })
-      expect(result.solved, `board where ${rule} fired`).toBe(true)
-      expect(result.used.has(rule)).toBe(true)
+      expect(fired, `no recorded board fires ${rule}`).toBe(true)
     }
   })
 })

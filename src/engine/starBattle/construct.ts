@@ -64,11 +64,20 @@
  *   old 'challenging' behaviour and wave bands, moved down one step.
  * - challenging: base rules place ZERO stars, and the minimum confinement
  *   basis ({@link measureMinimumBasis}) is exactly 1: one catalogue
- *   technique (c1/c2/c3/c4, any single one) is necessary and sufficient.
- *   Boards come from {@link walkStarBattleBoard} with rejection on k.
+ *   technique idea (line confinement, box confinement, or shadow) is
+ *   necessary and sufficient. Boards come from {@link walkStarBattleBoard}
+ *   with rejection on k.
  * - expert:      base rules place ZERO stars, and the minimum confinement
- *   basis is exactly 2: no single technique suffices, some pair does.
- *   Rejection on k = 2 over the same walk stream.
+ *   basis is exactly 2: no single technique suffices, some pair of ideas
+ *   does. Rejection on k = 2 over the same walk stream.
+ * - contradiction: the FULL depth-0 confinement catalogue (base + c1..c4)
+ *   places ZERO stars — no pure-deduction subset can start the board
+ *   (k = -1) — and the csDepth:1 certificate still solves it. Boards come
+ *   from the walk with its easiness meter switched to 'confinement', so
+ *   the descent stops only when every confinement technique together
+ *   places nothing; the k = -1 target is then verified by the explicit
+ *   16-subset enumeration inside {@link measureMinimumBasis}, never
+ *   inferred from the certificate (the acceptance trap).
  *
  * Construction wave counts (frozen-state semantics, 2026-10-07, oracle
  * lane):
@@ -163,14 +172,21 @@ import { propagateStarBoard } from './propagate'
 import { StarWalkBudgetExhaustedError, walkStarBattleBoard } from './walk'
 
 /**
- * The four difficulty tiers. 'starter' and 'steady' are CONSTRUCTION
+ * The five difficulty tiers. 'starter' and 'steady' are CONSTRUCTION
  * tiers: the painted board itself obeys the validity rule and the base
- * rules solve it. 'challenging' and 'expert' are TECHNIQUE tiers: the
- * board is found by descent ({@link walkStarBattleBoard}) and the base
- * rules place nothing on it; what separates the two is the minimum
- * confinement basis ({@link measureMinimumBasis}), 1 vs 2.
+ * rules solve it. 'challenging', 'expert' and 'contradiction' are
+ * TECHNIQUE tiers: the board is found by descent
+ * ({@link walkStarBattleBoard}) and the base rules place nothing on it;
+ * what separates them is the minimum confinement basis
+ * ({@link measureMinimumBasis}): 1, 2, and -1 (no pure-deduction subset
+ * solves; the board requires contradiction).
  */
-export type StarDifficulty = 'starter' | 'steady' | 'challenging' | 'expert'
+export type StarDifficulty =
+  | 'starter'
+  | 'steady'
+  | 'challenging'
+  | 'expert'
+  | 'contradiction'
 
 /** All tiers in progression order. */
 export const STAR_DIFFICULTIES: readonly StarDifficulty[] = [
@@ -178,14 +194,22 @@ export const STAR_DIFFICULTIES: readonly StarDifficulty[] = [
   'steady',
   'challenging',
   'expert',
+  'contradiction',
 ]
 
 /** The construction tiers: solved by the base rules alone, painted directly. */
 type StarConstructionDifficulty = 'starter' | 'steady'
 
-/** True for the technique tiers ('challenging' | 'expert'). */
-function isTechniqueTier(difficulty: StarDifficulty): difficulty is 'challenging' | 'expert' {
-  return difficulty === 'challenging' || difficulty === 'expert'
+/** The technique tiers: descended, then rejection-sampled on the basis k. */
+type StarTechniqueDifficulty = 'challenging' | 'expert' | 'contradiction'
+
+/** True for the technique tiers ('challenging' | 'expert' | 'contradiction'). */
+function isTechniqueTier(difficulty: StarDifficulty): difficulty is StarTechniqueDifficulty {
+  return (
+    difficulty === 'challenging' ||
+    difficulty === 'expert' ||
+    difficulty === 'contradiction'
+  )
 }
 
 export interface StarGenerationRequest {
@@ -204,6 +228,16 @@ export interface StarGeneratedBoard {
    */
   readonly waves: number
   readonly difficulty: StarDifficulty
+  /**
+   * Case-split passes and assumption trials the accepting certificate
+   * used. ABSENT for the construction tiers (their acceptance is the base
+   * propagation certificate — no case-splitting runs). Reported, with the
+   * full measured distribution, for the technique tiers; the
+   * 'contradiction' tier's boards are exactly the k = -1 class, so these
+   * two numbers are the honest cost meter of "requires contradiction".
+   */
+  readonly csPasses?: number
+  readonly csTrials?: number
 }
 
 /**
@@ -233,11 +267,14 @@ const TECHNIQUE_TIER_WALL_CLOCK_MS = 30_000
 
 /**
  * The minimum-basis target per technique tier: 'challenging' boards need
- * exactly one confinement technique, 'expert' boards need exactly two.
+ * exactly one confinement technique idea, 'expert' boards need exactly
+ * two, 'contradiction' boards need none to suffice (k = -1: only
+ * case-splitting solves them).
  */
-const TECHNIQUE_TIER_TARGET: Readonly<Record<'challenging' | 'expert', number>> = {
+const TECHNIQUE_TIER_TARGET: Readonly<Record<StarTechniqueDifficulty, number>> = {
   challenging: 1,
   expert: 2,
+  contradiction: -1,
 }
 
 /**
@@ -249,7 +286,7 @@ const TECHNIQUE_TIER_TARGET: Readonly<Record<'challenging' | 'expert', number>> 
 export class StarTechniqueTierBudgetExhaustedError extends Error {
   readonly n: number
   readonly seed: number
-  readonly difficulty: 'challenging' | 'expert'
+  readonly difficulty: StarTechniqueDifficulty
   readonly targetK: number
   readonly walks: number
   /** Minimum basis of the last rejected walk, when one completed. */
@@ -260,7 +297,7 @@ export class StarTechniqueTierBudgetExhaustedError extends Error {
   constructor(fields: {
     readonly n: number
     readonly seed: number
-    readonly difficulty: 'challenging' | 'expert'
+    readonly difficulty: StarTechniqueDifficulty
     readonly targetK: number
     readonly walks: number
     readonly lastK: number | null
@@ -540,10 +577,11 @@ function regionsConnected(colours: Uint8Array, n: number): boolean {
  * violation (the certificate failing on a construction the theorem says
  * cannot fail).
  *
- * Technique tiers ('challenging', 'expert') descend to boards the base
- * rules cannot place a single star on and reject-sample on the minimum
- * confinement basis (1 or 2); see {@link generateTechniqueTierBoard} for
- * the acceptance gates and the typed budget failure.
+ * Technique tiers ('challenging', 'expert', 'contradiction') descend to
+ * boards the base rules cannot place a single star on and reject-sample on
+ * the minimum confinement basis (1, 2, or -1); see
+ * {@link generateTechniqueTierBoard} for the acceptance gates and the
+ * typed budget failure.
  *
  * Determinism: the same (n, seed, difficulty) always yields byte-identical
  * `colours` and `solution`. Every random draw comes from the seeded RNG in
@@ -658,13 +696,14 @@ function generateConstructionBoard(request: {
 }
 
 /**
- * The technique-tier generator ('challenging', 'expert'): rejection
- * sampling over {@link walkStarBattleBoard} on the minimum confinement
- * basis. Each walk already descends to a board the base rules cannot
- * start; this loop keeps walking (seeded, derived stream) until one lands
- * on the tier's target k. A walk that exhausts ITS own budget is a
- * rejected sample, not a failure — only this loop's budget is the tier's
- * contract.
+ * The technique-tier generator ('challenging', 'expert', 'contradiction'):
+ * rejection sampling over {@link walkStarBattleBoard} on the minimum
+ * confinement basis. Each walk already descends to a board its easiness
+ * meter cannot start ('base' for challenging/expert, 'confinement' for
+ * contradiction); this loop keeps walking (seeded, derived stream) until
+ * one lands on the tier's target k. A walk that exhausts ITS own budget
+ * is a rejected sample, not a failure — only this loop's budget is the
+ * tier's contract.
  *
  * Acceptance re-verifies every gate with this module's own instruments,
  * independent of the walk's internal checks:
@@ -690,7 +729,7 @@ function generateConstructionBoard(request: {
 function generateTechniqueTierBoard(request: {
   readonly n: number
   readonly seed: number
-  readonly difficulty: 'challenging' | 'expert'
+  readonly difficulty: StarTechniqueDifficulty
 }): StarGeneratedBoard {
   const { n, seed, difficulty } = request
   const targetK = TECHNIQUE_TIER_TARGET[difficulty]
@@ -720,6 +759,18 @@ function generateTechniqueTierBoard(request: {
         // 'steady' — the deepest CONSTRUCTION tier — seeds the descent.
         // Seeding from a technique tier would recurse back into this loop.
         seedDifficulty: 'steady',
+        // The contradiction tier descends on the confinement meter: stop
+        // only when EVERY pure-deduction technique together places
+        // nothing. The k = -1 target is then verified explicitly below.
+        meter: difficulty === 'contradiction' ? 'confinement' : 'base',
+        // Wall clock: the tier's own budget, checked between walks, is the
+        // only timing gate the acceptance path may see. The walk's default
+        // 5 s budget would let a slow walk give up mid-search under CPU
+        // contention and this loop would then accept a DIFFERENT walk —
+        // a timing-dependent board. A walk that completes always produces
+        // its seeded board; a walk that cannot fit the tier budget ends in
+        // the typed error (no board), never an off-seed one.
+        wallClockMs: TECHNIQUE_TIER_WALL_CLOCK_MS,
       })
     } catch (error) {
       if (error instanceof StarWalkBudgetExhaustedError) {
@@ -761,6 +812,13 @@ function generateTechniqueTierBoard(request: {
     }
 
     // Gate (d): the difficulty target — the minimum confinement basis.
+    // THE ACCEPTANCE TRAP, enforced structurally: `measureMinimumBasis`
+    // enumerates ALL 16 confinement subsets explicitly and verifies their
+    // solving family is upward-closed (throwing on violation) — k is never
+    // inferred from the full-catalogue certificate above, which with a
+    // non-monotone engine would prove nothing about subset solves. For
+    // 'contradiction' the walk's meter guarantees the deepest subset
+    // stalls; the enumeration here is the explicit, independent check.
     const basis = measureMinimumBasis(walked.colours, n)
     lastK = basis.k
     if (basis.k !== targetK) {
@@ -776,7 +834,15 @@ function generateTechniqueTierBoard(request: {
     assertStarBattlePuzzle(puzzle)
     // `waves` here is the full-catalogue wave count of the accepted board —
     // the base subset places nothing on a technique tier by definition.
-    return Object.freeze({ puzzle, waves: certified.waves, difficulty })
+    // `csPasses`/`csTrials` travel with the board: the measured cost of
+    // the certificate, reported for the difficulty grader.
+    return Object.freeze({
+      puzzle,
+      waves: certified.waves,
+      difficulty,
+      csPasses: certified.csPasses,
+      csTrials: certified.csTrials,
+    })
   }
 
   throw new StarTechniqueTierBudgetExhaustedError({

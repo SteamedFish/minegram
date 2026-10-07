@@ -34,12 +34,16 @@
  *        counter (`count.ts`) stays out of the hot path; it is the
  *        independent cross-check the tests run, not a generator input,
  *        AND
- *    (c) the base rule subset alone places no MORE stars than before —
- *        the descent condition that crosses the moat of unsolvable states
- *        plain drift cannot leave.
- * 4. Stop when the base subset places zero stars and the full catalogue
+ *    (c) the easiness meter places no MORE stars than before — the
+ *        descent condition that crosses the moat of unsolvable states
+ *        plain drift cannot leave. The meter is selectable: 'base' (stars
+ *        the production solver places — the 'challenging'/'expert' tiers)
+ *        or 'confinement' (stars the full depth-0 confinement catalogue
+ *        places — the 'contradiction' tier).
+ * 4. Stop when the meter places zero stars and the full catalogue
  *    still solves: that board requires a technique the production solver
- *    does not have.
+ *    does not have (or, under the 'confinement' meter, that NO pure
+ *    deduction technique can start — a k = -1 candidate).
  *
  * Budget semantics (load-bearing, generation contract): the search is
  * bounded by a mutation-attempt cap and a wall-clock cap. Exceeding either
@@ -129,10 +133,25 @@ export interface StarWalkRequest {
   readonly seed: RandomSeed
   /**
    * Difficulty tier of the seed board from {@link generateStarBattle}.
-   * 'challenging' (default) gives the richest construction to descend
-   * from; the tier does not constrain the result, only the starting point.
+   * 'steady' (default) gives the deepest CONSTRUCTION tier to descend
+   * from — a construction board has every star base-placeable, so the
+   * descent has height to lose. The tier does not constrain the result,
+   * only the starting point. (Defaults to 'steady' since 'challenging'
+   * became a technique tier whose boards already have base-placed 0.)
    */
   readonly seedDifficulty?: StarDifficulty
+  /**
+   * The descent's easiness meter: which solver measures "how much of the
+   * board is already forced". 'base' (default) — stars placed by the base
+   * rule subset alone; the walk stops when the production solver can
+   * start nothing, which is what the 'challenging'/'expert' tiers need.
+   * 'confinement' — stars placed by the FULL depth-0 confinement catalogue
+   * (base + c1..c4); the walk stops when even every confinement technique
+   * together starts nothing, which is what the 'contradiction' tier
+   * targets (k = -1). Either way gate (c) — the csDepth:1 certificate —
+   * is unchanged.
+   */
+  readonly meter?: 'base' | 'confinement'
   /** Maximum number of proposed mutations across all epochs. Default 20000. */
   readonly maxAttempts?: number
   /** Maximum wall-clock milliseconds for the whole search. Default 5000. */
@@ -160,9 +179,9 @@ export interface StarWalkBoard {
   readonly seedColours: Uint8Array
   /** The unique solution of the produced board, `solution[row] = column`. */
   readonly solution: readonly number[]
-  /** Stars the base subset placed on the seed (always n today: construct boards collapse). */
+  /** Stars the base subset placed on the seed under the requested meter (always n today: construct boards collapse). */
   readonly basePlacedSeed: number
-  /** Stars the base subset places on the produced board (always 0 — the stop condition). */
+  /** Stars the meter placed on the produced board (always 0 — the stop condition; 'base' or 'confinement' per the request). */
   readonly basePlaced: number
   /** Total proposed mutations across all epochs (including rejected ones). */
   readonly attempts: number
@@ -171,16 +190,26 @@ export interface StarWalkBoard {
   /** How many epochs restarted on stagnation before the successful one. */
   readonly restarts: number
   /**
-   * Leave-one-out load-bearing techniques of the produced board: rule
-   * classes whose removal stalls the full-catalogue solve, plus 'cs' when
-   * the depth-0 control fails. This is the honest tiering signal: which
-   * techniques the board genuinely REQUIRES.
+   * Leave-one-out load-bearing techniques of the produced board: idea
+   * classes whose removal stalls the full-catalogue solve (c1/c2 are one
+   * idea — line confinement — reported as both ids when load-bearing),
+   * plus 'cs' when the depth-0 control fails. This is the honest tiering
+   * signal: which techniques the board genuinely REQUIRES.
    */
   readonly fingerprint: ReadonlySet<StarCatalogueRule>
   /** Full-catalogue wave count of the produced board. */
   readonly waves: number
   /** Rule classes the full-catalogue solve engaged on the produced board. */
   readonly used: ReadonlySet<StarCatalogueRule>
+  /**
+   * Case-split passes the accepting certificate used (0 when the board
+   * solved without contradiction). Reported for the difficulty grader:
+   * the 'contradiction' tier's acceptance distribution is measured on
+   * these, not assumed.
+   */
+  readonly csPasses: number
+  /** Assumption cells the accepting certificate tested. */
+  readonly csTrials: number
   /** Largest colour region's share of the board, in (0, 1]. */
   readonly largestRegionShare: number
   /** Measured wall-clock of the whole search. */
@@ -243,12 +272,24 @@ function regionStaysConnectedWithout(colours: Uint8Array, n: number, index: numb
 }
 
 /**
- * Stars the base rule subset alone can place on `colours` — the descent's
- * "easiness" meter. Runs with case-splitting off and the confinement rules
- * off: this is exactly the production solver's reasoning power.
+ * Stars the base rule subset alone can place on `colours` — the default
+ * descent meter ("easiness" for the production solver). Runs with
+ * case-splitting off and the confinement rules off: this is exactly the
+ * production solver's reasoning power.
  */
 function basePlacedCount(colours: Uint8Array, n: number): number {
   return solveStarCatalogue(colours, n, { rules: BASE_ONLY_RULES, csDepth: 0 }).placed
+}
+
+/**
+ * Stars the full depth-0 confinement catalogue can place on `colours` —
+ * the 'contradiction' tier's meter. When this reaches zero, NO confinement
+ * subset can place anything (the solving family is monotone; verified
+ * explicitly by {@link measureMinimumBasis} at acceptance), so the board
+ * is a k = -1 candidate: pure deduction cannot start it.
+ */
+function confinementPlacedCount(colours: Uint8Array, n: number): number {
+  return solveStarCatalogue(colours, n, { csDepth: 0 }).placed
 }
 
 /** The largest colour region's share of the n×n board, in (0, 1]. */
@@ -299,7 +340,10 @@ function solutionCellSet(colours: Uint8Array, n: number): Set<number> | null {
 export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
   const { n, seed } = request
   assertStarBattleSide(n)
-  const seedDifficulty = request.seedDifficulty ?? 'challenging'
+  const seedDifficulty = request.seedDifficulty ?? 'steady'
+  const meter = request.meter ?? 'base'
+  const meterPlaced =
+    meter === 'base' ? basePlacedCount : confinementPlacedCount
   const maxAttempts = request.maxAttempts ?? 20000
   const wallClockMs = request.wallClockMs ?? 5000
   const stagnationAttempts = request.stagnationAttempts ?? 100
@@ -345,7 +389,7 @@ export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
     }
     colours = seedColours.slice()
     finalSeedColours = seedColours
-    epochBasePlacedSeed = basePlacedCount(colours, n)
+    epochBasePlacedSeed = meterPlaced(colours, n)
     let current = epochBasePlacedSeed
     epochBasePlaced = current
     let sinceImprovement = 0
@@ -421,7 +465,7 @@ export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
       colours[index] = to
 
       // --- gate (b): never make the board easier (base-subset star count) -
-      const candidateBase = basePlacedCount(colours, n)
+      const candidateBase = meterPlaced(colours, n)
       if (candidateBase > current) {
         colours[index] = from
         continue
@@ -478,6 +522,8 @@ export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
     fingerprint,
     waves: finalSolve.waves,
     used: finalSolve.used,
+    csPasses: finalSolve.csPasses,
+    csTrials: finalSolve.csTrials,
     largestRegionShare: largestRegionShareOf(colours, n),
     elapsedMs,
     normalizedSeed,

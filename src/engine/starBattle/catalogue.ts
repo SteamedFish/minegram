@@ -7,12 +7,13 @@
  * Rule classes (toggleable, for leave-one-out load-bearing fingerprints):
  * - `base` — exclusion (row/col/colour/proximity of placed stars) + hidden
  *   singles in rows/cols/colours. Exactly `propagate.ts` semantics.
- * - `c1` — line confinement: a starless colour whose candidates all lie in
- *   one starless row/col consumes that line's star slot: blank other
- *   colours' unknown cells in the line.
- * - `c2` — multi-line confinement: exactly j starless colours confined to
- *   the same j starless rows/cols, j in {2,3}: those lines' slots are
- *   consumed; blank other colours' unknown cells there.
+ * - `c1`/`c2` — line confinement, ONE technique observed at two widths.
+ *   Computed by an uncapped Hall/matching propagator (see below): `c1`
+ *   reports deductions whose tight-set certificate spans ONE line ("this
+ *   colour is confined to this row"), `c2` reports certificates spanning
+ *   TWO OR MORE ("these j colours are confined to these j rows"). Humans
+ *   count those as a single idea; only the COUNTING distinguishes them
+ *   (see `minimumBasis.ts`), never the mechanism.
  * - `c3` — box confinement: exactly cap(B) starless colours confined to a
  *   small box B (2×2, 2×3, 3×2, 3×3; cap = exact Chebyshev packing):
  *   blank other colours' unknown cells in B.
@@ -25,6 +26,54 @@
  *   Depth-capped at 1 with a bounded trial budget. Every derived fact is
  *   globally sound, so a closure that places all n stars is a UNIQUENESS
  *   CERTIFICATE.
+ *
+ * The Hall/matching propagator (2026-10-07, replaces the oracle's
+ * `closure_unions`): per axis (rows, cols), build the bipartite graph whose
+ * left side is the starless colours, whose right side is the starless lines
+ * of that axis, with an edge (colour, line) iff the colour has an unknown
+ * cell in the line. Both sides always carry exactly `n - placed` vertices
+ * (a placed star consumes one colour and one line of each axis), and every
+ * solution induces a perfect matching of this graph (map each starless
+ * colour to its star's line — the star cell is one of the colour's
+ * unknowns). Therefore:
+ * - If NO perfect matching exists, the state is dead: Hall's condition is
+ *   violated, so some set of starless colours cannot be assigned distinct
+ *   starless lines in ANY completion. The solver flags a contradiction
+ *   (sound: the state admits no solution).
+ * - If a perfect matching exists, fix one and orient the residual digraph
+ *   (non-matching edges left→right, matching edges right→left). An edge
+ *   (colour, line) belongs to SOME perfect matching iff its endpoints share
+ *   a strongly connected component (Dulmage–Mendelsohn / Régin alldiff
+ *   propagation). An edge in NO perfect matching is blanked: the colour's
+ *   unknown cells in that line cannot host a star in any solution.
+ *   The certificate width of a blanked edge (colour, line) is the number of
+ *   starless lines reachable from `line` in the residual digraph — a tight
+ *   Hall set (reachable-from-line left vertices vs their line union, equal
+ *   cardinality) that consumes those lines; width 1 is reported as `c1`,
+ *   width ≥ 2 as `c2`.
+ *
+ * Why matching and not zone enumeration (the defects it fixes, measured):
+ * 1. MONOTONICITY. The oracle's `closure_unions` derived confinement zones
+ *    as unions of footprint masks capped at popcount 3, seeded with the
+ *    raw footprints. A qualifying zone of j = 4 lines survived only while
+ *    some colour's footprint WAS the whole zone; any sound blank shrinking
+ *    that footprint made the zone unrepresentable (a popcount-4 union can
+ *    never be added — the cap rejects it), so adding `c3`/`c4` could turn
+ *    a solved board into a stall. Matching derives deductions from the
+ *    candidate graph directly: sound blanking only REMOVES edges, so any
+ *    matching that survives was already a matching, and a disallowed edge
+ *    stays disallowed. A sound-rules superset can never stall where a
+ *    subset solves.
+ * 2. THE CAP ITSELF. The popcount ≤ 3 cap silently filed j ≥ 4 multi-colour
+ *    confinement as "requires contradiction" — measured at 14 of 109 boards
+ *    of the recorded k = -1 population. Matching has no width cap: every
+ *    tight Hall set is found, at polynomial cost (O(n³) per axis per wave).
+ *
+ * Scope note: matching-derived blanks cover starless colours only. A cell
+ * of a colour that ALREADY has its star is blanked by `base`'s colour
+ * exclusion in the same or the next wave; the old zone rule additionally
+ * blanked such cells inside zones, which was sound but redundant — dropping
+ * it may add a wave on some boards but never changes what is deducible.
  *
  * Wave semantics (identical to `propagate.ts`): deduction rules compute on
  * the frozen state and apply simultaneously; a wave counts iff it wrote; a
@@ -60,9 +109,6 @@ export const STAR_CATALOGUE_RULES: readonly StarCatalogueRule[] = [
   'c4',
   'cs',
 ]
-
-/** The confinement rules {c1..c4} that leave-one-out fingerprints iterate. */
-const CONFINEMENT_RULES: readonly StarCatalogueRule[] = ['c1', 'c2', 'c3', 'c4']
 
 /**
  * The deduction-rule subset that matches the oracle's `ALL_RULES`: `base`
@@ -219,16 +265,6 @@ interface Snapshot {
   readonly contradiction: boolean
 }
 
-function popcount(mask: number): number {
-  let count = 0
-  let value = mask
-  while (value !== 0) {
-    value &= value - 1
-    count += 1
-  }
-  return count
-}
-
 function intersect(a: ReadonlySet<number>, b: ReadonlySet<number>): Set<number> {
   const out = new Set<number>()
   for (const value of a) {
@@ -237,31 +273,6 @@ function intersect(a: ReadonlySet<number>, b: ReadonlySet<number>): Set<number> 
     }
   }
   return out
-}
-
-/**
- * The union-closure of a set of small bitmasks, keeping every union of
- * popcount 1..3 (a direct port of the oracle's `closure_unions`). The
- * result is order-independent, so iterating in ascending order keeps the
- * port deterministic without changing what is derived.
- */
-function unionClosure(sets: ReadonlySet<number>): Set<number> {
-  const keys = new Set(sets)
-  let changed = true
-  while (changed) {
-    changed = false
-    const snapshot = [...keys].sort((a, b) => a - b)
-    for (const a of snapshot) {
-      for (const b of snapshot) {
-        const union = a | b
-        if (union !== 0 && popcount(union) <= 3 && !keys.has(union)) {
-          keys.add(union)
-          changed = true
-        }
-      }
-    }
-  }
-  return keys
 }
 
 function normalizeRules(
@@ -461,7 +472,13 @@ class CatalogueSolver {
         }
       }
 
-      // --- c1/c2: line confinement ------------------------------------------
+      // --- c1/c2: line confinement via Hall/matching -----------------------
+      // One mechanism, two observed widths: `c1` reports deductions whose
+      // tight-set certificate spans one line, `c2` spans two or more. Runs
+      // when EITHER rule id is enabled — the ids name widths of the same
+      // idea, so a run never restricts itself to one width class (see
+      // module doc). Monotonic by construction: sound blanking only removes
+      // graph edges, so disallowed edges stay disallowed.
       if (enabled.has('c1') || enabled.has('c2')) {
         let starlessRowsMask = 0
         let starlessColsMask = 0
@@ -473,71 +490,200 @@ class CatalogueSolver {
             starlessColsMask |= 1 << r
           }
         }
-        // Footprint of each confined colour per axis, deduplicated as
-        // bitmasks; only footprints fully inside starless lines qualify.
-        const rowSets = new Set<number>()
-        const colSets = new Set<number>()
-        for (const unknowns of confined) {
-          let rowMask = 0
-          let colMask = 0
-          for (const index of unknowns) {
-            rowMask |= 1 << Math.floor(index / n)
-            colMask |= 1 << (index % n)
+        for (const axis of ['row', 'col'] as const) {
+          const starlessMask =
+            axis === 'row' ? starlessRowsMask : starlessColsMask
+          // Left vertices: starless colours, in ascending order (confined
+          // is already ascending and starless-with-unknowns; a starless
+          // colour with zero unknowns is dead and simply has no edges,
+          // which the matching reports as unsaturated below).
+          // Edge (colour, line): the colour has an unknown cell in the
+          // starless line `line`.
+          const lineMaskOf = (unknowns: readonly number[]): number => {
+            let mask = 0
+            for (const index of unknowns) {
+              mask |=
+                1 << (axis === 'row' ? Math.floor(index / n) : index % n)
+            }
+            return mask & starlessMask
           }
-          if ((rowMask & ~starlessRowsMask) === 0) {
-            rowSets.add(rowMask)
-          }
-          if ((colMask & ~starlessColsMask) === 0) {
-            colSets.add(colMask)
-          }
-        }
-        const axes: readonly (readonly [sets: ReadonlySet<number>, starlessMask: number, axis: 'row' | 'col'])[] = [
-          [rowSets, starlessRowsMask, 'row'],
-          [colSets, starlessColsMask, 'col'],
-        ]
-        for (const [sets, starlessMask, axis] of axes) {
-          for (const zone of unionClosure(sets)) {
-            const j = popcount(zone)
-            if (j === 0 || (zone & ~starlessMask) !== 0) {
-              continue
-            }
-            // Members: every confined colour whose footprint sits in the
-            // zone. `confined` is built in ascending colour order, so this
-            // scan is deterministic.
-            const memberColours = new Set<number>()
-            let memberCount = 0
-            for (const unknowns of confined) {
-              let mask = 0
-              for (const index of unknowns) {
-                mask |= 1 << (axis === 'row' ? Math.floor(index / n) : index % n)
-              }
-              if ((mask & ~zone) === 0) {
-                memberCount += 1
-                memberColours.add(colours[unknowns[0]])
-              }
-            }
-            if (memberCount !== j) {
-              continue
-            }
-            const rule: StarCatalogueRule = j === 1 ? 'c1' : 'c2'
-            if (!enabled.has(rule)) {
-              continue
-            }
-            let wrote = false
+          // Kuhn augmenting-path matching: matchLine[line] = colour.
+          const matchLine = new Int16Array(n).fill(-1)
+          const seenLine = new Uint8Array(n)
+          const tryAugment = (colourIndex: number, edgeMask: number): boolean => {
             for (let line = 0; line < n; line += 1) {
-              if ((zone & (1 << line)) === 0) {
+              if ((edgeMask & (1 << line)) === 0 || seenLine[line] === 1) {
                 continue
               }
-              for (let t = 0; t < n; t += 1) {
-                const index = axis === 'row' ? line * n + t : t * n + line
-                if (cells[index] === UNKNOWN && !memberColours.has(colours[index])) {
+              seenLine[line] = 1
+              if (matchLine[line] === -1 || tryAugment(matchLine[line], edgeMasks[matchLine[line]])) {
+                matchLine[line] = colourIndex
+                return true
+              }
+            }
+            return false
+          }
+          const edgeMasks: number[] = confined.map((unknowns) => lineMaskOf(unknowns))
+          let perfect = true
+          for (let c = 0; c < confined.length; c += 1) {
+            seenLine.fill(0)
+            if (edgeMasks[c] !== 0 && !tryAugment(c, edgeMasks[c])) {
+              perfect = false
+              break
+            }
+            if (edgeMasks[c] === 0) {
+              // A starless colour with no starless-line candidates can
+              // never be matched: the state is dead.
+              perfect = false
+              break
+            }
+          }
+          if (perfect) {
+            for (let line = 0; line < n; line += 1) {
+              if ((starlessMask & (1 << line)) !== 0 && matchLine[line] === -1) {
+                perfect = false
+                break
+              }
+            }
+          }
+          if (!perfect) {
+            // Hall violation: the starless colours cannot all be assigned
+            // distinct starless lines in any completion. Sound: the state
+            // admits no solution. The apply phase still lands this wave's
+            // (sound) blanks and demands; the loop exits on the flag.
+            this.contradiction = true
+            continue
+          }
+          // Residual digraph for the Dulmage–Mendelsohn / Régin criterion:
+          // non-matching edges run colour→line, matching edges line→colour.
+          // Vertices: 0..n-1 = colours (left), n..2n-1 = lines (right).
+          const adjacency: number[][] = []
+          for (let v = 0; v < 2 * n; v += 1) {
+            adjacency.push([])
+          }
+          for (let c = 0; c < confined.length; c += 1) {
+            let mask = edgeMasks[c]
+            while (mask !== 0) {
+              const line = Math.floor(Math.log2(mask & -mask))
+              mask &= mask - 1
+              if (matchLine[line] === c) {
+                adjacency[n + line].push(c)
+              } else {
+                adjacency[c].push(n + line)
+              }
+            }
+          }
+          // Tarjan SCC (iterative), fixed vertex order for determinism.
+          const indexOf = new Int32Array(2 * n).fill(-1)
+          const lowlink = new Int32Array(2 * n)
+          const onStack = new Uint8Array(2 * n)
+          const stack: number[] = []
+          let counter = 0
+          let sccCount = 0
+          const sccOf = new Int32Array(2 * n).fill(-1)
+          for (let root = 0; root < 2 * n; root += 1) {
+            if (indexOf[root] !== -1) {
+              continue
+            }
+            const callStack: number[] = [root]
+            indexOf[root] = lowlink[root] = counter
+            counter += 1
+            stack.push(root)
+            onStack[root] = 1
+            while (callStack.length > 0) {
+              const v = callStack[callStack.length - 1]
+              let descended = false
+              const edges = adjacency[v]
+              for (let i = 0; i < edges.length; i += 1) {
+                const w = edges[i]
+                if (indexOf[w] === -1) {
+                  indexOf[w] = lowlink[w] = counter
+                  counter += 1
+                  stack.push(w)
+                  onStack[w] = 1
+                  callStack.push(w)
+                  descended = true
+                  break
+                }
+                if (onStack[w] === 1 && indexOf[w] < lowlink[v]) {
+                  lowlink[v] = indexOf[w]
+                }
+              }
+              if (descended) {
+                continue
+              }
+              if (lowlink[v] === indexOf[v]) {
+                for (;;) {
+                  const w = stack.pop() as number
+                  onStack[w] = 0
+                  sccOf[w] = sccCount
+                  if (w === v) {
+                    break
+                  }
+                }
+                sccCount += 1
+              }
+              callStack.pop()
+              if (callStack.length > 0) {
+                const parent = callStack[callStack.length - 1]
+                if (lowlink[v] < lowlink[parent]) {
+                  lowlink[parent] = lowlink[v]
+                }
+              }
+            }
+          }
+          // Certificate width per line: number of starless lines reachable
+          // from the line vertex in the residual digraph (including the
+          // line itself). Reachable-from-line left vertices vs that line
+          // union form a tight Hall set (see module doc).
+          const widthOf = new Int16Array(n).fill(0)
+          for (let line = 0; line < n; line += 1) {
+            if ((starlessMask & (1 << line)) === 0) {
+              continue
+            }
+            const visited = new Uint8Array(2 * n)
+            const queue = [n + line]
+            visited[n + line] = 1
+            let width = 0
+            for (let head = 0; head < queue.length; head += 1) {
+              const v = queue[head]
+              if (v >= n) {
+                width += 1
+              }
+              for (const w of adjacency[v]) {
+                if (visited[w] === 0) {
+                  visited[w] = 1
+                  queue.push(w)
+                }
+              }
+            }
+            widthOf[line] = width
+          }
+          // Blank every edge that belongs to NO perfect matching.
+          for (let c = 0; c < confined.length; c += 1) {
+            let mask = edgeMasks[c]
+            while (mask !== 0) {
+              const line = Math.floor(Math.log2(mask & -mask))
+              mask &= mask - 1
+              if (matchLine[line] === c) {
+                continue
+              }
+              if (sccOf[c] === sccOf[n + line]) {
+                continue
+              }
+              const rule: StarCatalogueRule = widthOf[line] === 1 ? 'c1' : 'c2'
+              let wrote = false
+              const memberUnknowns = confined[c]
+              for (const index of memberUnknowns) {
+                const cellLine = axis === 'row' ? Math.floor(index / n) : index % n
+                if (cellLine === line && cells[index] === UNKNOWN) {
                   blanks.push(index)
                   wrote = true
                 }
               }
-            }
-            if (wrote) {
-              usedWave.add(rule)
+              if (wrote) {
+                usedWave.add(rule)
+              }
             }
           }
         }
@@ -980,9 +1126,12 @@ export function solveStarCatalogue(
  * which techniques a solve engaged, this says which techniques the board
  * genuinely REQUIRED.
  *
- * Port of the oracle's `fingerprint`: `base` is always on — it is the
- * frame, not a technique — so leave-one-out only iterates {c1..c4}, and
- * `cs` is tested via a depth-0 run.
+ * Leave-one-out unit is the IDEA, not the rule id (2026-10-07): `c1` and
+ * `c2` are two widths of the same line-confinement mechanism (see module
+ * doc), so removing the idea disables BOTH ids at once; when the idea is
+ * load-bearing BOTH ids are reported. `c3`/`c4` are genuinely distinct
+ * techniques and stay individual. `base` is always on — it is the frame,
+ * not a technique — and `cs` is tested via a depth-0 run.
  */
 export function fingerprintStarCatalogue(
   colours: Uint8Array,
@@ -996,12 +1145,20 @@ export function fingerprintStarCatalogue(
     return null
   }
   const loadBearing = new Set<StarCatalogueRule>()
-  for (const rule of CONFINEMENT_RULES) {
-    if (!resolved.enabled.has(rule)) {
+  // Idea units: line confinement (c1+c2), box confinement (c3), shadow (c4).
+  const ideaUnits: readonly (readonly StarCatalogueRule[])[] = [
+    ['c1', 'c2'],
+    ['c3'],
+    ['c4'],
+  ]
+  for (const unit of ideaUnits) {
+    if (!unit.some((rule) => resolved.enabled.has(rule))) {
       continue
     }
     const reduced = new Set(resolved.enabled)
-    reduced.delete(rule)
+    for (const rule of unit) {
+      reduced.delete(rule)
+    }
     const attempt = solveStarCatalogue(colours, n, {
       rules: reduced,
       csDepth: resolved.csDepth,
@@ -1010,7 +1167,9 @@ export function fingerprintStarCatalogue(
       rng: options.rng,
     })
     if (!attempt.solved) {
-      loadBearing.add(rule)
+      for (const rule of unit) {
+        loadBearing.add(rule)
+      }
     }
   }
   if (resolved.csDepth >= 1) {
