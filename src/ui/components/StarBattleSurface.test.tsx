@@ -830,7 +830,13 @@ describe('StarBattleSurface — chrome', () => {
     render({ difficulty: 'expert' })
     const group = container.querySelector<HTMLElement>('[data-testid="star-difficulty"] .mg-seg')
     expect(group?.getAttribute('role')).toBe('radiogroup')
-    expect(group?.getAttribute('aria-label')).toBe('Difficulty')
+    // The group is named by a REAL VISIBLE label through aria-labelledby,
+    // not by an invisible aria-label — the eye must read what the screen
+    // reader hears.
+    expect(group?.getAttribute('aria-labelledby')).toBe('mg-star-difficulty-label')
+    expect(
+      container.querySelector<HTMLElement>("[data-testid='star-difficulty'] .mg-field__label")?.textContent?.trim(),
+    ).toBe('Difficulty')
     const options = container.querySelectorAll<HTMLInputElement>(
       "[data-testid='star-difficulty'] input[type='radio']",
     )
@@ -854,7 +860,10 @@ describe('StarBattleSurface — chrome', () => {
     const onDifficultyChange = vi.fn()
     render({ locale: 'zh', onDifficultyChange })
     const group = container.querySelector<HTMLElement>('[data-testid="star-difficulty"] .mg-seg')
-    expect(group?.getAttribute('aria-label')).toBe('难度')
+    expect(group?.getAttribute('aria-labelledby')).toBe('mg-star-difficulty-label')
+    expect(
+      container.querySelector<HTMLElement>("[data-testid='star-difficulty'] .mg-field__label")?.textContent?.trim(),
+    ).toBe('难度')
     const labels = Array.from(
       container.querySelectorAll<HTMLElement>("[data-testid='star-difficulty'] .mg-seg__label"),
     ).map((label) => label.textContent?.trim())
@@ -873,7 +882,10 @@ describe('StarBattleSurface — chrome', () => {
     render({ minSide: 4, maxSide: 15 })
     const group = container.querySelector<HTMLElement>('[data-testid="star-size"] .mg-seg')
     expect(group?.getAttribute('role')).toBe('radiogroup')
-    expect(group?.getAttribute('aria-label')).toBe('Board size')
+    expect(group?.getAttribute('aria-labelledby')).toBe('mg-star-size-label')
+    expect(
+      container.querySelector<HTMLElement>("[data-testid='star-size'] .mg-field__label")?.textContent?.trim(),
+    ).toBe('Board size')
     const options = container.querySelectorAll<HTMLInputElement>("[data-testid='star-size'] input[type='radio']")
     expect(options).toHaveLength(12)
     expect(Array.from(options).map((option) => option.value)).toEqual([
@@ -912,7 +924,10 @@ describe('StarBattleSurface — chrome', () => {
     render({ minLives: 1, maxLives: 5, maxLivesCeiling: 9 })
     const group = container.querySelector<HTMLElement>('[data-testid="star-max-lives"] .mg-seg')
     expect(group?.getAttribute('role')).toBe('radiogroup')
-    expect(group?.getAttribute('aria-label')).toBe('Starting lives')
+    expect(group?.getAttribute('aria-labelledby')).toBe('mg-star-max-lives-label')
+    expect(
+      container.querySelector<HTMLElement>("[data-testid='star-max-lives'] .mg-field__label")?.textContent?.trim(),
+    ).toBe('Starting lives')
     const options = container.querySelectorAll<HTMLInputElement>(
       "[data-testid='star-max-lives'] input[type='radio']",
     )
@@ -945,6 +960,46 @@ describe('StarBattleSurface — chrome', () => {
     for (const option of Array.from(options)) {
       expect(option.disabled).toBe(true)
     }
+  })
+
+  it('labels the size and lives groups visibly and explains what they mean, in English', () => {
+    render()
+    for (const testId of ['star-size', 'star-max-lives']) {
+      const group = container.querySelector<HTMLElement>(`[data-testid='${testId}'] .mg-seg`)
+      expect(group?.getAttribute('aria-labelledby')).toBeTruthy()
+      const label = container.querySelector<HTMLElement>(`[data-testid='${testId}'] .mg-field__label`)
+      expect(label?.textContent?.trim()).not.toBe('')
+      // The visible label is the one that names the group.
+      expect(group?.getAttribute('aria-labelledby')).toBe(label?.id)
+    }
+    // Board size: what N means — an N × N grid carrying N stars.
+    const sizeHint = container.querySelector<HTMLElement>("[data-testid='star-size'] .mg-field__hint")
+    expect(sizeHint?.textContent).toContain('N × N')
+    expect(sizeHint?.textContent).toContain('N stars')
+    expect(
+      container.querySelector('[data-testid="star-size"] .mg-seg')?.getAttribute('aria-describedby'),
+    ).toBe(sizeHint?.id)
+    // Lives: the cost asymmetry — a wrong star costs a life, a wrong empty does not.
+    const livesHint = container.querySelector<HTMLElement>("[data-testid='star-max-lives'] .mg-field__hint")
+    expect(livesHint?.textContent).toContain('costs one life')
+    expect(livesHint?.textContent).toContain('costs nothing')
+    expect(
+      container.querySelector('[data-testid="star-max-lives"] .mg-seg')?.getAttribute('aria-describedby'),
+    ).toBe(livesHint?.id)
+  })
+
+  it('labels the size and lives groups visibly and explains what they mean, in Chinese', () => {
+    render({ locale: 'zh' })
+    expect(container.querySelector<HTMLElement>("[data-testid='star-size'] .mg-field__label")?.textContent?.trim()).toBe(
+      '棋盘尺寸',
+    )
+    expect(container.querySelector('[data-testid="star-size"] .mg-field__hint')?.textContent).toContain('N 颗星')
+    expect(
+      container.querySelector<HTMLElement>("[data-testid='star-max-lives'] .mg-field__label")?.textContent?.trim(),
+    ).toBe('初始生命')
+    const livesHint = container.querySelector<HTMLElement>("[data-testid='star-max-lives'] .mg-field__hint")
+    expect(livesHint?.textContent).toContain('扣一条命')
+    expect(livesHint?.textContent).toContain('不扣命')
   })
 
   it('cell keyboard roving still works with the toolbar controls present', () => {
@@ -996,8 +1051,11 @@ describe('StarBattleSurface — locale', () => {
     expect(container.querySelector('.mg-star-meter__label')?.textContent).toBe('生命')
     expect(container.querySelector('[data-testid="star-lives"]')?.getAttribute('aria-label')).toBe('生命 5/5')
     expect(grid().getAttribute('aria-label')).toContain('4 × 4')
-    expect(container.querySelector('[data-testid="star-max-lives"] .mg-seg')?.getAttribute('aria-label')).toBe(
-      '初始生命',
+    expect(
+      container.querySelector<HTMLElement>("[data-testid='star-max-lives'] .mg-field__label")?.textContent?.trim(),
+    ).toBe('初始生命')
+    expect(container.querySelector('[data-testid="star-max-lives"] .mg-seg')?.getAttribute('aria-labelledby')).toBe(
+      'mg-star-max-lives-label',
     )
   })
 })

@@ -6,8 +6,11 @@ import { bandLabel, type Copy } from '../copy'
  * only report edits, which keeps the draft a single object the store can be
  * handed verbatim (`GameStoreActions.start(draft)`).
  *
- * Every control is labelled through a real `<label for>` and every hint through
- * `aria-describedby`, so a screen reader reaches the same sentence the eye does.
+ * Every control is labelled visibly and accessibly — a single control through a
+ * real `<label for>`, the segmented group through a visible label named by
+ * `aria-labelledby` (`label[for]` cannot name a group, only a single control) —
+ * and every hint through `aria-describedby`, so a screen reader reaches the
+ * same sentence the eye does.
  */
 
 export interface NumberFieldProps {
@@ -138,9 +141,12 @@ export interface SegmentedOption<T extends string> {
 
 export interface SegmentedControlProps<T extends string> {
   readonly id: string
+  /** The group's visible label; it names the group through `aria-labelledby`. */
   readonly label: string
   readonly value: T
   readonly options: readonly SegmentedOption<T>[]
+  /** One short line under the group, wired to it through `aria-describedby`. */
+  readonly hint?: string
   readonly onChange: (value: T) => void
   readonly disabled?: boolean
 }
@@ -149,38 +155,56 @@ export interface SegmentedControlProps<T extends string> {
  * A radio group styled as segments. Native radios keep the arrow-key and
  * `role="radiogroup"` semantics for free, which is the whole point: §3.7 promises
  * "arrows inside the segmented control" and this is what delivers it.
+ *
+ * The group is named by a real visible label, not an invisible `aria-label`:
+ * a group has no control to point `label[for]` at, so the label sits beside
+ * the group and is referenced through `aria-labelledby` — the same visible
+ * text serves the eye and the screen reader, which is this file's contract.
  */
 export function SegmentedControl<T extends string>({
   id,
   label,
   value,
   options,
+  hint,
   onChange,
   disabled = false,
 }: SegmentedControlProps<T>) {
+  const labelId = `${id}-label`
+  const hintId = hint === undefined ? undefined : `${id}-hint`
   return (
-    <div className="mg-seg" role="radiogroup" aria-label={label} id={id}>
-      {options.map((option) => {
-        const optionId = `${id}-${option.value}`
-        const selected = option.value === value
-        return (
-          <span className="mg-seg__item" key={option.value}>
-            <input
-              className="mg-seg__input"
-              type="radio"
-              id={optionId}
-              name={id}
-              value={option.value}
-              checked={selected}
-              disabled={disabled}
-              onChange={() => onChange(option.value)}
-            />
-            <label className="mg-seg__label" htmlFor={optionId}>
-              {option.label}
-            </label>
-          </span>
-        )
-      })}
+    <div className="mg-seg-group">
+      <span className="mg-field__label" id={labelId}>
+        {label}
+      </span>
+      <div className="mg-seg" role="radiogroup" aria-labelledby={labelId} aria-describedby={hintId} id={id}>
+        {options.map((option) => {
+          const optionId = `${id}-${option.value}`
+          const selected = option.value === value
+          return (
+            <span className="mg-seg__item" key={option.value}>
+              <input
+                className="mg-seg__input"
+                type="radio"
+                id={optionId}
+                name={id}
+                value={option.value}
+                checked={selected}
+                disabled={disabled}
+                onChange={() => onChange(option.value)}
+              />
+              <label className="mg-seg__label" htmlFor={optionId}>
+                {option.label}
+              </label>
+            </span>
+          )
+        })}
+      </div>
+      {hint === undefined ? null : (
+        <p className="mg-field__hint" id={hintId}>
+          {hint}
+        </p>
+      )}
     </div>
   )
 }
