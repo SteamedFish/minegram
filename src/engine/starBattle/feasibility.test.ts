@@ -7,10 +7,13 @@
  *
  * Measured anchors the assertions rest on (2026-10-07 probes, this
  * machine; see feasibility.ts module doc):
- * - n = 4: every base-meter walk endpoint is k = 1 (0/1200 k = 2 across a
- *   deep probe), so 'expert' reads `unavailable`; every confinement-meter
- *   walk gives up (0/200 shipped-budget), so 'contradiction' reads
- *   `unavailable`; 'challenging' accepts ~100% of walks.
+ * - n = 4: 'expert' reads `unavailable` (every walk endpoint is k = 1;
+ *   no k = 2 exists there) and 'contradiction' `unavailable` (every
+ *   confinement walk gives up). 'challenging' under the NEW non-freebie
+ *   contract reads `available` — for a structural reason: the n = 4 domino
+ *   fallback has no whole-line owner, so every k = 1 board there is
+ *   already non-freebie (witnesses {c3}/{c4}); the misses are walk
+ *   give-ups, not off-class boards.
  * - n = 5: 'expert' accepts ~40% of walks and 'contradiction' ~88% of
  *   walks, so both read `available` quickly under DEFAULT budgets — the
  *   side this file uses to exercise the default-option path end to end.
@@ -51,6 +54,12 @@ describe('starBattle feasibility validation', () => {
 
 describe('starBattle feasibility at n = 4 (measured holes)', () => {
   it('marks expert and contradiction unavailable, challenging and construction available', async () => {
+    // Challenging under the NEW (non-freebie witness) contract at n = 4:
+    // available — and for a structural reason, not luck: the n = 4 domino
+    // fallback has no whole-line owner, so EVERY k = 1 board there is
+    // already non-freebie (24/24 walks, witnesses {c3}/{c4}). The 8
+    // misses are walk give-ups (shape-gate tails), not off-class boards;
+    // the Wilson lower bound on 40/48 still clears the availability bar.
     const report = await measureStarBattleTierFeasibility(MIN_STAR_SIDE, FAST)
 
     expect(report.starter.status).toBe('available')
@@ -63,7 +72,7 @@ describe('starBattle feasibility at n = 4 (measured holes)', () => {
 
     expect(report.challenging.status).toBe('available')
     expect(report.challenging.hits).toBeGreaterThan(0)
-    expect(report.challenging.hits).toBe(report.challenging.samples)
+    expect(report.challenging.hits).toBeLessThan(report.challenging.samples)
     expect(report.challenging.generationSuccess).toBeGreaterThan(0.9)
     expect(report.challenging.rate95[0]).toBeGreaterThan(0)
 

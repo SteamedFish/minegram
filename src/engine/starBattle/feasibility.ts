@@ -14,9 +14,11 @@
  *
  * The model. Technique tiers generate by rejection over
  * {@link walkStarBattleBoard}: a generation succeeds iff at least one of
- * {@link TECHNIQUE_WALK_ATTEMPTS} walks returns a board whose
- * {@link measureMinimumBasis}.k hits the tier's
- * {@link TECHNIQUE_TIER_TARGET}. So per-generation success is
+ * {@link TECHNIQUE_WALK_ATTEMPTS} walks returns a board whose measured
+ * {@link measureMinimumBasis} satisfies the tier's FULL contract
+ * ({@link techniqueTierAcceptsBasis} — 'challenging' is k = 1 AND a
+ * non-line-confinement witness, not k alone; see its doc for why). So
+ * per-generation success is
  *
  *     G(n, tier) = 1 - (1 - p(n, tier)) ^ TECHNIQUE_WALK_ATTEMPTS
  *
@@ -48,46 +50,64 @@
  * Construction tiers ('starter', 'steady') never enter the rejection
  * model: the painting is theorem-backed (construct.ts module doc —
  * validity-rule compliance certifies uniqueness for every supported
- * side) and carries no budget-exhaustion path; steady's hub-free shaping
- * is the only throw, measured 0/220 give-ups at n = 6..15 (construct.ts
- * module doc). They are still probed — {@link generateStarBattle} is run
+ * side) and, since the 2026-10-07 fallback ruling, carries no failure
+ * path at all (a shaping give-up ships the painted board with
+ * `shapeAudit.gateMet: false` instead of throwing). They are still
+ * probed — {@link generateStarBattle} is run
  * {@link StarTierFeasibilityOptions.generationSamples} times per side —
  * and any observed failure downgrades the entry honestly.
  *
- * Measured matrix (2026-10-07 probes, this machine; 24 base-meter walks
- * per side unless noted, shipped shape gate and budgets). Per-walk k
- * distribution, base meter:
+ * Measured matrix (2026-10-07 probes, this machine, AFTER the challenging
+ * re-tier). The authoritative per-walk rates come from a DEEP probe
+ * (production-rotation walks, big samples):
  *
- *     n      k=1   k=2   k=-1        n      conf-meter walk success
- *     4      24    0     0           4      0/16, and 0/200 shipped +
- *     5      16    8     0                0/60 with 5× attempts;
- *     6      9     14    1           5      14/16
- *     7      13    9     2           6      16/16
- *     8      13    9     2           7      16/16
- *     9      11    8     5           8      18/24
- *     10     12    10    2           9      8/16
- *     11     16    8     0           10     8/24
- *     12     12    9     3           11     2/24
- *     13     12    8     4           12     4/24
- *     14     11    7     6           13     1/24
- *     15     13    10    1           14     2/24
- *     4 deep: 1200 walks, ALL k = 1      15     0/24 and 0/48 (deep)
- *     5 deep: 400 walks: k=1 233, k= 2 161, k=-1 6
+ *     n      non-freebie k=1 per walk (Wilson 95)     G(48 walks), worst
+ *     4      structurally all (domino, no whole       ≈ 1
+ *            line); session probe 40/48, G≈1
+ *     5      18/96 = 18.8% (12.2–27.7%)               ≈ 1 (worst 1)
+ *     8      4/96 = 4.2% (1.6–10.2%)                  0.87 (worst 0.55)
+ *     10     2/240 = 0.8% (0.2–3.0%)                  0.33 (worst 0.10)
+ *     15     0/72 = 0% (upper 5.1%)                    ≤ 0.87 (not certifiable)
  *
- * Conclusions. `expert` is unavailable at n = 4 (0/1200 walks; every
- * base-meter walk endpoint there is k = 1) and solidly available from
- * n = 5 up (per-walk acceptance ~30–45% ⇒ G ≈ 1; the old "~8% at n = 15"
- * figure predates the hub-free walk). `contradiction` decays smoothly
- * with side (75% → 33% → ~8–17% → ~4–8% → 0): n = 4 is a FAST failure
- * (walks exhaust 20k attempts in ~0.6 s — the descent landscape has no
- * route down, and not one k = -1 endpoint was seen in 1460+ walk
- * observations, though that is measurement, not a proof of
- * impossibility), while n = 15 is a SLOW failure (every walk burns its
- * full wall clock short of meter 0). The n = 15 answer is therefore
- * "over budget / below the measurement floor", NOT proven impossible —
- * n = 14 still produces k = -1 boards — and raising the walk budget
- * might find them; within the SHIPPED budgets the tier never succeeds, so
- * the UI signal is `unavailable` either way.
+ * THE CHALLENGING NULL, plainly: the non-freebie k = 1 class DECAYS with
+ * side. At n = 10 it is ~0.8% per walk — a generation still lands about a
+ * third of the time (measured 8/12 consecutive generation seeds), but the
+ * Wilson lower bound certifies only ~10% per-generation success, far under
+ * the 90% availability bar; at n = 15 it was not observed at all (72
+ * walks). Every other k = 1 base-stall board the stream offers is a
+ * line-confinement board — the freebie — which is exactly the
+ * concentration three mechanisms (seed rotation `fcab9d1`, MCMC drift
+ * `f735a0f`, both) failed to diversify. Re-tiering on witness identity
+ * therefore MOVED the tier's availability, not just its modal share. The
+ * session probe (48 walks, deterministic per seedBase) reads:
+ *
+ *     n      starter   steady   challenging      expert       contradiction
+ *     4      available available available(40/48) unavailable  unavailable
+ *     5      available available available(5/46)  available    available
+ *     6      available available unavailable(0/48) available   available
+ *     7      available available unreliable(2/48)  available   available
+ *     8      available available unreliable(3/48)  available   available
+ *     9      available available unavailable(0/48) available   available
+ *     10     available available unavailable(0/48) available   unreliable
+ *     11..15 available available unavailable       available   unavailable
+ *
+ * (The probe's 48-walk samples at n = 9..15 are single draws of a rare
+ * event — deterministic per seedBase but thin; the deep probe above is
+ * the honest rate. At n = 10 the deep rate says G ≈ 0.33: below the bar,
+ * so `unavailable` is the right UI signal even though individual
+ * generations sometimes succeed.)
+ *
+ * Consequences, recorded for the UI lane: 'challenging' is shippable at
+ * n = 4, 5 and marginal at n = 7, 8 — and `unavailable` at the sizes the
+ * game is actually played (default 10, max 15). That is the honest
+ * product signal: where the class exists the modal witness mix is {c3}/
+ * {c4} (measured generation-level: n = 4 all {c4}; n = 5 {c3}×3/{c4}×3;
+ * n = 8 {c3}×7/{c4}×1), and where it cannot be certified the tier must
+ * not be offered as a normal choice. `expert` (k = 2) and
+ * `contradiction` (k = -1) contracts are unchanged; their availability
+ * moved only through the shared walk stream (expert per-walk acceptance
+ * roughly doubled under starter seeds, matching the rotation
+ * measurement).
  *
  * Player ruling recorded for other lanes (2026-10-07): shape is NOT a
  * gate — a hub or whole-line board is legal and must stay generatable;
@@ -128,12 +148,11 @@ import { createSeededRandom, deriveRandomSeed, type SeededRandom } from '../rng'
 import {
   STAR_TIER_SHAPE_GATE,
   STAR_DIFFICULTIES,
-  TECHNIQUE_TIER_TARGET,
   TECHNIQUE_TIER_WALL_CLOCK_MS,
   TECHNIQUE_WALK_ATTEMPTS,
   TECHNIQUE_WALK_INPUT_MENU,
-  StarShapeBudgetExhaustedError,
   generateStarBattle,
+  techniqueTierAcceptsBasis,
   techniqueTierWalkInput,
   type StarDifficulty,
 } from './construct'
@@ -380,11 +399,15 @@ async function probeBaseMeter(
         shape: STAR_TIER_SHAPE_GATE,
         wallClockMs: TECHNIQUE_TIER_WALL_CLOCK_MS,
       })
-      const k = measureMinimumBasis(walked.colours, n).k
-      if (k === TECHNIQUE_TIER_TARGET.challenging) {
+      // Crediting uses the tier's FULL contract ({@link
+      // techniqueTierAcceptsBasis}) — for 'challenging' that is k = 1
+      // AND a non-line-confinement witness, not k alone — so the measured
+      // availability describes the shipped generator's acceptance.
+      const basis = measureMinimumBasis(walked.colours, n)
+      if (techniqueTierAcceptsBasis('challenging', basis)) {
         challengingHits += 1
       }
-      if (k === TECHNIQUE_TIER_TARGET.expert) {
+      if (techniqueTierAcceptsBasis('expert', basis)) {
         expertHits += 1
       }
     } catch (error) {
@@ -466,10 +489,12 @@ async function probeConfinementMeter(
 /**
  * Construction tiers: run real generations (shaping on — the product
  * path) and count failures. Cheap (tens of milliseconds per board), so
- * the full sample always runs. Only the documented give-up failure
- * ({@link StarShapeBudgetExhaustedError}) counts as a miss; an internal
- * invariant violation from generation propagates loudly — an engine bug
- * must never be reported as "tier unavailable".
+ * the full sample always runs. Since the 2026-10-07 fallback ruling a
+ * shaping give-up ships the painted board as
+ * {@link StarGeneratedBoard.shapeAudit}, construction-tier generation
+ * has NO player-facing failure path at all — every sample is a hit
+ * unless an internal invariant violation throws, which propagates
+ * loudly (an engine bug must never be reported as "tier unavailable").
  */
 async function probeConstructionTiers(
   n: number,
@@ -479,22 +504,10 @@ async function probeConstructionTiers(
   let starterHits = 0
   let steadyHits = 0
   for (let i = 0; i < options.generationSamples; i += 1) {
-    try {
-      generateStarBattle({ n, seed: rng.derive(`starter-gen-${i}`).seed, difficulty: 'starter' })
-      starterHits += 1
-    } catch (error) {
-      if (!(error instanceof StarShapeBudgetExhaustedError)) {
-        throw error
-      }
-    }
-    try {
-      generateStarBattle({ n, seed: rng.derive(`steady-gen-${i}`).seed, difficulty: 'steady' })
-      steadyHits += 1
-    } catch (error) {
-      if (!(error instanceof StarShapeBudgetExhaustedError)) {
-        throw error
-      }
-    }
+    generateStarBattle({ n, seed: rng.derive(`starter-gen-${i}`).seed, difficulty: 'starter' })
+    starterHits += 1
+    generateStarBattle({ n, seed: rng.derive(`steady-gen-${i}`).seed, difficulty: 'steady' })
+    steadyHits += 1
     await yieldToEventLoop()
   }
   return {

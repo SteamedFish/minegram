@@ -17,14 +17,18 @@ import {
 import { solveStarCatalogue } from './catalogue'
 import { countStarSolutions } from './count'
 import {
-  STAR_DIFFICULTIES,
   StarTechniqueTierBudgetExhaustedError,
+  TECHNIQUE_TIER_TARGET,
   TECHNIQUE_WALK_INPUT_MENU,
   admissibleStarPermutation,
   generateStarBattle,
+  resolveShapedSteadyColours,
+  techniqueTierAcceptsBasis,
   techniqueTierWalkInput,
   type StarDifficulty,
 } from './construct'
+import { HAND_K1_COLOURS } from './fixtures/handBoards'
+import { createSeededRandom } from '../rng'
 import { measureMinimumBasis } from './minimumBasis'
 import { propagateStarBoard } from './propagate'
 import {
@@ -42,11 +46,11 @@ const CONSTRUCTION_DIFFICULTIES: readonly StarDifficulty[] = ['starter', 'steady
 /** Technique tiers: descended, the base solver must place nothing on them. */
 const TECHNIQUE_DIFFICULTIES = ['challenging', 'expert', 'contradiction'] as const
 
-const TECHNIQUE_TIER_TARGET: Readonly<Record<(typeof TECHNIQUE_DIFFICULTIES)[number], number>> = {
-  challenging: 1,
-  expert: 2,
-  contradiction: -1,
-}
+// The k component of the tier contract; the FULL contract (including
+// challenging's non-line-confinement witness rule) is asserted through
+// `techniqueTierAcceptsBasis`, imported from the engine — this file pins
+// the engine's predicate against its own instruments, not a local copy of
+// the rule.
 
 describe('admissibleStarPermutation', () => {
   it('returns an admissible permutation for every supported side', () => {
@@ -182,9 +186,19 @@ describe('generateStarBattle uniqueness cross-check (exact counter, small n)', (
 
 describe('generateStarBattle determinism', () => {
   it('same (n, seed, difficulty) yields byte-identical boards', { timeout: 120_000 }, () => {
-    for (const difficulty of STAR_DIFFICULTIES) {
-      const first = generateStarBattle({ n: 9, seed: 1234, difficulty })
-      const second = generateStarBattle({ n: 9, seed: 1234, difficulty })
+    // Sides per the re-measured availability: challenging under the new
+    // contract is not offered above n = 8 (see feasibility.ts), so its
+    // determinism is pinned at n = 5; expert/contradiction at n = 9.
+    const cases: ReadonlyArray<readonly [number, StarDifficulty]> = [
+      [9, 'starter'],
+      [9, 'steady'],
+      [5, 'challenging'],
+      [9, 'expert'],
+      [9, 'contradiction'],
+    ]
+    for (const [n, difficulty] of cases) {
+      const first = generateStarBattle({ n, seed: 1234, difficulty })
+      const second = generateStarBattle({ n, seed: 1234, difficulty })
       expect(second.puzzle.colours).toEqual(first.puzzle.colours)
       expect(second.puzzle.colours).not.toBe(first.puzzle.colours) // fresh bytes, equal values
       expect(second.puzzle.solution).toEqual(first.puzzle.solution)
@@ -194,9 +208,17 @@ describe('generateStarBattle determinism', () => {
   })
 
   it('different seeds yield different boards', () => {
-    for (const difficulty of STAR_DIFFICULTIES) {
-      const a = generateStarBattle({ n: 8, seed: 1, difficulty })
-      const b = generateStarBattle({ n: 8, seed: 2, difficulty })
+    // Same side split as above: challenging pinned at n = 5.
+    const cases: ReadonlyArray<readonly [number, StarDifficulty]> = [
+      [8, 'starter'],
+      [8, 'steady'],
+      [5, 'challenging'],
+      [8, 'expert'],
+      [8, 'contradiction'],
+    ]
+    for (const [n, difficulty] of cases) {
+      const a = generateStarBattle({ n, seed: 1, difficulty })
+      const b = generateStarBattle({ n, seed: 2, difficulty })
       expect(Array.from(a.puzzle.colours)).not.toEqual(Array.from(b.puzzle.colours))
     }
   })
@@ -271,8 +293,21 @@ describe('generateStarBattle technique tiers: base stalls and the basis hits the
   // Own flood fill (below) + the engine instruments, not the walk's
   // bookkeeping: the tier contract is pinned here, independently.
   it('challenging and expert boards carry every acceptance gate', () => {
-    for (const n of [5, 6, 8, 10]) {
-      for (const difficulty of ['challenging', 'expert'] as const) {
+    // Sides per the re-measured availability (2026-10-07, under the new
+    // challenging contract — see feasibility.ts): challenging generates
+    // reliably at n = 4, 5 and thinly at n = 7, 8; at n >= 9 the
+    // non-freebie k = 1 class is ~0.8% per walk at n = 10 (a generation
+    // still lands about a third of the time) and 0/72 at n = 15, so a
+    // battery over fixed seeds would flake — the rarity pins live in the
+    // measurement describe below. Expert is solid from n = 5 up.
+    for (const [n, difficulties] of [
+      [4, ['challenging'] as const],
+      [5, ['challenging', 'expert'] as const],
+      [6, ['expert'] as const],
+      [8, ['expert'] as const],
+      [10, ['expert'] as const],
+    ] as const) {
+      for (const difficulty of difficulties) {
         for (const seed of [11, 2222, 333333]) {
           assertTechniqueTierBoard(n, seed, difficulty)
         }
@@ -316,12 +351,19 @@ describe('generateStarBattle technique tiers: base stalls and the basis hits the
     // Two independent implementations agreeing is the evidence; the
     // catalogue certificate alone is the production gate. ('contradiction'
     // is counter-checked at n = 8..10 in its own acceptance battery — the
-    // k = -1 class is not claimed at n = 5..7.)
-    for (const n of [5, 6, 7, 8]) {
-      for (const difficulty of ['challenging', 'expert'] as const) {
-        const { puzzle } = generateStarBattle({ n, seed: 77, difficulty })
-        expect(countStarSolutions(puzzle.colours, n, 3)).toBe(1)
-      }
+    // k = -1 class is not claimed at n = 5..7.) Challenging is pinned at
+    // n = 4, 5 (its reliable sides under the new contract); expert spans
+    // the full n = 5..8 range.
+    for (const [n, difficulty] of [
+      [4, 'challenging'],
+      [5, 'challenging'],
+      [5, 'expert'],
+      [6, 'expert'],
+      [7, 'expert'],
+      [8, 'expert'],
+    ] as const) {
+      const { puzzle } = generateStarBattle({ n, seed: 77, difficulty })
+      expect(countStarSolutions(puzzle.colours, n, 3)).toBe(1)
     }
   })
 
@@ -357,6 +399,104 @@ describe('generateStarBattle construction wall-clock', () => {
       expect(elapsed).toBeLessThan(2000)
     }
     console.log(`generateStarBattle construction wall-clock — ${timings.join(', ')}`)
+  })
+})
+
+describe('the shape gate audit and the give-up fallback (player ruling 2026-10-07)', () => {
+  it('construction boards carry shapeAudit: starter and small steady never gate, shaped steady gates', () => {
+    // The audit is per-board honesty, not a rejection: starter is never
+    // shaped by design (its sea hub IS the tier), steady at n = 4, 5 is
+    // not shaped (no room), and shaped steady at n >= 6 reports gateMet
+    // true. Measured over 600 seeds per side: shaping always reached
+    // defect 0 at n = 6..10, so the fallback is never taken naturally —
+    // the forced give-up below pins it.
+    expect(generateStarBattle({ n: 8, seed: 7, difficulty: 'starter' }).shapeAudit).toEqual({
+      gateMet: false,
+    })
+    expect(generateStarBattle({ n: 4, seed: 7, difficulty: 'steady' }).shapeAudit).toEqual({
+      gateMet: false,
+    })
+    expect(generateStarBattle({ n: 5, seed: 7, difficulty: 'steady' }).shapeAudit).toEqual({
+      gateMet: false,
+    })
+    for (const seed of [1, 2, 3, 4, 5]) {
+      expect(generateStarBattle({ n: 10, seed, difficulty: 'steady' }).shapeAudit).toEqual({
+        gateMet: true,
+      })
+    }
+    // Technique tiers carry no construction shapeAudit: their shape gate
+    // is acceptance gate (e), re-verified on every accepted board.
+    expect(
+      generateStarBattle({ n: 5, seed: 11, difficulty: 'challenging' }).shapeAudit,
+    ).toBeUndefined()
+  })
+
+  it('a shaping give-up falls back to the painted board with gateMet false — never a thrown failure', () => {
+    // Natural seeds never give up (0/3000 at n = 6..10), so the fallback
+    // is pinned through the wrapper's budget overrides: one attempt
+    // cannot reach defect 0 from a painted strips-and-sea board, the
+    // descent throws its typed budget error, and the wrapper must convert
+    // it into the painted board plus an honest gateMet false. The ruling
+    // being pinned: 「偶尔小概率出现而不是一直出现，没关系，只要合法，不用刻意排除」
+    // — the board ships, the miss is recorded, generation never fails.
+    const painted = generateStarBattle({ n: 8, seed: 42, difficulty: 'steady', shaping: false })
+    const rng = createSeededRandom(42)
+    const resolved = resolveShapedSteadyColours({
+      n: 8,
+      colours: painted.puzzle.colours,
+      solution: painted.puzzle.solution,
+      seedWaves: painted.waves,
+      rng: rng.derive('steady-shape'),
+      maxAttempts: 1,
+    })
+    expect(resolved.gateMet).toBe(false)
+    expect(resolved.waves).toBe(painted.waves)
+    expect(Array.from(resolved.colours)).toEqual(Array.from(painted.puzzle.colours))
+    // The same inputs with the production budget shape (regression: the
+    // fallback must not swallow a working descent).
+    const rng2 = createSeededRandom(42)
+    const shaped = resolveShapedSteadyColours({
+      n: 8,
+      colours: painted.puzzle.colours,
+      solution: painted.puzzle.solution,
+      seedWaves: painted.waves,
+      rng: rng2.derive('steady-shape'),
+    })
+    expect(shaped.gateMet).toBe(true)
+    expect(Array.from(shaped.colours)).not.toEqual(Array.from(painted.puzzle.colours))
+  }, 30_000)
+})
+
+describe('techniqueTierAcceptsBasis: the full tier contract, not k alone', () => {
+  it('challenging rejects the line-confinement freebie at every subset shape', () => {
+    // k = 1 with a {c1} witness (the hand fixture: every single rule
+    // suffices, canonical witness {c1}) — the freebie the tier exists to
+    // avoid.
+    expect(
+      techniqueTierAcceptsBasis('challenging', measureMinimumBasis(HAND_K1_COLOURS, 4)),
+    ).toBe(false)
+    // k = 2 and k = -1 are off-target regardless of witness.
+    expect(
+      techniqueTierAcceptsBasis('challenging', { k: 2, rules: ['c3', 'c4'] }),
+    ).toBe(false)
+    expect(techniqueTierAcceptsBasis('challenging', { k: -1, rules: [] })).toBe(false)
+    // k = 1 whose witness is box confinement or shadow — the contract.
+    expect(techniqueTierAcceptsBasis('challenging', { k: 1, rules: ['c3'] })).toBe(true)
+    expect(techniqueTierAcceptsBasis('challenging', { k: 1, rules: ['c4'] })).toBe(true)
+    // A k = 1 board whose canonical witness is the line-confinement PAIR
+    // {c1,c2} (same idea, two labels) is still the freebie — the predicate
+    // reads the witness subset, not the idea count.
+    expect(
+      techniqueTierAcceptsBasis('challenging', { k: 1, rules: ['c1', 'c2'] }),
+    ).toBe(false)
+  })
+
+  it('expert and contradiction remain pure k contracts', () => {
+    expect(techniqueTierAcceptsBasis('expert', { k: 2, rules: ['c1', 'c3'] })).toBe(true)
+    expect(techniqueTierAcceptsBasis('expert', { k: 2, rules: ['c3', 'c4'] })).toBe(true)
+    expect(techniqueTierAcceptsBasis('expert', { k: 1, rules: ['c3'] })).toBe(false)
+    expect(techniqueTierAcceptsBasis('contradiction', { k: -1, rules: [] })).toBe(true)
+    expect(techniqueTierAcceptsBasis('contradiction', { k: 2, rules: ['c1', 'c3'] })).toBe(false)
   })
 })
 
@@ -407,9 +547,17 @@ function assertTechniqueTierBoard(
   expect(generated.csPasses).toBe(certified.csPasses)
   expect(generated.csTrials).toBe(certified.csTrials)
   // Gate: the difficulty target itself — never inferred from the
-  // certificate above; the 16-subset enumeration is the authority.
+  // certificate above; the 16-subset enumeration is the authority. The
+  // FULL tier contract runs through the engine's predicate (for
+  // 'challenging': k = 1 AND no line-confinement witness), asserted here
+  // field by field so a contract regression names the broken piece.
   const basis = measureMinimumBasis(generated.puzzle.colours, n)
   expect(basis.k).toBe(TECHNIQUE_TIER_TARGET[difficulty])
+  expect(techniqueTierAcceptsBasis(difficulty, basis)).toBe(true)
+  if (difficulty === 'challenging') {
+    expect(basis.rules).not.toContain('c1')
+    expect(basis.rules).not.toContain('c2')
+  }
   return generated
 }
 
@@ -629,9 +777,16 @@ describe('generateStarBattle determinism across the battery', () => {
   })
 
   it('technique tiers are byte-identical across repeated generations', { timeout: 120_000 }, () => {
-    for (const difficulty of TECHNIQUE_DIFFICULTIES) {
-      const first = generateStarBattle({ n: 10, seed: 4242, difficulty })
-      const second = generateStarBattle({ n: 10, seed: 4242, difficulty })
+    // Side split per the re-measured availability (challenging at n = 5;
+    // expert/contradiction at n = 10).
+    const cases: ReadonlyArray<readonly [number, (typeof TECHNIQUE_DIFFICULTIES)[number]]> = [
+      [5, 'challenging'],
+      [10, 'expert'],
+      [10, 'contradiction'],
+    ]
+    for (const [n, difficulty] of cases) {
+      const first = generateStarBattle({ n, seed: 4242, difficulty })
+      const second = generateStarBattle({ n, seed: 4242, difficulty })
       expect(second.puzzle.colours).toEqual(first.puzzle.colours)
       expect(second.puzzle.solution).toEqual(first.puzzle.solution)
       expect(second.waves).toBe(first.waves)
@@ -691,84 +846,164 @@ describe('generateStarBattle technique-tier measurements (acceptance, wall-clock
     return sorted[Math.floor(sorted.length / 2)]
   }
 
-  // The k-targeted tiers share these rows; 'contradiction' has its own
-  // measurement below (its generation cost is a different shape — every
-  // accepted board pays the 16-subset enumeration plus a confinement-meter
-  // walk — and its target k is -1, not comparable to these medians).
-  const K_TIERS = ['challenging', 'expert'] as const
-
-  it('n=10: per-tier acceptance and wall-clock, with waves at the minimal basis', () => {
-    const report: Record<string, string> = {}
-    for (const difficulty of K_TIERS) {
+  it('challenging under the new contract: acceptance, wall-clock, witnesses at n = 4..8', () => {
+    // Measured 2026-10-07 with the non-freebie contract (probe, this
+    // machine). Challenging now REQUIRES a non-line-confinement witness,
+    // so it generates reliably only where that class exists: n = 4
+    // (24/24 non-freebie walks — the domino fallback has no whole-line
+    // owner) and n = 5 (~19% per walk); n = 7..8 are thin (~4% at n = 8,
+    // Wilson 1.6–10%). Witnesses on accepted boards are {c3}/{c4} BY
+    // CONTRACT — the {c1} freebie is rejected at gate (d). The walls
+    // here are generous ceilings (a regression that collapses acceptance
+    // fails on giveUps, not on a tight millisecond bound); the n = 10/15
+    // rarity and both generation outcomes are pinned in the next test.
+    const rows: ReadonlyArray<readonly [number, readonly number[]]> = [
+      [4, [11, 2222, 333333, 4444]],
+      [5, [11, 2222, 333333, 404, 505, 606]],
+      [7, [11, 2222, 333333, 404, 505, 606]],
+      [8, [11, 2222, 333333, 404, 505, 606, 707, 808]],
+    ]
+    for (const [n, seeds] of rows) {
       const clocks: number[] = []
-      const witnessWaves: number[] = []
+      const witnesses: string[] = []
       let giveUps = 0
-      for (const seed of [101, 202, 303, 404, 505, 606, 707, 808]) {
+      for (const seed of seeds) {
         try {
           const started = performance.now()
-          const board = generateStarBattle({ n: 10, seed, difficulty })
+          const board = generateStarBattle({ n, seed, difficulty: 'challenging' })
           clocks.push(performance.now() - started)
-          // The tier contract, per board: the basis is exactly the target,
-          // and the witness solve's wave count is the depth-at-difficulty
-          // signal (the third human board is also k = 1 but needs 13
-          // witness waves where these boards need far fewer — k alone is
-          // not the whole axis, so the waves travel with the report).
-          const basis = measureMinimumBasis(board.puzzle.colours, 10)
-          expect(basis.k).toBe(TECHNIQUE_TIER_TARGET[difficulty])
-          witnessWaves.push(basis.waves)
+          const basis = measureMinimumBasis(board.puzzle.colours, n)
+          expect(basis.k).toBe(1)
+          expect(basis.rules).not.toContain('c1')
+          expect(basis.rules).not.toContain('c2')
+          witnesses.push(`{${basis.rules.join(',')}}`)
         } catch (error) {
           expect(error).toBeInstanceOf(StarTechniqueTierBudgetExhaustedError)
           giveUps += 1
         }
       }
-      report[`n=10 ${difficulty}`] =
-        `median=${median(clocks).toFixed(0)}ms all=[${clocks.map((t) => t.toFixed(0)).join(',')}] ` +
-        `witnessWaves=[${witnessWaves.join(',')}] giveUps=${giveUps}/8`
-      expect(median(clocks)).toBeLessThan(difficulty === 'expert' ? 2000 : 1000)
+      console.log(
+        `challenging n=${n}: median=${median(clocks).toFixed(0)}ms ` +
+          `witnesses=[${witnesses.join(',')}] giveUps=${giveUps}/${seeds.length}`,
+      )
       expect(giveUps).toBe(0)
     }
-    console.log(`technique tiers n=10 — ${Object.entries(report).map(([k, v]) => `${k}: ${v}`).join(' | ')}`)
+  }, 180_000)
+
+  it('challenging at n = 10 and n = 15: rare, honest — accepts in-contract boards, throws the typed error when the stream stalls', () => {
+    // The measured rarity (2026-10-07, deep probe, this machine): the
+    // non-freebie k = 1 class decays with side — n = 5 ≈ 19% per walk,
+    // n = 8 ≈ 4% (Wilson 1.6–10%), n = 10 ≈ 0.8% (Wilson 0.2–3.0%),
+    // n = 15 0/72 walks (Wilson upper 5%). At n = 10 a generation still
+    // succeeds about a third of the time (point estimate) — the seeds
+    // below are pinned to BOTH outcomes: seed 101 accepts at walk 17 with
+    // witness {c3}; seed 104 exhausts 48 walks on the freebie class
+    // (lastWitness {c1}) and throws. At n = 15 the stream stalls; the
+    // error's REASON is machine-speed-dependent — wall clock on this
+    // machine, walk-attempts on a faster one — so only the typed error
+    // itself is pinned there, per the module doc's determinism caveat.
+    const accepted = generateStarBattle({ n: 10, seed: 101, difficulty: 'challenging' })
+    const basis = measureMinimumBasis(accepted.puzzle.colours, 10)
+    expect(basis.k).toBe(1)
+    expect(basis.rules).not.toContain('c1')
+    expect(basis.rules).not.toContain('c2')
+
+    let caught: unknown
+    try {
+      generateStarBattle({ n: 10, seed: 104, difficulty: 'challenging' })
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(StarTechniqueTierBudgetExhaustedError)
+    const failure = caught as StarTechniqueTierBudgetExhaustedError
+    expect(failure.difficulty).toBe('challenging')
+    expect(failure.targetK).toBe(1)
+    expect(failure.n).toBe(10)
+    // 48 walks fit n = 10's wall budget on any machine — this reason IS
+    // deterministic. The stream stalled on the freebie class.
+    expect(failure.reason).toBe('walk-attempts')
+    expect(failure.lastK).toBe(1)
+    expect(failure.lastWitness).not.toBeNull()
+
+    caught = undefined
+    try {
+      generateStarBattle({ n: 15, seed: 111, difficulty: 'challenging' })
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(StarTechniqueTierBudgetExhaustedError)
+    const large = caught as StarTechniqueTierBudgetExhaustedError
+    expect(large.difficulty).toBe('challenging')
+    expect(large.targetK).toBe(1)
+    expect(large.n).toBe(15)
+  }, 120_000)
+
+  it('n=10: expert per-tier acceptance and wall-clock, with waves at the minimal basis', () => {
+    const difficulty = 'expert' as const
+    const clocks: number[] = []
+    const witnessWaves: number[] = []
+    let giveUps = 0
+    for (const seed of [101, 202, 303, 404, 505, 606, 707, 808]) {
+      try {
+        const started = performance.now()
+        const board = generateStarBattle({ n: 10, seed, difficulty })
+        clocks.push(performance.now() - started)
+        // The tier contract, per board: the basis is exactly the target,
+        // and the witness solve's wave count is the depth-at-difficulty
+        // signal (the third human board is also k = 1 but needs 13
+        // witness waves where these boards need far fewer — k alone is
+        // not the whole axis, so the waves travel with the report).
+        const basis = measureMinimumBasis(board.puzzle.colours, 10)
+        expect(basis.k).toBe(TECHNIQUE_TIER_TARGET[difficulty])
+        witnessWaves.push(basis.waves)
+      } catch (error) {
+        expect(error).toBeInstanceOf(StarTechniqueTierBudgetExhaustedError)
+        giveUps += 1
+      }
+    }
+    console.log(
+      `n=10 expert: median=${median(clocks).toFixed(0)}ms ` +
+        `all=[${clocks.map((t) => t.toFixed(0)).join(',')}] ` +
+        `witnessWaves=[${witnessWaves.join(',')}] giveUps=${giveUps}/8`,
+    )
+    expect(median(clocks)).toBeLessThan(2000)
+    expect(giveUps).toBe(0)
   }, 30000)
 
-  it('n=15: per-tier acceptance and wall-clock, with waves at the minimal basis', () => {
-    const report: Record<string, string> = {}
-    for (const difficulty of K_TIERS) {
-      const clocks: number[] = []
-      const witnessWaves: number[] = []
-      let giveUps = 0
-      for (const seed of [111, 222, 333, 444, 555, 666]) {
-        try {
-          const started = performance.now()
-          const board = generateStarBattle({ n: 15, seed, difficulty })
-          clocks.push(performance.now() - started)
-          const basis = measureMinimumBasis(board.puzzle.colours, 15)
-          expect(basis.k).toBe(TECHNIQUE_TIER_TARGET[difficulty])
-          witnessWaves.push(basis.waves)
-          // n=15 technique boards are covered here for connectivity: the
-          // battery above stops at n=10 to keep the suite fast.
-          expect(countComponentsPerRegion(board.puzzle.colours, 15)).toEqual(
-            Array.from({ length: 15 }, () => 1),
-          )
-        } catch (error) {
-          expect(error).toBeInstanceOf(StarTechniqueTierBudgetExhaustedError)
-          giveUps += 1
-        }
+  it('n=15: expert per-tier acceptance and wall-clock, with waves at the minimal basis', () => {
+    const difficulty = 'expert' as const
+    const clocks: number[] = []
+    const witnessWaves: number[] = []
+    let giveUps = 0
+    for (const seed of [111, 222, 333, 444, 555, 666]) {
+      try {
+        const started = performance.now()
+        const board = generateStarBattle({ n: 15, seed, difficulty })
+        clocks.push(performance.now() - started)
+        const basis = measureMinimumBasis(board.puzzle.colours, 15)
+        expect(basis.k).toBe(TECHNIQUE_TIER_TARGET[difficulty])
+        witnessWaves.push(basis.waves)
+        // n=15 technique boards are covered here for connectivity: the
+        // battery above stops at n = 10 to keep the suite fast.
+        expect(countComponentsPerRegion(board.puzzle.colours, 15)).toEqual(
+          Array.from({ length: 15 }, () => 1),
+        )
+      } catch (error) {
+        expect(error).toBeInstanceOf(StarTechniqueTierBudgetExhaustedError)
+        giveUps += 1
       }
-      report[`n=15 ${difficulty}`] =
-        `median=${median(clocks).toFixed(0)}ms all=[${clocks.map((t) => t.toFixed(0)).join(',')}] ` +
-        `witnessWaves=[${witnessWaves.join(',')}] giveUps=${giveUps}/6`
-      // Expert at n=15 samples k=2 at ~8% per walk, so 48 walks keep the
-      // give-up probability under ~2% while the 30 s wall clock bounds the
-      // worst case at large sides. The input rotation (walk-input phase,
-      // TECHNIQUE_WALK_INPUT_MENU) makes roughly half the generations
-      // descend from a starter seed — measured 2026-10-07 medians 5.7 s
-      // (challenging) / 5.1 s (expert) with zero give-ups — so the
-      // challenging ceiling moved from 5 s to 12 s; a regression that
-      // collapses the acceptance rate still fails here loudly.
-      expect(median(clocks)).toBeLessThan(TECHNIQUE_TIER_TARGET[difficulty] === 2 ? 15000 : 12000)
-      expect(giveUps).toBeLessThanOrEqual(2)
     }
-    console.log(`technique tiers n=15 — ${Object.entries(report).map(([k, v]) => `${k}: ${v}`).join(' | ')}`)
+    console.log(
+      `n=15 expert: median=${median(clocks).toFixed(0)}ms ` +
+        `all=[${clocks.map((t) => t.toFixed(0)).join(',')}] ` +
+        `witnessWaves=[${witnessWaves.join(',')}] giveUps=${giveUps}/6`,
+    )
+    // Expert at n=15 samples k=2 at a per-walk rate the 48-walk budget
+    // turns into ~95%+ per-generation success (measured 2026-10-07:
+    // acceptance 23/48 walks at n = 10, 4/11 at n = 15 under wall-clock
+    // truncation; zero give-ups over the pin seeds at both sizes).
+    expect(median(clocks)).toBeLessThan(15000)
+    expect(giveUps).toBeLessThanOrEqual(2)
   }, 180000)
 
   it('contradiction tier: acceptance, wall-clock, and the cs cost distribution (n = 8..10)', () => {
@@ -812,12 +1047,12 @@ describe('generateStarBattle technique-tier measurements (acceptance, wall-clock
     // walkStarBattleBoard directly so the distribution is unbiased by the
     // acceptance filter; the tiers above pin that off-target k is never
     // accepted. Under the matching engine the BASE-meter stream at n = 10
-    // is currently all k = 1 in this seed range — confinement got
-    // stronger, so higher-k boards at this size are rarer; the expert tier
-    // still lands them within its walk budget (acceptance pinned above).
-    // k = -1 boards do not occur on the base-meter stream here at all:
-    // they are manufactured by the 'contradiction' tier's confinement
-    // meter instead (acceptance pinned above).
+    // is k = 2 dominant ({c1,c3} mostly) with a k = -1 tail and few k = 1
+    // boards — ALL of them line-confinement witnesses (the measured null
+    // the challenging re-tier rests on: 0/156 non-freebie k = 1 boards).
+    // k = -1 boards occur on the base-meter stream at both sizes; the
+    // 'contradiction' tier manufactures its k = -1 boards with the
+    // confinement meter instead (acceptance pinned above).
     for (const [n, seeds] of [
       [10, [51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62]],
       [15, [71, 72, 73, 74, 75, 76]],
@@ -918,12 +1153,20 @@ describe('technique-tier walk-input rotation', () => {
   })
 
   it('generated technique boards carry the endpoint signature, measured after acceptance', () => {
-    for (const tier of TECHNIQUE_DIFFICULTIES) {
-      const board = generateStarBattle({ n: 10, seed: 20_240, difficulty: tier })
+    // Sides per the re-measured availability: challenging under the new
+    // contract generates at n = 4..8, not at n = 10 (the null is pinned
+    // in the measurement describe above); expert/contradiction unchanged.
+    const cases: ReadonlyArray<readonly [number, (typeof TECHNIQUE_DIFFICULTIES)[number], number]> = [
+      [5, 'challenging', 20_240],
+      [10, 'expert', 20_240],
+      [10, 'contradiction', 20_240],
+    ]
+    for (const [n, tier, seed] of cases) {
+      const board = generateStarBattle({ n, seed, difficulty: tier })
       expect(board.signature).toBeDefined()
       // The attached signature is the measurement a caller would make
       // themselves — the attachment adds no information and removes none.
-      const independent = measureStarBoardSignature(board.puzzle.colours, 10)
+      const independent = measureStarBoardSignature(board.puzzle.colours, n)
       expect(board.signature).toEqual(independent)
       expect(board.signature?.k).toBe(TECHNIQUE_TIER_TARGET[tier])
       expect(starSignatureKey(independent)).toContain(`${board.signature?.k}|`)
@@ -937,22 +1180,30 @@ describe('technique-tier walk-input rotation', () => {
     }
   })
 
-  it('the rotation measurably diversifies the challenging tier at n = 10', () => {
-    // Fixed spaced seeds (the per-seed phase clusters on consecutive seeds —
-    // measured in the diversity probe; spacing makes the phase mix). The
-    // pins are the MEASURED rotation effects of 2026-10-07, not the target
-    // the study hoped for: the (k, witness) class modal share STAYS 1.0
-    // ({c1} — see the report), while the full-tuple share and the sea
-    // profile DO move. Those true effects are what the contract pins.
-    const seeds = [11_001, 21_007, 31_013, 41_019, 51_023, 61_031, 71_037, 81_041]
+  it('the rotation measurably diversifies the challenging tier at n = 8', () => {
+    // Fixed spaced seeds, all verified to generate under the new
+    // contract (the n = 8 per-walk acceptance is ~6%, so a random seed
+    // gives up ~5% of the time — these twelve were scanned, the first
+    // eight taken; spacing keeps the phase mixed). Under the OLD
+    // contract this test documented the null — the (k, witness) class
+    // modal share STAYED 1.0 ({c1}) no matter the rotation. Under the
+    // NEW contract the {c1} class is rejected at gate (d), so the
+    // measured class mix here is {c3}×4 / {c4}×4 (modal class share
+    // 0.5 — the diversity target the study wanted) and every full
+    // signature key is distinct (modal full-tuple share 0.125). The
+    // pins are these measured effects, not the target hoped for.
+    const seeds = [11_998, 13_992, 15_986, 16_983, 17_980, 18_977, 20_971, 23_962]
     const collect = (): { keys: string[]; coreScores: Set<number>; classes: Set<string> } => {
       const keys: string[] = []
       const coreScores = new Set<number>()
       const classes = new Set<string>()
       for (const seed of seeds) {
-        const board = generateStarBattle({ n: 10, seed, difficulty: 'challenging' })
+        const board = generateStarBattle({ n: 8, seed, difficulty: 'challenging' })
         const signature = board.signature
         expect(signature).toBeDefined()
+        // The contract, per board: no line-confinement witness.
+        expect(signature!.witness).not.toContain('c1')
+        expect(signature!.witness).not.toContain('c2')
         keys.push(starSignatureKey(signature!))
         coreScores.add(signature!.coreScore)
         classes.add(`${signature!.k}|${signature!.witness.join('+')}`)
@@ -964,8 +1215,12 @@ describe('technique-tier walk-input rotation', () => {
     // Determinism: the rotated generation is reproducible per (n, seed, tier).
     expect(collect()).toEqual(first)
 
-    // The full-tuple modal share over the window is below the all-same
-    // mark (measured 0.375 on this seed set).
+    // The class layer is now diverse: two classes ({c3}, {c4}), neither
+    // the {c1} freebie (measured {c3}×4 / {c4}×4 on this seed set — a
+    // modal class share of 0.5, the diversity target the study wanted).
+    expect(first.classes.size).toBeGreaterThanOrEqual(2)
+    // The full-tuple modal share over the window (measured 0.125 — every
+    // key distinct).
     let window = createStarSignatureWindow()
     for (const key of first.keys) {
       window = recordStarSignature(window, key)
@@ -974,9 +1229,8 @@ describe('technique-tier walk-input rotation', () => {
     expect(stats.boards).toBe(seeds.length)
     expect(stats.modalSignatureShare).toBeLessThanOrEqual(0.5)
 
-    // The sea profile no longer sits on every board: the rotation breaks
-    // the structural monotony even where the witness class holds (measured
-    // coreScores {4, 5} on this seed set — pre-rotation it was {5} only).
+    // The sea profile no longer sits on every board (measured
+    // coreScores {4, 5} on this seed set).
     expect(first.coreScores.size).toBeGreaterThanOrEqual(2)
-  }, 120_000)
+  }, 180_000)
 })
