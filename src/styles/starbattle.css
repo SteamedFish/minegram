@@ -341,6 +341,37 @@
   padding-inline: var(--sp-1);
 }
 
+/* A tier the engine cannot print at the current size: legible but not
+   selectable, and the hover treatment stands down so the pill never looks
+   clickable. The checked one keeps its accent border — dimmed — so the player
+   can still see which tier they are on while they pick another. */
+.mg-star-difficulty .mg-seg__label[data-unavailable='true'] {
+  opacity: var(--cell-dim);
+  cursor: not-allowed;
+}
+
+.mg-star-difficulty .mg-seg__label[data-unavailable='true']:hover {
+  border-color: var(--rule);
+  color: var(--ink-2);
+}
+
+/* Said under the difficulty control when the live tier is unavailable at the
+   live size: a disabled pill alone would read as a rendering bug. */
+.mg-star-difficulty__note {
+  margin: var(--sp-1) 0 0;
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+
+/* The failure card's last word: the toolbar above it is the real escape. */
+.mg-star-failure__note {
+  margin: var(--sp-3) 0 0;
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
 /* ---- lives: pips, the spent ones dimmed ---- */
 
 .mg-star-pips {

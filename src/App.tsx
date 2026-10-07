@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MAX_STAR_LIVES, MAX_STAR_SIDE, MIN_STAR_LIVES, MIN_STAR_SIDE } from './domain/starBattle'
-import { DEFAULT_LOCALE, failureCopy, getCopy, interpolate, type Copy, type Locale } from './ui/copy'
+import { DEFAULT_LOCALE, failureCopy, getCopy, interpolate, type Locale } from './ui/copy'
 import {
   getGameStore,
   normalizeDraft,
@@ -9,7 +9,7 @@ import {
 } from './ui/gameStore'
 import { useUiSnapshot } from './ui/useGameSnapshot'
 import { useStarBattleSnapshot } from './ui/useStarBattleSnapshot'
-import { getStarBattleStore, type StarBattleUiStatus } from './ui/starBattleStore'
+import { getStarBattleStore } from './ui/starBattleStore'
 import { failureKind } from './ui/viewModel'
 import {
   resumeAvailable,
@@ -28,7 +28,7 @@ import { RoundBanner } from './ui/components/RoundBanner'
 import { SettingsPanel } from './ui/components/SettingsPanel'
 import { defaultDraft } from './ui/components/defaults'
 import { StatusRegion } from './ui/components/StatusRegion'
-import { StarBattleSurface, getStarCopy } from './ui/components/StarBattleSurface'
+import { StarBattleSurface, type StarFailureInfo } from './ui/components/StarBattleSurface'
 import {
   defaultFingerMarking,
   useLocale,
@@ -53,10 +53,13 @@ import {
  *   starbattle The shared games bar (back + the game's name) as a sibling
  *              above the shell, then StarBattleSurface's own toolbar (meter,
  *              difficulty, size, lives) plus the global footer. No settings
- *              form, no legend — Star Battle has no minegram chrome. While no
- *              certified board exists the surface is not rendered at all: an
- *              idle/generating card states the case, and a generation failure
- *              gets its own card built from the shared failureCopy machinery,
+ *              form, no legend — Star Battle has no minegram chrome. The
+ *              surface renders in every state: while no certified board
+ *              exists it states the case itself, and a generation failure
+ *              becomes a card INSIDE the surface, under the toolbar, so the
+ *              size and difficulty controls stay reachable from the failure
+ *              state — a failed board is never a dead end. Failure strings
+ *              are projected here from the shared failureCopy machinery,
  *              never from machine text.
  *
  * Both stores stay alive across screens (they are module singletons); leaving
@@ -126,7 +129,6 @@ export function App() {
   const keys = useMemo(() => getCopy(DEFAULT_LOCALE), [])
   const [locale, setLocale] = useLocale(keys)
   const t = useMemo(() => getCopy(locale), [locale])
-  const starCopy = useMemo(() => getStarCopy(locale === 'zh-CN' ? 'zh' : 'en'), [locale])
   const [theme, setTheme] = useTheme(keys)
 
   // Local UI state lives here, not in the store (§4.2): the store owns the game, this
@@ -268,57 +270,67 @@ export function App() {
   }
 
   if (screen === 'starbattle') {
+    // The failure card lives inside the surface, so the surface always renders
+    // and the toolbar is never replaced by the failure. The card's strings are
+    // projected HERE, at the producer: failureCopy localises the reason token
+    // and failureKind decides whether retry is meaningful, so the surface
+    // receives player-facing strings only.
+    const starFailure: StarFailureInfo | null =
+      starSnapshot.failure === null
+        ? null
+        : (() => {
+            const reason = starSnapshot.failure.reason
+            const text = failureCopy(t, reason)
+            return {
+              reason,
+              headline: text.headline,
+              explanation: text.explanation,
+              remedies: text.remedies,
+              retryable: failureKind(reason) !== 'deterministic',
+            }
+          })()
     return (
       <>
         <GameBar locale={locale} game="starbattle" onBack={backToPicker} />
         <div className="mg-shell" data-screen="starbattle">
         <main className="mg-star-main">
-          {starSnapshot.failure !== null ? (
-            <StarFailureCard
-              t={t}
-              reason={starSnapshot.failure.reason}
-              backLabel={starCopy.back}
-              onRetry={() => {
-                starStore.actions.retry()
-              }}
-              onBack={backToPicker}
-            />
-          ) : starSnapshot.puzzle === null ? (
-            <StarEmptyState status={starSnapshot.status} copy={starCopy} />
-          ) : (
-            <StarBattleSurface
-              locale={locale === 'zh-CN' ? 'zh' : 'en'}
-              puzzle={starSnapshot.puzzle}
-              marks={starSnapshot.marks}
-              status={starSnapshot.status}
-              lives={starSnapshot.lives}
-              maxLives={starSnapshot.maxLives}
-              mistakes={starSnapshot.mistakes}
-              streak={starSnapshot.streak}
-              difficulty={starSnapshot.difficulty}
-              minSide={MIN_STAR_SIDE}
-              maxSide={MAX_STAR_SIDE}
-              minLives={MIN_STAR_LIVES}
-              maxLivesCeiling={MAX_STAR_LIVES}
-              onMark={(row, col, next) => {
-                // `null` is a real retract and must pass through untouched.
-                starStore.actions.onMark(row, col, next)
-              }}
-              onNewRound={() => {
-                starStore.actions.nextRound()
-              }}
-              onDifficultyChange={(difficulty) => {
-                starStore.actions.setDifficulty(difficulty)
-              }}
-              onSizeChange={(next) => {
-                starStore.actions.setSide(next)
-              }}
-              onMaxLivesChange={(next) => {
-                starStore.actions.setMaxLives(next)
-              }}
-              onBackToPicker={backToPicker}
-            />
-          )}
+          <StarBattleSurface
+            locale={locale === 'zh-CN' ? 'zh' : 'en'}
+            puzzle={starSnapshot.puzzle}
+            side={starSnapshot.side}
+            marks={starSnapshot.marks}
+            status={starSnapshot.status}
+            failure={starFailure}
+            lives={starSnapshot.lives}
+            maxLives={starSnapshot.maxLives}
+            mistakes={starSnapshot.mistakes}
+            streak={starSnapshot.streak}
+            difficulty={starSnapshot.difficulty}
+            minSide={MIN_STAR_SIDE}
+            maxSide={MAX_STAR_SIDE}
+            minLives={MIN_STAR_LIVES}
+            maxLivesCeiling={MAX_STAR_LIVES}
+            onMark={(row, col, next) => {
+              // `null` is a real retract and must pass through untouched.
+              starStore.actions.onMark(row, col, next)
+            }}
+            onNewRound={() => {
+              starStore.actions.nextRound()
+            }}
+            onRetry={() => {
+              starStore.actions.retry()
+            }}
+            onDifficultyChange={(difficulty) => {
+              starStore.actions.setDifficulty(difficulty)
+            }}
+            onSizeChange={(next) => {
+              starStore.actions.setSide(next)
+            }}
+            onMaxLivesChange={(next) => {
+              starStore.actions.setMaxLives(next)
+            }}
+            onBackToPicker={backToPicker}
+          />
         </main>
         {footer}
         </div>
@@ -464,86 +476,6 @@ export function App() {
         />
       </div>
     </>
-  )
-}
-
-/**
- * The pre-generate placeholder, owned by the shell rather than the surface:
- * `StarBattleSurface.puzzle` is non-nullable, so until a certified board
- * arrives the shell states the case itself, with the surface's own copy and
- * classes. Never a fabricated board.
- */
-function StarEmptyState({
-  status,
-  copy,
-}: {
-  readonly status: StarBattleUiStatus
-  readonly copy: ReturnType<typeof getStarCopy>
-}) {
-  const idle = status === 'idle'
-  return (
-    <div className="mg-star-empty" data-testid="star-empty">
-      <h2 className="mg-star-empty__title">
-        {idle ? copy.empty.idleTitle : copy.empty.generatingTitle}
-      </h2>
-      <p className="mg-star-empty__body">
-        {idle ? copy.empty.idleBody : copy.empty.generatingBody}
-      </p>
-    </div>
-  )
-}
-
-/**
- * The Star Battle generation-failure card. Every string comes from the shared
- * dictionaries — `failureCopy` localises the reason, `t.failure.actions` names
- * the buttons — so no star-battle-specific failure copy exists. Unlike
- * Minegram's `FailureReport` there is deliberately no Open-settings action:
- * Star Battle has no settings form, and a button that opens nothing is a lie.
- */
-function StarFailureCard({
-  t,
-  reason,
-  backLabel,
-  onRetry,
-  onBack,
-}: {
-  readonly t: Copy
-  readonly reason: string
-  readonly backLabel: string
-  readonly onRetry: () => void
-  readonly onBack: () => void
-}) {
-  const text = failureCopy(t, reason)
-  const deterministic = failureKind(reason) === 'deterministic'
-  return (
-    <section
-      className="mg-star-failure"
-      role="alert"
-      aria-atomic="true"
-      data-kind={deterministic ? 'deterministic' : 'retryable'}
-      data-reason={reason}
-      data-testid="star-failure"
-    >
-      <h2 className="mg-star-failure__headline">{text.headline}</h2>
-      <p className="mg-star-failure__explanation">{text.explanation}</p>
-      <ol className="mg-star-failure__remedies">
-        {text.remedies.map((remedy, index) => (
-          <li className="mg-star-failure__remedy" key={index}>
-            {remedy}
-          </li>
-        ))}
-      </ol>
-      <div className="mg-star-failure__actions">
-        {deterministic ? null : (
-          <button type="button" className="mg-button" onClick={onRetry}>
-            {t.failure.actions.retry}
-          </button>
-        )}
-        <button type="button" className="mg-button" onClick={onBack}>
-          {backLabel}
-        </button>
-      </div>
-    </section>
   )
 }
 
