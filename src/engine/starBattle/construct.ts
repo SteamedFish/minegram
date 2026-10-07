@@ -51,26 +51,69 @@
  * that is not fully connected, then resamples. The structural check is the
  * safety net, required, not optional.
  *
- * === Difficulty strip sets (measured bands below; do not retune) ===
+ * === Difficulty tiers (redefined 2026-10-07, measured bands below) ===
+ *
+ * Four tiers, two construction tiers solved by the base rules alone and
+ * two technique tiers the base rules cannot touch:
  *
  * - starter:     S = ∅ — regions 0..n-2 are singletons, region n-1 is the
- *   absorber sea. Collapses in 3 waves at every side.
- * - steady:      S = {1} ∪ {n-s .. n-2} with s = round(0.7n).
- * - challenging: S = {1..n-2} — every possible strip.
+ *   absorber sea. Base rules solve it; collapses in 3 waves at every side.
+ *   (Unchanged from the original three-tier scheme.)
+ * - steady:      S = {1..n-2} — every possible strip; the deepest
+ *   construction the theorem certifies. Base rules solve it. This IS the
+ *   old 'challenging' behaviour and wave bands, moved down one step.
+ * - challenging: base rules place ZERO stars, and the minimum confinement
+ *   basis ({@link measureMinimumBasis}) is exactly 1: one catalogue
+ *   technique (c1/c2/c3/c4, any single one) is necessary and sufficient.
+ *   Boards come from {@link walkStarBattleBoard} with rejection on k.
+ * - expert:      base rules place ZERO stars, and the minimum confinement
+ *   basis is exactly 2: no single technique suffices, some pair does.
+ *   Rejection on k = 2 over the same walk stream.
  *
- * Wave counts (frozen-state semantics, 2026-10-07, oracle lane):
+ * Construction wave counts (frozen-state semantics, 2026-10-07, oracle
+ * lane):
  *
- *     n     starter   steady      challenging
- *     8     3         11–15       11–15
- *     10    3         11–15       15–19
- *     12    3         13–17       17–23
- *     15    3         17–21       25–29
+ *     n     starter   steady
+ *     8     3         11–15
+ *     10    3         15–19
+ *     12    3         17–23
+ *     15    3         25–29
  *
- * KNOWN LIMITATION 1 (pre-existing, record do not fix): at n = 6–8,
- * s = round(0.7n) = n-2 makes steady's strip set equal challenging's, so
- * the two tiers coincide there (today's generator collides too: n=6
- * steady median 9 = challenging median 9). Separating them would retune
- * shipped difficulty semantics and is a separate decision for the player.
+ * (steady inherits the old challenging column). Technique tiers report the
+ * FULL-CATALOGUE wave count of the accepted board, not a base count — the
+ * base subset places nothing on them by definition.
+ *
+ * Measured in the walk stream (2026-10-07, seeds documented in
+ * minimumBasis tests and construct tests): k = 1 acceptance is ~75–92%
+ * (challenging usually lands on the first walk); k = 2 is ~8% at n = 15
+ * (~12 walks median, worst observed 18) and ~17% at n = 5. k = -1 boards
+ * (no confinement subset solves; see minimumBasis.ts) DO occur in the
+ * stream — measured at n = 8, 10 — and are rejected by both technique
+ * tiers; a "requires contradiction" tier would target exactly them. At n =
+ * 4 no k = 2 board was observed in 40 walks, so expert at n = 4 honestly
+ * exhausts its budget and throws {@link StarTechniqueTierBudgetExhaustedError}
+ * instead of returning an off-target board.
+ *
+ * Walk wall-clock (measured, load-bearing for the budgets below): median
+ * ~55 ms at n = 10, ~562 ms at n = 15 (max observed 1,586 ms) — tens of
+ * milliseconds at small n only. A single technique-tier generation is
+ * therefore ~12 walks ≈ 7 s median for expert at n = 15. Budgets:
+ * {@link TECHNIQUE_WALK_ATTEMPTS} walks or
+ * {@link TECHNIQUE_TIER_WALL_CLOCK_MS} wall-clock, whichever first;
+ * exceeding either throws the typed error. Wall clock gates only when the
+ * search gives up, never which board is accepted, so determinism holds.
+ *
+ * k alone is not the whole difficulty axis (third human reference board,
+ * n = 10, rated 非常有趣: also minBasis = 1, witness c2, but the witness
+ * solve takes 13 waves where generated k = 1 boards take ~4–6). The
+ * measurement tests therefore report WAVES AT THE MINIMAL BASIS alongside
+ * acceptance and wall-clock, per tier and side; a future tuning pass that
+ * wants "deep k = 1" boards has the signal ready.
+ *
+ * KNOWN LIMITATION 1 is RESOLVED by the redefinition: the old n = 6–8
+ * steady/challenging strip-set coincidence disappeared because steady now
+ * takes the full strip set and challenging no longer reads a strip set at
+ * all.
  *
  * === The n = 4, 5 fallback ===
  *
@@ -95,8 +138,9 @@
  * path for n ≤ 5 as belt and braces.
  *
  * KNOWN LIMITATION 2 (pre-existing, record do not fix): at n = 4 only
- * wave counts {3, 5} exist, so challenging's band is mathematically
- * unreachable; the existing floor min(5, n+1) still passes.
+ * wave counts {3, 5} exist, so steady's floor max(6, n + 2) is
+ * mathematically unreachable; the global floor min(5, n + 1) still passes.
+ * (The limitation moved with the bands from challenging to steady.)
  *
  * Acceptance: a board is accepted only if it is fully connected AND
  * {@link propagateStarBoard} solves it (all n stars placed). For n ≤ 5
@@ -112,12 +156,37 @@ import {
   type StarBattlePuzzle,
 } from '../../domain/starBattle'
 import { createSeededRandom, type SeededRandom } from '../rng'
+import { solveStarCatalogue } from './catalogue'
 import { countStarSolutions } from './count'
+import { measureMinimumBasis } from './minimumBasis'
 import { propagateStarBoard } from './propagate'
+import { StarWalkBudgetExhaustedError, walkStarBattleBoard } from './walk'
 
-export type StarDifficulty = 'starter' | 'steady' | 'challenging'
+/**
+ * The four difficulty tiers. 'starter' and 'steady' are CONSTRUCTION
+ * tiers: the painted board itself obeys the validity rule and the base
+ * rules solve it. 'challenging' and 'expert' are TECHNIQUE tiers: the
+ * board is found by descent ({@link walkStarBattleBoard}) and the base
+ * rules place nothing on it; what separates the two is the minimum
+ * confinement basis ({@link measureMinimumBasis}), 1 vs 2.
+ */
+export type StarDifficulty = 'starter' | 'steady' | 'challenging' | 'expert'
 
-export const STAR_DIFFICULTIES: readonly StarDifficulty[] = ['starter', 'steady', 'challenging']
+/** All tiers in progression order. */
+export const STAR_DIFFICULTIES: readonly StarDifficulty[] = [
+  'starter',
+  'steady',
+  'challenging',
+  'expert',
+]
+
+/** The construction tiers: solved by the base rules alone, painted directly. */
+type StarConstructionDifficulty = 'starter' | 'steady'
+
+/** True for the technique tiers ('challenging' | 'expert'). */
+function isTechniqueTier(difficulty: StarDifficulty): difficulty is 'challenging' | 'expert' {
+  return difficulty === 'challenging' || difficulty === 'expert'
+}
 
 export interface StarGenerationRequest {
   readonly n: number
@@ -127,37 +196,109 @@ export interface StarGenerationRequest {
 
 export interface StarGeneratedBoard {
   readonly puzzle: StarBattlePuzzle
-  /** The measured wave count of the accepted board — the depth metric. */
+  /**
+   * The measured wave count of the accepted board — the depth metric. For
+   * the construction tiers this is the BASE solver's wave count; for the
+   * technique tiers the base solver places nothing, so it is the full-
+   * catalogue (base + confinement + case-splitting) wave count.
+   */
   readonly waves: number
   readonly difficulty: StarDifficulty
 }
 
 /**
- * Attempts per generation call, per tier. Challenging searches T-space for
- * the maximum measured wave count; starter and steady only need enough
- * samples to land inside their band. Every accepted board is valid and
- * unique regardless, so the budget trades quality of fit against
- * wall-clock, never against correctness.
+ * Attempts per construction-tier generation call. Steady searches T-space
+ * for the maximum measured wave count (it inherited the old challenging
+ * contract); starter only needs enough samples to land inside its band.
+ * Every accepted board is valid and unique regardless, so the budget
+ * trades quality of fit against wall-clock, never against correctness.
+ * Technique tiers budget WALKS instead; see {@link TECHNIQUE_WALK_ATTEMPTS}.
  */
-const ATTEMPTS: Readonly<Record<StarDifficulty, number>> = {
+const ATTEMPTS: Readonly<Record<StarConstructionDifficulty, number>> = {
   starter: 8,
-  steady: 16,
-  challenging: 48,
+  steady: 48,
 }
 
 /**
- * Target bands on the measured wave count, as functions of n. A board
- * inside its tier's band scores 0; outside, the distance to the nearest
- * edge. The best-scoring attempt wins, so an expired budget still returns
- * the closest-measured board rather than failing.
+ * Technique-tier budgets: the maximum number of descent walks per
+ * generation call, and the maximum wall-clock for the whole rejection
+ * loop. Measured against the walk stream (module doc): k = 2 acceptance is
+ * ~8% at n = 15, so 48 walks keep the give-up probability under ~2% while
+ * the 30 s wall clock bounds the worst case at large sides. Exceeding
+ * either throws {@link StarTechniqueTierBudgetExhaustedError}; a search
+ * that ran out of budget NEVER returns an off-target board.
  */
-function waveBand(n: number, difficulty: StarDifficulty): readonly [number, number] {
+const TECHNIQUE_WALK_ATTEMPTS = 48
+const TECHNIQUE_TIER_WALL_CLOCK_MS = 30_000
+
+/**
+ * The minimum-basis target per technique tier: 'challenging' boards need
+ * exactly one confinement technique, 'expert' boards need exactly two.
+ */
+const TECHNIQUE_TIER_TARGET: Readonly<Record<'challenging' | 'expert', number>> = {
+  challenging: 1,
+  expert: 2,
+}
+
+/**
+ * Loud, typed failure when a technique-tier generation exhausts its walk
+ * or wall-clock budget before finding a board whose minimum basis hits the
+ * tier's target. Never carries a board: partial progress is not a
+ * difficulty certificate.
+ */
+export class StarTechniqueTierBudgetExhaustedError extends Error {
+  readonly n: number
+  readonly seed: number
+  readonly difficulty: 'challenging' | 'expert'
+  readonly targetK: number
+  readonly walks: number
+  /** Minimum basis of the last rejected walk, when one completed. */
+  readonly lastK: number | null
+  readonly elapsedMs: number
+  readonly reason: 'walk-attempts' | 'wall-clock'
+
+  constructor(fields: {
+    readonly n: number
+    readonly seed: number
+    readonly difficulty: 'challenging' | 'expert'
+    readonly targetK: number
+    readonly walks: number
+    readonly lastK: number | null
+    readonly elapsedMs: number
+    readonly reason: 'walk-attempts' | 'wall-clock'
+  }) {
+    super(
+      `star battle ${fields.difficulty} generation exhausted its ${fields.reason} budget ` +
+        `(n=${fields.n}, seed=${fields.seed}, walks=${fields.walks}, ` +
+        `targetK=${fields.targetK}, lastK=${String(fields.lastK)}, ` +
+        `${fields.elapsedMs.toFixed(1)}ms) without reaching a board of that difficulty`,
+    )
+    this.name = 'StarTechniqueTierBudgetExhaustedError'
+    this.n = fields.n
+    this.seed = fields.seed
+    this.difficulty = fields.difficulty
+    this.targetK = fields.targetK
+    this.walks = fields.walks
+    this.lastK = fields.lastK
+    this.elapsedMs = fields.elapsedMs
+    this.reason = fields.reason
+  }
+}
+
+/**
+ * Target bands on the measured base-solver wave count, as functions of n.
+ * Construction tiers only: a board inside its tier's band scores 0;
+ * outside, the distance to the nearest edge. The best-scoring attempt
+ * wins, so an expired budget still returns the closest-measured board
+ * rather than failing. Technique tiers have no wave band — they select on
+ * the minimum basis instead — and never reach this function.
+ */
+function waveBand(n: number, difficulty: StarConstructionDifficulty): readonly [number, number] {
   switch (difficulty) {
     case 'starter':
       return [3, 5]
     case 'steady':
-      return [Math.max(4, n + 1), 2 * n + 2]
-    case 'challenging':
+      // The old 'challenging' bands, moved down one step.
       return [Math.max(6, n + 2), 2 * n + 4]
   }
 }
@@ -203,27 +344,16 @@ export function admissibleStarPermutation(n: number, rng: SeededRandom): readonl
 }
 
 /**
- * The strip set S ⊆ {1..n-2} for a side and tier: which regions (other
- * than the absorber sea) grow a horizontal strip into the row above their
- * star. See the module doc for the measured wave bands and for the known
- * n = 6–8 steady/challenging coincidence.
+ * The strip set S ⊆ {1..n-2} for a side and construction tier: which
+ * regions (other than the absorber sea) grow a horizontal strip into the
+ * row above their star. starter paints nothing; steady paints everything
+ * (the old challenging painting, moved down one step).
  */
-function stripSet(n: number, difficulty: StarDifficulty): ReadonlySet<number> {
+function stripSet(n: number, difficulty: StarConstructionDifficulty): ReadonlySet<number> {
   switch (difficulty) {
     case 'starter':
       return new Set()
-    case 'steady': {
-      // s = round(0.7n); strips are region 1 plus the s-2 topmost regions
-      // below the sea. At n = 6–8 this equals {1..n-2} (challenging) —
-      // pre-existing tier coincidence, recorded in the module doc.
-      const s = Math.round(0.7 * n)
-      const strips = new Set<number>([1])
-      for (let region = n - s; region <= n - 2; region += 1) {
-        strips.add(region)
-      }
-      return strips
-    }
-    case 'challenging':
+    case 'steady':
       return new Set(Array.from({ length: n - 2 }, (_, index) => index + 1))
   }
 }
@@ -314,7 +444,7 @@ function paintFallbackColours(
   n: number,
   permutation: readonly number[],
   rng: SeededRandom,
-  difficulty: StarDifficulty,
+  difficulty: StarConstructionDifficulty,
 ): Uint8Array {
   const colours = new Uint8Array(n * n).fill(n - 1)
   for (let row = 0; row < n; row += 1) {
@@ -401,30 +531,55 @@ function regionsConnected(colours: Uint8Array, n: number): boolean {
 
 /**
  * Generates a Star Battle puzzle for the requested side, seed and
- * difficulty. Always returns a board that is fully connected and whose
- * uniqueness is certified by {@link propagateStarBoard} (plus the exact
- * counter for the n = 4, 5 fallback); throws only on invalid input or an
- * internal invariant violation (the certificate failing on a construction
- * the theorem says cannot fail).
+ * difficulty.
+ *
+ * Construction tiers ('starter', 'steady') paint the connected strips-and-
+ * sea construction directly; acceptance requires full connectivity and a
+ * {@link propagateStarBoard} solve (plus the exact counter for the n = 4,
+ * 5 fallback), and throws only on invalid input or an internal invariant
+ * violation (the certificate failing on a construction the theorem says
+ * cannot fail).
+ *
+ * Technique tiers ('challenging', 'expert') descend to boards the base
+ * rules cannot place a single star on and reject-sample on the minimum
+ * confinement basis (1 or 2); see {@link generateTechniqueTierBoard} for
+ * the acceptance gates and the typed budget failure.
  *
  * Determinism: the same (n, seed, difficulty) always yields byte-identical
- * `colours` and `solution`, because every random draw comes from the
- * seeded RNG in a fixed order and attempt selection is a pure function of
- * the measured wave counts.
+ * `colours` and `solution`. Every random draw comes from the seeded RNG in
+ * a fixed order; wall-clock checks gate only when a search gives up, never
+ * which board is accepted.
  */
 export function generateStarBattle(request: StarGenerationRequest): StarGeneratedBoard {
-  const { n, seed, difficulty } = request
+  const { n, difficulty } = request
   assertStarBattleSide(n)
   if (!STAR_DIFFICULTIES.includes(difficulty)) {
     throw new TypeError(
       `difficulty must be one of ${STAR_DIFFICULTIES.join(', ')}; received ${String(difficulty)}`,
     )
   }
+  if (isTechniqueTier(difficulty)) {
+    return generateTechniqueTierBoard({ n, seed: request.seed, difficulty })
+  }
+  return generateConstructionBoard({ n, seed: request.seed, difficulty })
+}
 
+/**
+ * The construction-tier generator: paints the strips-and-sea construction
+ * (or the n = 4, 5 domino fallback) and selects the attempt that best
+ * fits the tier's wave band. See the module doc for the construction
+ * proof and the measured bands.
+ */
+function generateConstructionBoard(request: {
+  readonly n: number
+  readonly seed: number
+  readonly difficulty: StarConstructionDifficulty
+}): StarGeneratedBoard {
+  const { n, seed, difficulty: constructionDifficulty } = request
   const rng = createSeededRandom(seed)
-  const band = waveBand(n, difficulty)
-  const attempts = ATTEMPTS[difficulty]
-  const strips = stripSet(n, difficulty)
+  const band = waveBand(n, constructionDifficulty)
+  const attempts = ATTEMPTS[constructionDifficulty]
+  const strips = stripSet(n, constructionDifficulty)
 
   let bestColours: Uint8Array | null = null
   let bestSolution: readonly number[] | null = null
@@ -442,7 +597,7 @@ export function generateStarBattle(request: StarGenerationRequest): StarGenerate
       // structured domino painting (module doc), filtered by connectivity
       // and the exact counter.
       permutation = admissibleStarPermutation(n, rng)
-      colours = paintFallbackColours(n, permutation, rng, difficulty)
+      colours = paintFallbackColours(n, permutation, rng, constructionDifficulty)
     }
 
     // Structural safety net: every colour one 4-connected component.
@@ -466,14 +621,14 @@ export function generateStarBattle(request: StarGenerationRequest): StarGenerate
 
     const score = bandDistance(result.waves, band)
     // Deterministic tie-break inside an equal band distance: the shallowest
-    // measured board wins for starter, the deepest for challenging (its
-    // "best measured" contract), the first for steady.
+    // measured board wins for starter, the deepest for steady (its
+    // "best measured" contract, inherited from the old challenging tier).
     const prefer =
       score < bestScore ||
       (score === bestScore &&
         bestColours !== null &&
-        ((difficulty === 'challenging' && result.waves > bestWaves) ||
-          (difficulty === 'starter' && result.waves < bestWaves)))
+        ((constructionDifficulty === 'steady' && result.waves > bestWaves) ||
+          (constructionDifficulty === 'starter' && result.waves < bestWaves)))
     if (prefer) {
       bestColours = colours
       bestSolution = permutation
@@ -499,5 +654,139 @@ export function generateStarBattle(request: StarGenerationRequest): StarGenerate
   // admissibility and pairwise-distinct star colours.
   assertStarBattlePuzzle(puzzle)
 
-  return Object.freeze({ puzzle, waves: bestWaves, difficulty })
+  return Object.freeze({ puzzle, waves: bestWaves, difficulty: constructionDifficulty })
+}
+
+/**
+ * The technique-tier generator ('challenging', 'expert'): rejection
+ * sampling over {@link walkStarBattleBoard} on the minimum confinement
+ * basis. Each walk already descends to a board the base rules cannot
+ * start; this loop keeps walking (seeded, derived stream) until one lands
+ * on the tier's target k. A walk that exhausts ITS own budget is a
+ * rejected sample, not a failure — only this loop's budget is the tier's
+ * contract.
+ *
+ * Acceptance re-verifies every gate with this module's own instruments,
+ * independent of the walk's internal checks:
+ * - connectivity — {@link regionsConnected}, this file's flood fill, NOT
+ *   the walk's `regionStaysConnectedWithout`;
+ * - base stalls — {@link propagateStarBoard} (the production base solver)
+ *   places zero stars;
+ * - uniqueness — the full catalogue with case-splitting depth 1 solves
+ *   (a complete sound-rule solve is a uniqueness certificate), plus the
+ *   exact counter for n ≤ 5, matching the fallback's belt-and-braces;
+ * - difficulty — {@link measureMinimumBasis} returns exactly the tier's
+ *   target k.
+ *
+ * Budget: {@link TECHNIQUE_WALK_ATTEMPTS} walks or
+ * {@link TECHNIQUE_TIER_WALL_CLOCK_MS} wall-clock. Exceeding either throws
+ * {@link StarTechniqueTierBudgetExhaustedError}; a search that ran out of
+ * budget NEVER returns a board that misses its target.
+ *
+ * Determinism: the walk seeds derive in a fixed order from the request
+ * seed, so same (n, seed, difficulty) ⇒ byte-identical board; wall clock
+ * gates only when the search gives up, never which walk is accepted.
+ */
+function generateTechniqueTierBoard(request: {
+  readonly n: number
+  readonly seed: number
+  readonly difficulty: 'challenging' | 'expert'
+}): StarGeneratedBoard {
+  const { n, seed, difficulty } = request
+  const targetK = TECHNIQUE_TIER_TARGET[difficulty]
+  const rng = createSeededRandom(seed)
+  const startedAt = performance.now()
+  let lastK: number | null = null
+
+  for (let walk = 0; walk < TECHNIQUE_WALK_ATTEMPTS; walk += 1) {
+    if (performance.now() - startedAt >= TECHNIQUE_TIER_WALL_CLOCK_MS) {
+      throw new StarTechniqueTierBudgetExhaustedError({
+        n,
+        seed: rng.seed,
+        difficulty,
+        targetK,
+        walks: walk,
+        lastK,
+        elapsedMs: performance.now() - startedAt,
+        reason: 'wall-clock',
+      })
+    }
+
+    let walked: ReturnType<typeof walkStarBattleBoard>
+    try {
+      walked = walkStarBattleBoard({
+        n,
+        seed: rng.derive(`technique-walk-${walk}`).seed,
+        // 'steady' — the deepest CONSTRUCTION tier — seeds the descent.
+        // Seeding from a technique tier would recurse back into this loop.
+        seedDifficulty: 'steady',
+      })
+    } catch (error) {
+      if (error instanceof StarWalkBudgetExhaustedError) {
+        // An individual walk that ran out of budget is a rejected sample.
+        continue
+      }
+      throw error
+    }
+
+    // Gate (a): every colour one 4-connected component, by this module's
+    // own flood fill rather than the walk's internal gate.
+    if (!regionsConnected(walked.colours, n)) {
+      continue
+    }
+
+    // Gate (b): the base (production) solver places nothing on the board.
+    const base = propagateStarBoard(walked.colours, n)
+    if (base.solved || base.stars.length !== 0) {
+      // The walk's stop condition is basePlaced === 0; reaching this line
+      // is an internal invariant violation, reported loudly.
+      throw new Error(
+        `star battle technique-tier invariant violated: accepted walk board is base-solvable ` +
+          `(n=${n}, seed=${rng.seed}, walk=${walk}, placed=${base.stars.length})`,
+      )
+    }
+
+    // Gate (c): uniqueness certified by the full catalogue + case-splitting
+    // (a complete sound-rule solve is a uniqueness certificate), with the
+    // exact counter agreeing for the small sides, as in the fallback.
+    const certified = solveStarCatalogue(walked.colours, n, { csDepth: 1 })
+    if (!certified.solved) {
+      throw new Error(
+        `star battle technique-tier invariant violated: accepted walk board failed the catalogue certificate ` +
+          `(n=${n}, seed=${rng.seed}, walk=${walk})`,
+      )
+    }
+    if (n <= 5 && countStarSolutions(walked.colours, n, 2) !== 1) {
+      continue
+    }
+
+    // Gate (d): the difficulty target — the minimum confinement basis.
+    const basis = measureMinimumBasis(walked.colours, n)
+    lastK = basis.k
+    if (basis.k !== targetK) {
+      continue
+    }
+
+    const puzzle: StarBattlePuzzle = {
+      n,
+      seed: rng.seed,
+      colours: walked.colours,
+      solution: walked.solution,
+    }
+    assertStarBattlePuzzle(puzzle)
+    // `waves` here is the full-catalogue wave count of the accepted board —
+    // the base subset places nothing on a technique tier by definition.
+    return Object.freeze({ puzzle, waves: certified.waves, difficulty })
+  }
+
+  throw new StarTechniqueTierBudgetExhaustedError({
+    n,
+    seed: rng.seed,
+    difficulty,
+    targetK,
+    walks: TECHNIQUE_WALK_ATTEMPTS,
+    lastK,
+    elapsedMs: performance.now() - startedAt,
+    reason: 'walk-attempts',
+  })
 }
