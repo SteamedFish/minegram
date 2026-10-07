@@ -151,6 +151,60 @@
  * mathematically unreachable; the global floor min(5, n + 1) still passes.
  * (The limitation moved with the bands from challenging to steady.)
  *
+ * === The hub-free shaping stage (2026-10-07) ===
+ *
+ * Player requirement (measured, see structure.ts module doc): the human's
+ * favourite boards have NO hub region (a region adjacent to every other)
+ * and a largest region of 25–40%; our strips+sea boards have the sea as a
+ * hub at every size and tier, with the largest region at 39–94%. The sea
+ * hub is a CONSTRUCTION fact, not a rules fact, so it is designed away:
+ *
+ *  - steady (n >= 6): after the painted winner is chosen, a SHAPING descent
+ *    repaints non-solution cells (connectivity-safe single recolours to a
+ *    neighbour's colour) while the production base solver still fully
+ *    solves the board and its wave count stays no shallower than the
+ *    painted winner and no deeper than the band ceiling. Accepted
+ *    mutations may not increase the scalarised shape defect (hub count +
+ *    largest-share excess over 0.4; sideways drift allowed); the descent
+ *    stops at defect 0 — no hub, largest region <= 40%. Measured
+ *    (2026-10-07, production streams, 20 seeds per side): 0/220 give-ups
+ *    at n = 6..15, worst share exactly 0.40, wall-clock in the
+ *    milliseconds (pre-implementation probe: every n = 5..15 x 3 seeds
+ *    reached defect 0 in <= ~1,800 attempts and <= 14 ms); the budgets
+ *    below give an order of magnitude of headroom. Shaped boards leave the
+ *    validity-rule basin BY DESIGN (that is what makes them structurally
+ *    different); their uniqueness certificate is the propagation solve
+ *    itself, re-run with the exact counter for n <= 5, and the output
+ *    passes BOTH connectivity nets (this file's flood fill and
+ *    structure.ts's union-find).
+ *  - steady at n = 4 and n = 5: NOT shaped. n = 4 measured 0/3 within
+ *    budget pre-implementation (too little room for four non-trivial
+ *    regions); n = 5 plateaus on a measurable share of seeds (3/20
+ *    production-stream give-ups, best defect stuck at hub=1) — and a
+ *    construction tier that throws is a never-fails contract break, while
+ *    returning a hub board on give-up is forbidden by the generation
+ *    contract, so the small sides keep the painted board. Recorded, not
+ *    "fixed".
+ *  - starter: NOT shaped. Its contract is the 3-wave collapse with S = ∅,
+ *    and a hub-free <= 40% board needs non-trivial regions that raise the
+ *    waves — measured incompatible at n = 15 (0/3 within budget, best
+ *    defect 0.004–0.093 against a target of 0). The starter painting is
+ *    deliberate (project rules: the singleton-in-a-sea read IS that tier),
+ *    so it keeps its sea hub. Technique tiers get the shape gate through
+ *    the walk instead (see below), so every tier except starter and the
+ *    two smallest steady sides now certifies hub-free.
+ *  - technique tiers ('challenging', 'expert', 'contradiction'): the walk
+ *    request carries `{@link StarShapeGate}` ({ noHub, maxLargestRegionShare:
+ *    0.4 }); the walk descends to meter 0 AND defect 0 before returning
+ *    (walk.ts module doc — measured level-0 tail median ~35 accepted
+ *    mutations at n = 10, ~69 at n = 15). Acceptance here re-verifies the
+ *    gate with this module's own instruments as gate (e).
+ *
+ * Give-up semantics (generation contract): a shaping search that exhausts
+ * its attempt or wall-clock budget throws {@link StarShapeBudgetExhaustedError}
+ * — never returning a hub board. Wall clock gates only when the search
+ * gives up, never which board is accepted, so determinism holds.
+ *
  * Acceptance: a board is accepted only if it is fully connected AND
  * {@link propagateStarBoard} solves it (all n stars placed). For n ≤ 5
  * the exact counter must additionally agree the solution is unique. The
@@ -169,6 +223,14 @@ import { solveStarCatalogue } from './catalogue'
 import { countStarSolutions } from './count'
 import { measureMinimumBasis } from './minimumBasis'
 import { propagateStarBoard } from './propagate'
+import {
+  STAR_SHAPE_MAX_LARGEST_REGION_SHARE,
+  measureStarBoardStructure,
+  regionStaysConnectedWithout,
+  starShapeDefect,
+  starShapeSatisfied,
+  type StarShapeGate,
+} from './structure'
 import { StarWalkBudgetExhaustedError, walkStarBattleBoard } from './walk'
 
 /**
@@ -216,6 +278,17 @@ export interface StarGenerationRequest {
   readonly n: number
   readonly seed: number
   readonly difficulty: StarDifficulty
+  /**
+   * Construction tiers only: false yields the PRE-SHAPING painted board.
+   * The variety walk seeds its descent from that painting — the historical
+   * difficulty stream (acceptance rates, k distribution) was measured on
+   * painted seeds, and the walk's own shape gate shapes the ENDPOINT, so
+   * seeding from a shaped board would re-roll those measurements for no
+   * gain. The product path (generateStarBattle callers) never disables
+   * shaping. Ignored for starter (never shaped) and technique tiers.
+   * Default true.
+   */
+  readonly shaping?: boolean
 }
 
 export interface StarGeneratedBoard {
@@ -275,6 +348,65 @@ const TECHNIQUE_TIER_TARGET: Readonly<Record<StarTechniqueDifficulty, number>> =
   challenging: 1,
   expert: 2,
   contradiction: -1,
+}
+
+/**
+ * The shape gate every tier except starter certifies: no hub region and
+ * the largest region capped at 40% — the measured structural signature of
+ * the boards the human enjoys (structure.ts module doc).
+ */
+const STAR_TIER_SHAPE_GATE: StarShapeGate = Object.freeze({
+  noHub: true,
+  maxLargestRegionShare: STAR_SHAPE_MAX_LARGEST_REGION_SHARE,
+})
+
+/**
+ * Shaping budgets (steady, n >= 6): the maximum recolour attempts and
+ * wall-clock for the hub-free descent. Measured need is <= ~1,800 attempts
+ * and <= 14 ms at n = 15 over the probe seeds (module doc), so these give
+ * an order of magnitude of headroom; exceeding either throws
+ * {@link StarShapeBudgetExhaustedError}. Wall clock gates only when the
+ * search gives up, never which board is accepted, so determinism holds.
+ */
+const SHAPE_MAX_ATTEMPTS = 20000
+const SHAPE_WALL_CLOCK_MS = 5000
+
+/**
+ * Loud, typed failure when a hub-free shaping search exhausts its attempt
+ * or wall-clock budget before reaching defect 0. Never carries a board:
+ * a search that ran out of budget has nothing to certify.
+ */
+export class StarShapeBudgetExhaustedError extends Error {
+  readonly n: number
+  readonly seed: number
+  readonly attempts: number
+  readonly elapsedMs: number
+  readonly reason: 'attempts' | 'wall-clock'
+  /** Lowest shape defect observed (0 = no hub and share cap met). */
+  readonly bestDefect: number
+
+  constructor(fields: {
+    readonly n: number
+    readonly seed: number
+    readonly attempts: number
+    readonly elapsedMs: number
+    readonly reason: 'attempts' | 'wall-clock'
+    readonly bestDefect: number
+  }) {
+    super(
+      `star battle hub-free shaping exhausted its ${fields.reason} budget ` +
+        `(n=${fields.n}, seed=${fields.seed}, attempts=${fields.attempts}, ` +
+        `bestDefect=${fields.bestDefect.toFixed(4)}, ${fields.elapsedMs.toFixed(1)}ms) ` +
+        `without reaching a hub-free board`,
+    )
+    this.name = 'StarShapeBudgetExhaustedError'
+    this.n = fields.n
+    this.seed = fields.seed
+    this.attempts = fields.attempts
+    this.elapsedMs = fields.elapsedMs
+    this.reason = fields.reason
+    this.bestDefect = fields.bestDefect
+  }
 }
 
 /**
@@ -567,6 +699,131 @@ function regionsConnected(colours: Uint8Array, n: number): boolean {
 }
 
 /**
+ * The hub-free shaping descent for the steady tier (module doc): repaint
+ * non-solution cells by connectivity-safe single recolours while the
+ * production base solver still fully solves the board and its wave count
+ * stays no shallower than the painted winner and no deeper than the band
+ * ceiling. Accepted mutations may not increase the scalarised shape defect
+ * ({@link starShapeDefect} on {@link STAR_TIER_SHAPE_GATE}); sideways drift
+ * at equal defect keeps the search moving. Stops at defect 0 — no hub
+ * region, largest region <= 40%.
+ *
+ * The proposal stream is the caller-provided seeded RNG; every accepted
+ * mutation is certified by {@link propagateStarBoard} (a complete sound-rule
+ * solve is a uniqueness certificate), so the returned board needs no
+ * further uniqueness work beyond the caller's final net (exact counter for
+ * n <= 5, which the caller runs).
+ *
+ * Throws {@link StarShapeBudgetExhaustedError} on budget exhaustion; never
+ * returns a board with defect > 0.
+ */
+function shapeSteadyColours(request: {
+  readonly n: number
+  readonly colours: Uint8Array
+  readonly solution: readonly number[]
+  readonly seedWaves: number
+  readonly rng: SeededRandom
+}): { readonly colours: Uint8Array; readonly waves: number } {
+  const { n, colours: painted, solution, seedWaves, rng } = request
+  const band = waveBand(n, 'steady')
+  // Depth gate: never shallower than the painted winner (the tier's wave
+  // depth IS its difficulty contract — a shaped board must not be a shall
+  // substitute), never deeper than the band ceiling, except that the
+  // winner itself always remains legal even when the painting sat outside
+  // the band (the n = 4, 5 fallback under LIMITATION 2).
+  const lower = seedWaves
+  const upper = Math.max(band[1], seedWaves)
+  const solutionCells = new Set<number>()
+  for (let row = 0; row < n; row += 1) {
+    solutionCells.add(row * n + solution[row])
+  }
+  const colours = painted.slice()
+  let defect = Number.POSITIVE_INFINITY
+  let waves = seedWaves
+  let bestDefect = Number.POSITIVE_INFINITY
+  const startedAt = performance.now()
+
+  for (let attempt = 0; attempt < SHAPE_MAX_ATTEMPTS; attempt += 1) {
+    if (performance.now() - startedAt >= SHAPE_WALL_CLOCK_MS) {
+      throw new StarShapeBudgetExhaustedError({
+        n,
+        seed: rng.seed,
+        attempts: attempt,
+        elapsedMs: performance.now() - startedAt,
+        reason: 'wall-clock',
+        bestDefect,
+      })
+    }
+
+    // --- propose: repaint a non-solution cell to a neighbour's colour ----
+    const index = rng.nextInt(n * n)
+    if (solutionCells.has(index)) {
+      continue
+    }
+    const from = colours[index]
+    const row = (index / n) | 0
+    const column = index % n
+    const neighbourColours: number[] = []
+    const neighbourIndexes = [
+      row > 0 ? index - n : -1,
+      row + 1 < n ? index + n : -1,
+      column > 0 ? index - 1 : -1,
+      column + 1 < n ? index + 1 : -1,
+    ]
+    for (const neighbour of neighbourIndexes) {
+      if (
+        neighbour >= 0 &&
+        colours[neighbour] !== from &&
+        !neighbourColours.includes(colours[neighbour])
+      ) {
+        neighbourColours.push(colours[neighbour])
+      }
+    }
+    if (neighbourColours.length === 0) {
+      continue
+    }
+    const to = neighbourColours[rng.nextInt(neighbourColours.length)]
+
+    // --- gate (a): the vacated region must stay one connected component ---
+    if (!regionStaysConnectedWithout(colours, n, index, from)) {
+      continue
+    }
+    colours[index] = to
+
+    // --- gate (b): the base solver still fully solves, inside the band ----
+    const result = propagateStarBoard(colours, n)
+    if (!result.solved || result.waves < lower || result.waves > upper) {
+      colours[index] = from
+      continue
+    }
+
+    // --- gate (c): the shape defect may not increase ----------------------
+    const candidateDefect = starShapeDefect(measureStarBoardStructure(colours, n), STAR_TIER_SHAPE_GATE)
+    if (candidateDefect > defect) {
+      colours[index] = from
+      continue
+    }
+    defect = candidateDefect
+    waves = result.waves
+    if (candidateDefect < bestDefect) {
+      bestDefect = candidateDefect
+    }
+    if (defect === 0) {
+      return { colours, waves }
+    }
+  }
+
+  throw new StarShapeBudgetExhaustedError({
+    n,
+    seed: rng.seed,
+    attempts: SHAPE_MAX_ATTEMPTS,
+    elapsedMs: performance.now() - startedAt,
+    reason: 'attempts',
+    bestDefect,
+  })
+}
+
+/**
  * Generates a Star Battle puzzle for the requested side, seed and
  * difficulty.
  *
@@ -599,19 +856,27 @@ export function generateStarBattle(request: StarGenerationRequest): StarGenerate
   if (isTechniqueTier(difficulty)) {
     return generateTechniqueTierBoard({ n, seed: request.seed, difficulty })
   }
-  return generateConstructionBoard({ n, seed: request.seed, difficulty })
+  return generateConstructionBoard({
+    n,
+    seed: request.seed,
+    difficulty,
+    shaping: request.shaping ?? true,
+  })
 }
 
 /**
  * The construction-tier generator: paints the strips-and-sea construction
  * (or the n = 4, 5 domino fallback) and selects the attempt that best
- * fits the tier's wave band. See the module doc for the construction
- * proof and the measured bands.
+ * fits the tier's wave band. The steady winner at n >= 6 then passes
+ * through the hub-free shaping descent (module doc; starter and n = 4
+ * steady keep the painted board, recorded there). See the module doc for
+ * the construction proof and the measured bands.
  */
 function generateConstructionBoard(request: {
   readonly n: number
   readonly seed: number
   readonly difficulty: StarConstructionDifficulty
+  readonly shaping: boolean
 }): StarGeneratedBoard {
   const { n, seed, difficulty: constructionDifficulty } = request
   const rng = createSeededRandom(seed)
@@ -681,18 +946,68 @@ function generateConstructionBoard(request: {
     throw new Error('star battle generation made no attempts')
   }
 
+  // The hub-free shaping stage (module doc): steady at n >= 6 leaves the
+  // validity-rule basin by design, so the shaped board is certified HERE —
+  // both connectivity nets (this file's flood fill AND structure.ts's
+  // union-find), the propagation solve (the uniqueness certificate, whose
+  // wave count is what the board reports), and the exact counter for n <= 5.
+  // The shaped board must be no SHALLOWER than the painted winner it
+  // replaces (lower = seedWaves) and no deeper than the band ceiling (or
+  // the winner itself, when the painting already exceeded it).
+  let outputColours = bestColours
+  let outputWaves = bestWaves
+  if (request.shaping && constructionDifficulty === 'steady' && n >= 6) {
+    const shaped = shapeSteadyColours({
+      n,
+      colours: bestColours,
+      solution: bestSolution,
+      seedWaves: bestWaves,
+      rng: rng.derive('steady-shape'),
+    })
+    outputColours = shaped.colours
+    outputWaves = shaped.waves
+    if (!regionsConnected(outputColours, n)) {
+      throw new Error(
+        `star battle shaping invariant violated: shaped board is not fully connected ` +
+          `(n=${n}, seed=${rng.seed})`,
+      )
+    }
+    const structure = measureStarBoardStructure(outputColours, n)
+    if (!structure.connected) {
+      throw new Error(
+        `star battle shaping invariant violated: union-find disagrees with the flood fill ` +
+          `(n=${n}, seed=${rng.seed})`,
+      )
+    }
+    const certified = propagateStarBoard(outputColours, n)
+    if (!certified.solved) {
+      throw new Error(
+        `star battle shaping invariant violated: shaped board failed the propagation certificate ` +
+          `(n=${n}, seed=${rng.seed})`,
+      )
+    }
+    outputWaves = certified.waves
+    if (n <= 5 && countStarSolutions(outputColours, n, 2) !== 1) {
+      throw new Error(
+        `star battle shaping invariant violated: shaped board failed the exact counter ` +
+          `(n=${n}, seed=${rng.seed})`,
+      )
+    }
+  }
+
   const puzzle: StarBattlePuzzle = {
     n,
     seed: rng.seed,
-    colours: bestColours,
+    colours: outputColours,
     solution: bestSolution,
   }
   // Shape, colour grid and planted solution re-validated before the board
   // leaves the engine: n, byte length, colour range, permutation,
-  // admissibility and pairwise-distinct star colours.
+  // admissibility and pairwise-distinct star colours. Shaping never
+  // touches solution cells, so the planted permutation survives intact.
   assertStarBattlePuzzle(puzzle)
 
-  return Object.freeze({ puzzle, waves: bestWaves, difficulty: constructionDifficulty })
+  return Object.freeze({ puzzle, waves: outputWaves, difficulty: constructionDifficulty })
 }
 
 /**
@@ -715,7 +1030,10 @@ function generateConstructionBoard(request: {
  *   (a complete sound-rule solve is a uniqueness certificate), plus the
  *   exact counter for n ≤ 5, matching the fallback's belt-and-braces;
  * - difficulty — {@link measureMinimumBasis} returns exactly the tier's
- *   target k.
+ *   target k;
+ * - shape — {@link measureStarBoardStructure} certifies the tier's
+ *   {@link STAR_TIER_SHAPE_GATE} (no hub, largest region <= 40%) by the
+ *   union-find scan, independent of the walk's internal gate.
  *
  * Budget: {@link TECHNIQUE_WALK_ATTEMPTS} walks or
  * {@link TECHNIQUE_TIER_WALL_CLOCK_MS} wall-clock. Exceeding either throws
@@ -763,6 +1081,9 @@ function generateTechniqueTierBoard(request: {
         // only when EVERY pure-deduction technique together places
         // nothing. The k = -1 target is then verified explicitly below.
         meter: difficulty === 'contradiction' ? 'confinement' : 'base',
+        // The shape gate: the walk stops only at meter 0 AND defect 0
+        // (walk.ts module doc), so a hub board never reaches this loop.
+        shape: STAR_TIER_SHAPE_GATE,
         // Wall clock: the tier's own budget, checked between walks, is the
         // only timing gate the acceptance path may see. The walk's default
         // 5 s budget would let a slow walk give up mid-search under CPU
@@ -822,6 +1143,16 @@ function generateTechniqueTierBoard(request: {
     const basis = measureMinimumBasis(walked.colours, n)
     lastK = basis.k
     if (basis.k !== targetK) {
+      continue
+    }
+
+    // Gate (e): the shape gate, re-verified with this module's own
+    // instruments — the union-find adjacency scan of structure.ts, not the
+    // walk's bookkeeping. The walk stops only at defect 0, so reaching the
+    // continue below means the walk's internal gate disagrees with this
+    // measurement; a rejected sample is the safe answer (mirrors gate (a)).
+    const structure = measureStarBoardStructure(walked.colours, n)
+    if (!starShapeSatisfied(structure, STAR_TIER_SHAPE_GATE) || !structure.connected) {
       continue
     }
 

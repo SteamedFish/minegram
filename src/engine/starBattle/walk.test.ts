@@ -18,6 +18,7 @@
 import { describe, expect, it } from 'vitest'
 import { solveStarCatalogue, type StarCatalogueRule } from './catalogue'
 import { countStarSolutions } from './count'
+import { STAR_SHAPE_MAX_LARGEST_REGION_SHARE, measureStarBoardStructure } from './structure'
 import { walkStarBattleBoard, StarWalkBudgetExhaustedError, type StarWalkBoard } from './walk'
 
 const BASE_ONLY_RULES: ReadonlySet<StarCatalogueRule> = new Set<StarCatalogueRule>(['base'])
@@ -153,6 +154,105 @@ describe('walk determinism', () => {
     // A collision would not prove a bug once, but the search exists to map
     // seeds to distinct boards; demand variety.
     expect(collisions).toBe(0)
+  })
+})
+
+describe('walk shape gate (hub-free requirement 2026-10-07)', () => {
+  /**
+   * This file's OWN adjacency scan (pair-set based — a different shape from
+   * structure.ts's boolean matrix), so the production instrument is pinned
+   * by an independent one.
+   */
+  function ownHubCount(colours: Uint8Array, n: number): number {
+    const touches = new Set<string>()
+    const record = (a: number, b: number): void => {
+      if (a !== b) {
+        touches.add(a < b ? `${a}-${b}` : `${b}-${a}`)
+      }
+    }
+    for (let row = 0; row < n; row += 1) {
+      for (let column = 0; column < n; column += 1) {
+        const index = row * n + column
+        if (column + 1 < n) {
+          record(colours[index], colours[index + 1])
+        }
+        if (row + 1 < n) {
+          record(colours[index], colours[index + n])
+        }
+      }
+    }
+    const degrees = new Uint32Array(n)
+    for (const key of touches) {
+      const [a, b] = key.split('-').map(Number)
+      degrees[a] += 1
+      degrees[b] += 1
+    }
+    let hubs = 0
+    for (let colour = 0; colour < n; colour += 1) {
+      if (degrees[colour] === n - 1) {
+        hubs += 1
+      }
+    }
+    return hubs
+  }
+
+  const SHAPE_GATE = { noHub: true, maxLargestRegionShare: STAR_SHAPE_MAX_LARGEST_REGION_SHARE } as const
+
+  const cases: readonly { readonly n: number; readonly seeds: readonly number[] }[] = [
+    { n: 8, seeds: [31, 32] },
+    { n: 10, seeds: [41, 42] },
+  ]
+
+  for (const { n, seeds } of cases) {
+    for (const seed of seeds) {
+      it(`n=${n} seed=${seed}: hub-free, capped, unique, connected, base stalls`, () => {
+        const board = walkStarBattleBoard({ n, seed, shape: SHAPE_GATE })
+
+        // The gate itself, by this file's own scan — not the walk's report.
+        expect(ownHubCount(board.colours, n)).toBe(0)
+        expect(board.hubCount).toBe(0)
+        expect(board.largestRegionShare).toBeLessThanOrEqual(SHAPE_GATE.maxLargestRegionShare)
+        const structure = measureStarBoardStructure(board.colours, n)
+        expect(structure.connected).toBe(true)
+
+        // Every other certificate the plain walk pins still holds.
+        expect(countStarSolutions(board.colours, n, 3)).toBe(1)
+        expect(independentlyConnected(board.colours, n)).toBe(true)
+        expect(independentBasePlaced(board.colours, n)).toBe(0)
+        expect(board.basePlaced).toBe(0)
+      })
+    }
+  }
+
+  it('same seed with the shape gate gives a byte-identical board', () => {
+    const first = walkStarBattleBoard({ n: 10, seed: 'shape-determinism', shape: SHAPE_GATE })
+    const second = walkStarBattleBoard({ n: 10, seed: 'shape-determinism', shape: SHAPE_GATE })
+    expect([...second.colours]).toEqual([...first.colours])
+    expect(second.attempts).toBe(first.attempts)
+    expect(second.acceptedMutations).toBe(first.acceptedMutations)
+    expect(second.restarts).toBe(first.restarts)
+  })
+
+  it('the shape gate never weakens the difficulty certificates', () => {
+    // A shape-gated board must still be a genuine technique board: the
+    // plain-walk pins (base stalls, catalogue solves) are re-run here on a
+    // shape-gated product.
+    const board = walkStarBattleBoard({ n: 10, seed: 77, shape: SHAPE_GATE })
+    const full = solveStarCatalogue(board.colours, 10, { csDepth: 1 })
+    expect(full.solved).toBe(true)
+    expect(full.stars.map(([, column]) => column)).toEqual([...board.solution])
+    expect(board.basePlacedSeed).toBe(10)
+  })
+
+  it('budget exhaustion with the shape gate still throws the typed error, never a board', () => {
+    let caught: unknown
+    try {
+      walkStarBattleBoard({ n: 10, seed: 42, maxAttempts: 1, shape: SHAPE_GATE })
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(StarWalkBudgetExhaustedError)
+    expect((caught as StarWalkBudgetExhaustedError).reason).toBe('attempts')
   })
 })
 
