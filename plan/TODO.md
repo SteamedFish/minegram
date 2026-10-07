@@ -824,6 +824,26 @@ about n = 8).
   to this host — `ERR_CONNECTION_REFUSED` while loopback answers 200. It has to be run
   against the live Pages URL after a rebuild.
 
+- [x] **Build the MCMC colour-drift instrument and measure it against the (k, witness)
+  monotony before touching the shape gate.** Shipped: `src/engine/starBattle/drift.ts`
+  (+ `drift.test.ts`) — a rejection drift over legal colourings (repaint a cell to a
+  4-neighbour's colour, hard-reject disconnections, accept iff the exact counter proves
+  exactly one solution; catalogue fast positive only, never a rejection gate; budget
+  exhaustion rejects fail-closed and is counted). Measured honestly (2026-10-07): the
+  headline question — does the drift move `challenging`'s (k, witness) class-modal
+  share off 1.000? — is a NULL at n = 10 (10/11 class {c1}, same as the walk) and
+  uneconomic at n = 15 (~24–31 ms/proposal, ~22 walk+drift cycles per board at n = 10,
+  zero challenging hits across 12 drift legs at n = 15). The null is NOT a
+  mixing-time artifact: the chain leaves any start basin within one 2000-proposal leg,
+  and the base-stall + k = 1 slice of the legal set is {c1}-heavy for two independent
+  samplers — the concentration is a property of the puzzle-class space, not the
+  generator. Per the sequencing safety rule, the drift is NOT wired into
+  technique-tier generation and `STAR_TIER_SHAPE_GATE` stays; removing it would trade
+  a working generator for a slower one shipping the same puzzle. The drift is the
+  right instrument for the STRUCTURAL axis (sea starts lose the hub and the line
+  owner within hundreds of accepted steps, pinned by tests) and would be the right
+  starting point for any future tier whose contract drops "base places zero".
+
 - [ ] **Give the game picker a real per-game record.** `GamePicker` already renders
   a rounds-played / best-streak line and rings the selected card, but `src/App.tsx`
   passes `selected={null}` and no `stats`, so every card reads "Not played yet".
