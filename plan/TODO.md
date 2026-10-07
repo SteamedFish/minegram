@@ -756,18 +756,40 @@ about n = 8).
   of what the eye resolves between flat patches, so hue alone cannot carry 15 colours and
   lightness has to be spent as well. No hatch or glyph channel was needed — the numbers say
   two channels suffice. Light and dark are separate palettes, not inversions. `352d86a`.
-- [ ] **Build a hub-free construction — this is what 「非常无趣」 actually is.** The player
-  reported 「长条+大海的构造实在是过于简单了，丧失了非常多的趣味性」. Measured, the complaint has a
-  structural cause rather than a difficulty cause: the sea is adjacent to EVERY other region at
-  every size and tier, so it is a **hub** in the region adjacency graph, and our boards' largest
-  region covers 39–59%. Four boards the player chose from the game they actually enjoy were
-  measured with an engine-independent probe (`.tmp/probe/structure.probe.test.ts`, union-find, no
-  imports from `src/engine`): **none has a hub**, largest region 25–40% (36% / 40% / 25% / 30%),
-  every colour one contiguous region. So 「相近颜色的色块尽量远离」 is fully achievable in layout
-  once the construction stops forcing a hub — an earlier entry in this file claimed otherwise and
-  was wrong; the correction is in `AGENTS.md`. In flight: a hub gate on the descent walk, then a
-  frame/wrap construction if the walk plateaus (one reference board has a region adjacent to 8 of
-  the other 9 — near-hub without being one — and is among those the player liked).
+- [ ] **Build the difficulty INSTRUMENT first — freebies counted in blank marks, not solver work.
+  Nothing can be re-tiered until it exists.** The player's ruling reordered the whole problem: the
+  generator must carry **no shape rules** (「只要是合法的满足规则的棋局都要有概率被我们构建出来」,
+  「只要合法，不用刻意排除，只是难度可能会变低，在高难选项里面如果计算发现难度不够再排除」), so a
+  hub region, a whole-row colour band or a dominant 90% region is legal and stays generatable. The
+  tiers then become thresholds on a measured quantity rather than separate constructions. Measured
+  reason the current instrument is wrong: a colour owning a whole row hands the player **n − 1 free
+  blanks** (the row's star must be that colour, and one star per colour makes every other cell of it
+  blank), and that appears on **100% of non-starter boards** — exactly one full line per board, which
+  the current 40% largest-region budget cannot see because at n = 10 a whole row is 10% of the board.
+  Wave count and leave-one-out fingerprints are both already retired as proxies (see `AGENTS.md`).
+  Deliverable: a pure, solver-independent function returning a difficulty quantity whose unit is
+  **blank marks handed over for free**, plus its distribution across existing boards and across the
+  four reference boards so the tier thresholds can be set from data rather than taste.
+- [ ] **Re-tier once the instrument exists — all four current tiers are one fixed pattern.** Measured
+  on committed `master` (`84e27b0`, n = 10, 8 seeds per tier) with a battery of 12 structural
+  predicates, where a predicate true on **100%** of a tier's boards is by definition that tier's
+  pattern the player keeps re-seeing: `starter` satisfies **12/12**, `steady` 7, `expert` 7,
+  `challenging` 6. The shared core is one dominant region that spans the full board width, touches
+  three or more borders, is at least 30–35% of the board, owns a whole row, and is itself the colour
+  of that row. The four reference boards satisfy **3/7, 3/7, 0/7 and 1/7** of those invariants —
+  board C, the one rated 「非常有趣」, satisfies none. So the target shape is measured, not imagined.
+  Re-tiering the current construction would only slice one pattern into five, which is why this waits
+  on the instrument.
+- [ ] **Generate with full support over legal boards, seeded diversely.** Pruning cannot escape the
+  basin of the canonical skeleton it prunes: strips-and-sea always yields a full-width dominant
+  region no matter how much is trimmed. Note the measured obstacle to the naive alternative — uniform
+  sampling of colourings and filtering for uniqueness is not viable, because uniqueness is
+  measure-zero among well-spread colourings (6.7% at n = 5, 0.3% at n = 8, **0/300** at n = 10). The
+  requirement is support, not uniform distribution, and `walk.ts` already randomises while preserving
+  the uniqueness certificate; what is missing is a **diverse seed pool** instead of one skeleton.
+  Report what is measurable — the connected component the move set reaches, and its coverage from a
+  diverse pool — and state plainly what cannot be proven. 「每个合法盘都在里面」 is not provable and
+  must not be reported as done.
 - [ ] **The difficulty axis is honest but not calibrated, and three instruments are retired.**
   Technique count is measured and enforced per board, but it does not fit the player's own
   favourites: A is k=2 (5 witness waves), B is k=-1 (contradiction), C is **k=1 with 12 witness
