@@ -1,21 +1,27 @@
 /**
  * Ground-truth validation for the technique-catalogue port
- * (`./catalogue.ts`) against the oracle2 lane's recorded Python
- * fingerprints at `.tmp/oracle2/*.jsonl`.
+ * (`./catalogue.ts`) against recorded ground truth from the oracle2 lane's
+ * Python reference implementation.
  *
- * The fixture files are read with `node:fs` and every fixture-derived
- * expectation is asserted against the RECORDED value — if the port ever
- * disagrees with a recording, these tests fail rather than being edited to
- * match the port.
+ * The recordings under `./fixtures/oracle2/` are COMMITTED fixtures, copied
+ * verbatim from the oracle lane's `.tmp/oracle2/` output: real board
+ * populations the Python catalogue solved, with its wave counts, per-rule
+ * `used` fingerprints, `cs_passes`/`cs_trials`, and minimal technique
+ * bases recorded alongside the boards. They are recorded output of the
+ * reference implementation, not hand-written expectations. Every
+ * fixture-derived assertion below is checked against the RECORDED value —
+ * if the port ever disagrees with a recording, these tests fail rather
+ * than being edited to match the port. If a fixture file is missing the
+ * suite fails on read: a deleted fixture is a broken repo, never a green
+ * run.
  */
 // The project tsconfig restricts global types to vite/client, so 'node:fs'
 // has no type resolution here (pulling in global node types would break
 // Timeout/number casts in unrelated suites). The import is runtime-only
 // (vitest externalises node builtins); suppress the resolution error.
-declare const process: { env: Record<string, string | undefined>; cwd(): string }
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error node:fs resolves at runtime under vitest, not under tsc
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import {
   fingerprintStarCatalogue,
   solveStarCatalogue,
@@ -27,39 +33,15 @@ import { countStarSolutions, findStarSolutions } from './count'
 import { SeededRandomGenerator } from '../rng'
 
 // Minimal path helpers (node:path is deliberately not imported, see above).
-const parentDir = (path: string): string => {
-  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
-  const index = trimmed.lastIndexOf('/')
-  return index <= 0 ? '/' : trimmed.slice(0, index)
-}
-
 const joinPath = (a: string, b: string): string => `${a.replace(/\/+$/, '')}/${b}`
 
-// The oracle recordings live in the main checkout's `.tmp/oracle2/`
-// (untracked, so possibly absent). Walk ancestors of the working directory
-// (vitest runs from the project root) until found; override with
-// MINEGRAM_ORACLE_DIR. When absent, fixture-backed suites skip loudly
-// rather than asserting nothing.
-function findOracleDir(): string | null {
-  if (process.env.MINEGRAM_ORACLE_DIR) {
-    return process.env.MINEGRAM_ORACLE_DIR
-  }
-  let dir = process.cwd()
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const candidate = joinPath(dir, '.tmp/oracle2')
-    if (existsSync(joinPath(candidate, 'fixtures.jsonl'))) {
-      return candidate
-    }
-    const parent = parentDir(dir)
-    if (parent === dir) {
-      break
-    }
-    dir = parent
-  }
-  return null
-}
-
-const ORACLE_DIR = findOracleDir()
+// The committed recordings, resolved relative to this module. import.meta.url
+// is the real file URL under vitest, but `new URL(rel, import.meta.url)` is
+// rewritten by the vite asset transform, so parse the URL text directly.
+const MODULE_PATH = import.meta.url.startsWith('file://')
+  ? decodeURIComponent(import.meta.url.slice('file://'.length))
+  : import.meta.url
+const FIXTURE_DIR = joinPath(MODULE_PATH.slice(0, MODULE_PATH.lastIndexOf('/')), 'fixtures/oracle2')
 
 interface FixtureRecord {
   readonly n: number
@@ -91,20 +73,17 @@ interface ShowboardRecord {
 }
 
 function loadRecords<T>(name: string): T[] {
-  if (ORACLE_DIR === null) {
-    throw new Error(`oracle recordings not found (set MINEGRAM_ORACLE_DIR)`)
-  }
-  return readFileSync(joinPath(ORACLE_DIR, name), 'utf8')
+  return readFileSync(joinPath(FIXTURE_DIR, name), 'utf8')
     .trim()
     .split('\n')
     .filter((line: string) => line.length > 0)
     .map((line: string) => JSON.parse(line) as T)
 }
 
-const fixtures = ORACLE_DIR ? loadRecords<FixtureRecord>('fixtures.jsonl') : []
-const csPopulation = ORACLE_DIR ? loadRecords<CsPopulationRecord>('cs_population.jsonl') : []
-const descentBoards = ORACLE_DIR ? loadRecords<DescentRecord>('descent_boards.jsonl') : []
-const showboards = ORACLE_DIR ? loadRecords<ShowboardRecord>('showboards.jsonl') : []
+const fixtures = loadRecords<FixtureRecord>('fixtures.jsonl')
+const csPopulation = loadRecords<CsPopulationRecord>('cs_population.jsonl')
+const descentBoards = loadRecords<DescentRecord>('descent_boards.jsonl')
+const showboards = loadRecords<ShowboardRecord>('showboards.jsonl')
 
 function toColours(record: { readonly n: number; readonly colours: readonly number[] }): Uint8Array {
   return Uint8Array.from(record.colours)
@@ -131,7 +110,7 @@ function snapshotResult(result: StarCatalogueResult): Record<string, unknown> {
 
 const fullCatalogue = { rules: ['base', 'c1', 'c2', 'c3', 'c4'] as StarCatalogueRule[] }
 
-describe.runIf(ORACLE_DIR !== null)('catalogue vs oracle ground truth', () => {
+describe('catalogue vs oracle ground truth', () => {
   it('fixture wave counts: base-only reproduces the recordings AND propagateStarBoard', () => {
     expect(fixtures.length).toBeGreaterThan(0)
     for (const record of fixtures) {
