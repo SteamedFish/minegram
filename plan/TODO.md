@@ -756,14 +756,38 @@ about n = 8).
   of what the eye resolves between flat patches, so hue alone cannot carry 15 colours and
   lightness has to be spent as well. No hatch or glyph channel was needed — the numbers say
   two channels suffice. Light and dark are separate palettes, not inversions. `352d86a`.
+- [ ] **Build a hub-free construction — this is what 「非常无趣」 actually is.** The player
+  reported 「长条+大海的构造实在是过于简单了，丧失了非常多的趣味性」. Measured, the complaint has a
+  structural cause rather than a difficulty cause: the sea is adjacent to EVERY other region at
+  every size and tier, so it is a **hub** in the region adjacency graph, and our boards' largest
+  region covers 39–59%. Four boards the player chose from the game they actually enjoy were
+  measured with an engine-independent probe (`.tmp/probe/structure.probe.test.ts`, union-find, no
+  imports from `src/engine`): **none has a hub**, largest region 25–40% (36% / 40% / 25% / 30%),
+  every colour one contiguous region. So 「相近颜色的色块尽量远离」 is fully achievable in layout
+  once the construction stops forcing a hub — an earlier entry in this file claimed otherwise and
+  was wrong; the correction is in `AGENTS.md`. In flight: a hub gate on the descent walk, then a
+  frame/wrap construction if the walk plateaus (one reference board has a region adjacent to 8 of
+  the other 9 — near-hub without being one — and is among those the player liked).
+- [ ] **The difficulty axis is honest but not calibrated, and three instruments are retired.**
+  Technique count is measured and enforced per board, but it does not fit the player's own
+  favourites: A is k=2 (5 witness waves), B is k=-1 (contradiction), C is **k=1 with 12 witness
+  waves and is the board rated highest**, D is k=2 (8 waves), while our easiest k=1 boards take 4.
+  Wave count does not separate the levels either (k=1 spans 3–5 waves, k=2 4–8, k=-1 3–8). So:
+  wave count measures solver grind, not human effort; and the leave-one-out fingerprint
+  (`fingerprintStarCatalogue`) is retired outright — it called a rule load-bearing while all four
+  of `c1`..`c4` solved the board independently, which is how a board once read as "requires c2"
+  when it required any one of them. A candidate replacement is how many independent assumptions a
+  player must hold at once (`csPasses`), but every board observed so far is exactly 1, so it has
+  no spread yet. Needs real play before any of it is shown as a difficulty claim.
 - [ ] **`starter` is now almost one colour, and the sea cannot be moved away.** The
   strip+sea construction makes the sea absorb everything unclaimed, so on `starter`
   (no strips) it covers 81% of the board at n = 4 and 94% at n = 15, leaving n distinct
   single cells on a field; `steady`/`challenging` sit at 48–68%. Read as background plus
-  islands, but it is a large visual change and the player has not seen it yet. Separately,
-  the sea is adjacent to EVERY other region at every size and tier, so the player's second
-  request — 「相近颜色的色块尽量远离」 — is only half-achievable in layout: no renumbering
-  and no hue assignment can move the sea's colour, and the separation has to come from
+  islands, but it is a large visual change and the player has not seen it yet. Note this is
+  a *different* problem from the hub above and must not be "fixed" by the hub work: the sea's
+  dominance on `starter` is the construction working, and it survives or dies with whatever
+  replaces it. Separately, no renumbering and no hue assignment can move the sea's colour away
+  from its neighbours, so that half of the colour separation genuinely does have to come from
   the palette. Both need a real player's eye, not a static check.
 - [ ] **Separate `steady` from `challenging` at n = 6–8.** At those sides
   `s = round(0.7n)` puts steady's strip set equal to challenging's, so the two difficulty

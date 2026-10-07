@@ -117,22 +117,41 @@ there is exactly one such control per screen.
 
 ### Difficulty
 
-Star Battle difficulty is the measured **depth of the deduction path** — how many
-simultaneous propagation waves a pure-logic solver needs to place all n stars —
-not a guess count. The three tiers differ only in how the generator spreads
-non-star cells across the colour regions:
+Each tier names **how many independent techniques a solver must use** to finish a
+board. The count is measured and enforced on every board the generator accepts,
+not asserted:
 
-| Tier | Construction | Measured depth at n = 10 |
+| Tier | 中文 | What a board requires |
 | --- | --- | --- |
-| `starter` | decoys biased to the largest valid region; the early regions stay singletons, so the colour hidden-single resolves most of the board at once — these are the boards containing a one-cell colour | 3–5 waves |
-| `steady` | decoys uniform over the valid range | ≈ 1.7 n (13–17 waves) |
-| `challenging` | decoys biased to the smallest valid region, plus a bounded search over the proof order for the deepest construction | up to ~2 n (19 waves, the deepest measured band) |
+| `starter` | 入门 | The basic rules alone finish it, in about 3 propagation waves |
+| `steady` | 进阶 | The basic rules alone finish it, but the chain is long — 13 to 29 waves by size |
+| `challenging` | 挑战 | The basic rules **stall**; exactly one extra technique is needed |
+| `expert` | 专家 | The basic rules stall; no single technique suffices, a pair does |
+| `contradiction` | 反证 | The basic rules stall and **every** technique combination fails; only proof by contradiction works |
 
-A higher wave count is a longer deduction path, not necessarily harder human
-reasoning — that caveat is stated plainly rather than smoothed over. Generation
-itself is cheap: about 1.1 ms at n = 10 for the hardest tier, rising to about
-2.8 ms at n = 15, measured over 200 boards per point. The tier choice persists,
-and changing it prints a fresh board with the same seed.
+A "technique" is line confinement — a colour can only hold a star on certain
+lines — which is what makes several colours confined to the same few lines
+deduce things. The first three tiers are built directly; the last three come from
+a seeded search that recolours single cells until the basic rules stop making
+progress, and every accepted board is re-verified by enumerating all sixteen
+technique subsets.
+
+**This is an honest measurement, not a calibrated difficulty scale.** Longer does
+not reliably mean harder for a person: across four boards a human singled out as
+interesting, the one they rated highest needed only *one* technique but took 12
+waves to pay off, while our easiest one-technique boards take 4. So treat the tier
+names as a statement about the board's *shape*, and expect the player-facing
+ordering to be worth revisiting against real play.
+
+The `contradiction` tier is measured at a single assumption level across every
+board observed so far — none has needed an assumption stacked on an assumption.
+That is also the limit of what this solver can currently produce.
+
+Generation cost: about 1.1 ms at n = 10 for the basic tiers, rising to about
+2.8 ms at n = 15, measured over 200 boards per point. The technique tiers are
+far slower, because they search — roughly 36 ms and 150 ms at n = 10, reaching
+seconds at n = 15. The tier choice persists, and changing it prints a fresh board
+with the same seed.
 
 ### Uniqueness is by construction — and certified
 
@@ -157,17 +176,24 @@ construction**, and the acceptance test certifies it on every board:
   neighbouring region's star sat. The difficult tier is not the one that suffered
   most: `starter` was the worst offender, with the worst region splitting into 13
   pieces at n = 10 and 25 at n = 15.
-- **The sea dominates the board, and that is by design.** Because it absorbs
-  everything unclaimed, one colour covers most of the grid: on `starter`, where
-  no strips are laid, it reaches 81% of the board at n = 4 and 94% at n = 15,
-  leaving n single cells of distinct colours scattered on a field. `steady` and
-  `challenging` sit between 48% and 68%. Read it as a background with islands.
-- That dominance sets a hard limit on "keep similar colours apart". The sea is
-  adjacent to **every** other region at every board size and tier, so no
-  renumbering and no hue assignment can move its colour away from anything —
-  that separation has to come from the palette, which is why the palette below
-  is built on maximum minimum pairwise distance rather than on a nice-looking
-  sequence.
+- **The sea dominates the board, and the player does not like it.** Because it
+  absorbs everything unclaimed, one colour covers most of the grid: on `starter`,
+  where no strips are laid, it reaches 81% of the board at n = 4 and 94% at
+  n = 15, leaving n single cells of distinct colours scattered on a field. The
+  player reported 「长条+大海的构造实在是过于简单了，丧失了非常多的趣味性」, and the
+  measurement behind that complaint is structural: **the sea is adjacent to every
+  other region at every board size and tier**, so it is a *hub* in the region
+  adjacency graph. Four boards the player picked out of the game they actually
+  enjoy were measured and **none of them has a hub** — their largest region is
+  25% to 40% of the board against our 39% to 59%. No renumbering and no hue
+  assignment can move a hub's colour away from anything, so that half of
+  "keep similar colours apart" has to come from the palette; but the other half
+  is a layout problem, and the answer to it is not to have a hub at all.
+- **Difficulty is not graded by wave count.** Measured across the four reference
+  boards and our own output, waves do not separate the levels: one-technique
+  boards span 3 to 5 waves, two-technique boards 4 to 8, contradiction boards 3
+  to 8 — heavily overlapping. Wave count measures how long a *solver* grinds,
+  which is not how hard a person finds it.
 - Acceptance is a **wave propagation solver** (`propagateStarBoard`): freeze the
   state, compute every forced move, apply them all simultaneously, and count one
   wave. A board ships only if propagation solves it to completion — strictly
