@@ -794,7 +794,10 @@ about n = 8).
   Technique count is measured and enforced per board, but it does not fit the player's own
   favourites: A is k=2 (5 witness waves), B is k=-1 (contradiction), C is **k=1 with 12 witness
   waves and is the board rated highest**, D is k=2 (8 waves), while our easiest k=1 boards take 4.
-  Wave count does not separate the levels either (k=1 spans 3–5 waves, k=2 4–8, k=-1 3–8). So:
+  Wave count does not separate the levels either, re-measured on the current matching engine:
+  k=1 witness waves span **4–10 at both n = 10 and n = 15 (medians 5–8)**, k=2 4–14, and
+  contradiction stall-runs 1–4 — superseding the earlier "k=1 spans 3–5" reading recorded in
+  pre-2026-10-07 docs. So:
   wave count measures solver grind, not human effort; and the leave-one-out fingerprint
   (`fingerprintStarCatalogue`) is retired outright — it called a rule load-bearing while all four
   of `c1`..`c4` solved the board independently, which is how a board once read as "requires c2"
@@ -811,13 +814,15 @@ about n = 8).
   replaces it. Separately, no renumbering and no hue assignment can move the sea's colour away
   from its neighbours, so that half of the colour separation genuinely does have to come from
   the palette. Both need a real player's eye, not a static check.
-- [ ] **Separate `steady` from `challenging` at n = 6–8.** At those sides
-  `s = round(0.7n)` puts steady's strip set equal to challenging's, so the two difficulty
-  buttons print equal-depth boards. Pre-existing (today's generator also collides: n = 6
-  steady median 9 = challenging median 9), not introduced here, and not fixed here
-  because retuning a shipped difficulty band is its own decision. Dropping steady to
-  `s = 4..5` measures 7–11 waves at n = 8 and would separate them; needs the player's
-  agreement that mid boards should get easier.
+- [x] ~~**Separate `steady` from `challenging` at n = 6–8.**~~ **Moot as of the
+  witness-identity re-tier (2026-10-07):** the `challenging` *construction* tier no
+  longer exists — `StarConstructionDifficulty` is `'starter' | 'steady'` (`construct.ts`),
+  steady inherited the old challenging bands, and the technique tiers descend from
+  steady/starter walk inputs (`TECHNIQUE_WALK_INPUT_MENU`), so there are no two strip
+  sets left to collide. Recorded history: at those sides `s = round(0.7n)` had put
+  steady's strip set equal to challenging's (n = 6 steady median 9 = challenging
+  median 9), deliberately not retuned because retuning a shipped difficulty band was
+  its own product decision.
 - [ ] **Run the desktop/mobile browser check.** Still the one unclosed AGENTS.md pre-release
   gate. Attempted twice and abandoned twice: the built bundle serves correctly under
   `/minegram/` (200, correct asset paths) but the Playwright backend has no network route
@@ -1118,15 +1123,22 @@ about n = 8).
   maxLargestRegionShare: 0.4}`）和形状预算耗尽的抛错都违反玩家的裁定
   「偶尔小概率出现而不是一直出现，没关系，只要合法，不用刻意排除」，而且它们会让**生成
   直接失败**（`StarShapeHubFreeShapingExhaustedError`）—— 那比给一张合法的无聊盘更糟。
-  但现在不能拆：拆掉之后所有技巧档会退回 n=10 每盘 30 秒以上。**顺序是先有漂移，再拆门。**
-  拆门后形状指标（海、最大区占比、整行整列）保留为**审计字段**，按**批次**断言丰富度
+  但现在不能拆：拆掉之后所有技巧档会退回 n=10 每盘 30 秒以上。**【更正 2026-10-07】** 原本计划的「顺序是先有漂移，
+  再拆门」已经不存在：漂移实测为思路轴上的 NULL（见下条）并随 `f735a0f` 删除，门保留；同时形状放弃的代价已经
+  降为「交付未塑形的合法盘 + `shapeAudit.gateMet: false` 审计字段」（`2b45389`），不再是生成失败。拆门后形状指标（海、
+  最大区占比、整行整列）保留为**审计字段**，按**批次**断言丰富度
   （例如「n≥10 的产出中干净盘 ≥ 30%」），**绝不按单盘拒绝**。
 
-- **【待做】n=15 的思路（witness）多样性无解，不要声称修好了。** 入门盘播种 4/4 耗尽
+- **【已结案 2026-10-07】n=15 的思路（witness）多样性无解，不要声称修好了。** 入门盘播种 4/4 耗尽
   5 秒行走预算；换链式构造种子能修好*形状*单调（最大区占比 0.11、无整行同色、
   181–457ms），但**关键规则组合仍然是 `{c1}` 3/3**；k=2 的行走在 n=15 从任何种子出发
-  都 4/4 预算耗尽。**结构漂移**是 n=15 的候选解法（实测能逃出 94% 的海），但它的
-  关键规则组合分布**尚未测量**。
+  都 4/4 预算耗尽。结构漂移这个候选解法已经测量并结案：n=10 下漂移盘在 challenging 闸门内
+  10/11 仍是 `{c1}`，与行走的 11/12 统计上不可分；n=15 经济学不成立（12 条腿 0 命中）。
+  行走进与漂移共享**零机械结构**却收敛到同一条件分布，这就是「集中是谜题类空间的性质、不是
+  任何生成器的性质」的实测证据 —— 所以 `challenging` 改了合同（见证技巧不得为整行白送 c1/c2，
+  `techniqueTierAcceptsBasis`），漂移随 `f735a0f` 删除、记录在 `signature.ts` 模块文档里。
+  代价已如实记录：非白送 k=1 类随尺寸衰减（n=10 每次行走 0.8%，n=15 0/72），`challenging`
+  成为小棋盘档：n = 4、5 扎实，n = 7、8 `unreliable`，n = 6 与 n ≥ 9 报告 `unavailable`（含默认的 10）。**档内技巧多样性没有实现，也不要承诺。**
 
 - **【更正】AGENTS.md 说我们的 k=1 盘「3–5 波」是错的：实测 n=10 是 4–10 波，
   n=15 是 5–10 波。** 同时更正我此前对玩家的一个说法：「多样性是推理层的、不是视觉层

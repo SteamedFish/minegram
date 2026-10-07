@@ -123,15 +123,15 @@ not asserted:
 
 | Tier | 中文 | What a board requires |
 | --- | --- | --- |
-| `starter` | 入门 | The basic rules alone finish it, in about 3 propagation waves |
-| `steady` | 进阶 | The basic rules alone finish it, but the chain is long — 13 to 29 waves by size |
-| `challenging` | 挑战 | The basic rules **stall**; exactly one extra technique is needed |
-| `expert` | 专家 | The basic rules stall; no single technique suffices, a pair does |
-| `contradiction` | 反证 | The basic rules stall and **every** technique combination fails; only proof by contradiction works |
+| `starter` | 入门 | The basic rules alone finish it, in about 3 propagation waves (k = 0, shallow) |
+| `steady` | 进阶 | The basic rules alone finish it, but the chain is long — 13 to 29 waves by size (k = 0, routine; explicitly not a technique tier) |
+| `challenging` | 挑战 | The basic rules **stall**; exactly one extra technique is needed, and it must not be the whole-line freebie — a colour owning a whole row hands its blanks over for free, so it does not count as a technique |
+| `expert` | 专家 | The basic rules stall; no single technique suffices, a pair does (k = 2) |
+| `contradiction` | 反证 | The basic rules stall and **every** technique combination fails; only proof by contradiction works (k = −1) |
 
 A "technique" is line confinement — a colour can only hold a star on certain
 lines — which is what makes several colours confined to the same few lines
-deduce things. The first three tiers are built directly; the last three come from
+deduce things. The first two tiers are built directly; the last three come from
 a seeded search that recolours single cells until the basic rules stop making
 progress, and every accepted board is re-verified by enumerating all sixteen
 technique subsets.
@@ -142,6 +142,14 @@ interesting, the one they rated highest needed only *one* technique but took 12
 waves to pay off, while our easiest one-technique boards take 4. So treat the tier
 names as a statement about the board's *shape*, and expect the player-facing
 ordering to be worth revisiting against real play.
+
+**`challenging` is a small-side tier, and the picker says so.** Because the tier
+rejects the whole-line freebie as a witness, its per-walk acceptance decays with
+board size, measured 2026-10-07 (Wilson 95): n = 4 structurally all (40/48),
+n = 5 18.8%, n = 8 4.2%, n = 10 0.8%, n = 15 0/72. The tier is solid at
+n = 4–5, marginal at n = 7–8, `unavailable` at n = 6 and n ≥ 9 — including n = 10,
+the default board size — where the difficulty picker reports it as unavailable
+instead of promising a board the generator can barely produce.
 
 The `contradiction` tier is measured at a single assumption level across every
 board observed so far — none has needed an assumption stacked on an assumption.
@@ -191,8 +199,9 @@ construction**, and the acceptance test certifies it on every board:
   is a layout problem, and the answer to it is not to have a hub at all.
 - **Difficulty is not graded by wave count.** Measured across the four reference
   boards and our own output, waves do not separate the levels: one-technique
-  boards span 3 to 5 waves, two-technique boards 4 to 8, contradiction boards 3
-  to 8 — heavily overlapping. Wave count measures how long a *solver* grinds,
+  boards span 4 to 10 waves at both n = 10 and n = 15 (medians 5 to 8),
+  two-technique boards 4 to 14, contradiction stall-runs 1 to 4 — heavily
+  overlapping. Wave count measures how long a *solver* grinds,
   which is not how hard a person finds it.
 - Acceptance is a **wave propagation solver** (`propagateStarBoard`): freeze the
   state, compute every forced move, apply them all simultaneously, and count one
