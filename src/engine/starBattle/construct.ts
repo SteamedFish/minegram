@@ -223,6 +223,7 @@ import { solveStarCatalogue } from './catalogue'
 import { countStarSolutions } from './count'
 import { measureMinimumBasis } from './minimumBasis'
 import { propagateStarBoard } from './propagate'
+import { measureStarBoardSignature, type StarBoardSignature } from './signature'
 import {
   STAR_SHAPE_MAX_LARGEST_REGION_SHARE,
   measureStarBoardStructure,
@@ -260,7 +261,7 @@ export const STAR_DIFFICULTIES: readonly StarDifficulty[] = [
 ]
 
 /** The construction tiers: solved by the base rules alone, painted directly. */
-type StarConstructionDifficulty = 'starter' | 'steady'
+export type StarConstructionDifficulty = 'starter' | 'steady'
 
 /**
  * The technique tiers: descended, then rejection-sampled on the basis k.
@@ -315,6 +316,15 @@ export interface StarGeneratedBoard {
    */
   readonly csPasses?: number
   readonly csTrials?: number
+  /**
+   * The measured board signature (signature.ts), computed on the ACCEPTED
+   * board after every gate passed. Present for the technique tiers, absent
+   * for the construction tiers (whose boards are painted, not walked).
+   * Measurement only: the signature never feeds back into the descent —
+   * the attractor-ladder finding in signature.ts is why an acceptance
+   * predicate on it would be dead code.
+   */
+  readonly signature?: StarBoardSignature
 }
 
 /**
@@ -372,6 +382,99 @@ export const STAR_TIER_SHAPE_GATE: StarShapeGate = Object.freeze({
   noHub: true,
   maxLargestRegionShare: STAR_SHAPE_MAX_LARGEST_REGION_SHARE,
 })
+
+/**
+ * One walk's inputs in the technique-tier rejection loop: which
+ * construction tier seeds the descent, and which easiness meter the descent
+ * minimises (walk.ts).
+ */
+export interface StarTechniqueWalkInput {
+  readonly seedDifficulty: StarConstructionDifficulty
+  readonly meter: 'base' | 'confinement'
+}
+
+/**
+ * The per-tier menu of walk inputs, rotated deterministically by walk
+ * index. WHY (measured, 2026-10-07 — the attractor-ladder finding recorded
+ * in signature.ts): the descent under one fixed input is an attractor
+ * ladder — at the base-stall bottom only c1 revives propagation, so every
+ * steady-seeded walk ends at witness {c1} and the tier ships one puzzle
+ * forever. No acceptance predicate can fix that (rejecting the attractor
+ * rejects 100% of reachable endpoints); the diversity has to enter at the
+ * INPUTS, and this menu is where it enters.
+ *
+ * The menu is the (seedDifficulty × meter) product RESTRICTED to pairs that
+ * can produce the tier's target: a 'confinement'-meter walk's endpoint is
+ * ALWAYS k = -1 (the full depth-0 catalogue placed nothing), so for
+ * 'challenging'/'expert' the meter stays 'base' — a confinement entry could
+ * never hit target 1 or 2 and would be guaranteed-reject waste halving the
+ * effective walk budget. For 'contradiction' the meter stays 'confinement':
+ * it is the tier's own meter, and a 'base' entry would both rarely hit k =
+ * -1 and dilute the feasibility probe's per-walk success signal the UI's
+ * picker reads. The rotated dimension that carries the measured diversity
+ * is the SEED: starter-seeded walks under the production gate reach witness
+ * {c3}, {c1}, {c1,c3} and {c1,c4} at k = 1 (the reference-game class)
+ * where steady-seeded walks reach only {c1}. Different inputs terminate at
+ * provably different fixed points; the rotation visits them in turn.
+ *
+ * Exported for {@link ./feasibility.ts}: the probe must walk the SAME input
+ * stream generation uses, or the measured availability no longer describes
+ * the shipped generator. Determinism: the input is a pure function of
+ * (difficulty, walk index, phase), and the phase derives from the request
+ * seed — same (n, seed, tier) ⇒ same input sequence ⇒ same board.
+ *
+ * WHY THE PHASE (measured, 2026-10-07): rotating by walk index ALONE is a
+ * no-op for tiers whose first walk usually succeeds — the rejection loop
+ * stops at the first accepted walk, so walks 1..47 never run and the
+ * rotation never engages (measured: challenging BEFORE/AFTER byte-identical
+ * over 8 generations). The diversity therefore has to phase by GENERATION:
+ * each request seed deterministically picks which menu entry walk 0 starts
+ * from, and the walk index rotates from there. That is the product-scale
+ * version of what the study measured walk-by-walk: starter-SEEDED walks
+ * reach witnesses {c3}, {c1}, {c1,c3}, {c1,c4} at k = 1 where steady-seeded
+ * walks reach only {c1}; phasing by seed makes a tier's GENERATIONS sample
+ * those basins in turn.
+ *
+ * WHY CONTRADICTION IS A SINGLETON MENU: a k = -1 board's witness is EMPTY
+ * BY DEFINITION, so puzzle-class diversity is structurally impossible for
+ * the tier — every accepted board is the class (-1, ∅) no matter the seed.
+ * Rotating starter in anyway was measured to only burn budget (the walk
+ * wall clock) for zero class gain: 8 generations went 80 s → 126 s with a
+ * give-up appearing. Per the brief, contradiction's cost profile is left
+ * exactly as shipped.
+ */
+export const TECHNIQUE_WALK_INPUT_MENU: Readonly<
+  Record<StarTechniqueDifficulty, readonly StarTechniqueWalkInput[]>
+> = Object.freeze({
+  challenging: Object.freeze([
+    Object.freeze({ seedDifficulty: 'steady', meter: 'base' }),
+    Object.freeze({ seedDifficulty: 'starter', meter: 'base' }),
+  ]),
+  expert: Object.freeze([
+    Object.freeze({ seedDifficulty: 'steady', meter: 'base' }),
+    Object.freeze({ seedDifficulty: 'starter', meter: 'base' }),
+  ]),
+  contradiction: Object.freeze([
+    Object.freeze({ seedDifficulty: 'steady', meter: 'confinement' }),
+  ]),
+})
+
+/**
+ * The walk input a given tier uses at walk index `walk`, rotated from
+ * `phase` (the per-generation entry the request seed picks). Pure and
+ * deterministic; negative totals are normalised so the function is total.
+ * With the default phase 0 this is the plain round-robin — the rotation
+ * tests pin both.
+ */
+export function techniqueTierWalkInput(
+  difficulty: StarTechniqueDifficulty,
+  walk: number,
+  phase: number = 0,
+): StarTechniqueWalkInput {
+  const menu = TECHNIQUE_WALK_INPUT_MENU[difficulty]
+  const index = (((walk + phase) % menu.length) + menu.length) % menu.length
+  return menu[index]
+}
 
 /**
  * Shaping budgets (steady, n >= 6): the maximum recolour attempts and
@@ -1068,6 +1171,12 @@ function generateTechniqueTierBoard(request: {
   const startedAt = performance.now()
   let lastK: number | null = null
 
+  // The per-generation phase: which menu entry walk 0 descends from is a
+  // deterministic function of the request seed, so a tier's GENERATIONS
+  // sample the input basins in turn (see {@link TECHNIQUE_WALK_INPUT_MENU}
+  // — rotating by walk index alone never engages when walk 0 accepts).
+  const phase = rng.derive('walk-input-phase').nextInt(TECHNIQUE_WALK_INPUT_MENU[difficulty].length)
+
   for (let walk = 0; walk < TECHNIQUE_WALK_ATTEMPTS; walk += 1) {
     if (performance.now() - startedAt >= TECHNIQUE_TIER_WALL_CLOCK_MS) {
       throw new StarTechniqueTierBudgetExhaustedError({
@@ -1083,17 +1192,22 @@ function generateTechniqueTierBoard(request: {
     }
 
     let walked: ReturnType<typeof walkStarBattleBoard>
+    // The walk's inputs rotate through the tier's menu (see
+    // {@link TECHNIQUE_WALK_INPUT_MENU}): the same gates accept, but each
+    // walk descends from a different input's basin, which is the only
+    // measured lever that moves the endpoint signature. Seeding from a
+    // technique tier would recurse back into this loop, so the menu only
+    // names construction tiers.
+    const walkInput = techniqueTierWalkInput(difficulty, walk, phase)
     try {
       walked = walkStarBattleBoard({
         n,
         seed: rng.derive(`technique-walk-${walk}`).seed,
-        // 'steady' — the deepest CONSTRUCTION tier — seeds the descent.
-        // Seeding from a technique tier would recurse back into this loop.
-        seedDifficulty: 'steady',
+        seedDifficulty: walkInput.seedDifficulty,
         // The contradiction tier descends on the confinement meter: stop
         // only when EVERY pure-deduction technique together places
         // nothing. The k = -1 target is then verified explicitly below.
-        meter: difficulty === 'contradiction' ? 'confinement' : 'base',
+        meter: walkInput.meter,
         // The shape gate: the walk stops only at meter 0 AND defect 0
         // (walk.ts module doc), so a hub board never reaches this loop.
         shape: STAR_TIER_SHAPE_GATE,
@@ -1176,6 +1290,13 @@ function generateTechniqueTierBoard(request: {
       solution: walked.solution,
     }
     assertStarBattlePuzzle(puzzle)
+    // The board signature (signature.ts), measured on the ACCEPTED endpoint
+    // AFTER every gate passed, reusing the acceptance-time basis so the
+    // 16-subset enumeration does not run twice. It travels with the board
+    // as reportable data; it is never an acceptance input — the descent is
+    // an attractor ladder, and a signature gate would reject 100% of
+    // reachable endpoints (signature.ts module doc).
+    const signature = measureStarBoardSignature(walked.colours, n, basis)
     // `waves` here is the full-catalogue wave count of the accepted board —
     // the base subset places nothing on a technique tier by definition.
     // `csPasses`/`csTrials` travel with the board: the measured cost of
@@ -1186,6 +1307,7 @@ function generateTechniqueTierBoard(request: {
       difficulty,
       csPasses: certified.csPasses,
       csTrials: certified.csTrials,
+      signature,
     })
   }
 

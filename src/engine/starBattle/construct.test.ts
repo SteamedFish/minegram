@@ -19,12 +19,21 @@ import { countStarSolutions } from './count'
 import {
   STAR_DIFFICULTIES,
   StarTechniqueTierBudgetExhaustedError,
+  TECHNIQUE_WALK_INPUT_MENU,
   admissibleStarPermutation,
   generateStarBattle,
+  techniqueTierWalkInput,
   type StarDifficulty,
 } from './construct'
 import { measureMinimumBasis } from './minimumBasis'
 import { propagateStarBoard } from './propagate'
+import {
+  createStarSignatureWindow,
+  measureStarBoardSignature,
+  recordStarSignature,
+  starSignatureKey,
+  starSignatureWindowStats,
+} from './signature'
 import { walkStarBattleBoard } from './walk'
 
 /** Construction tiers: painted directly, the base solver must solve them. */
@@ -269,7 +278,12 @@ describe('generateStarBattle technique tiers: base stalls and the basis hits the
         }
       }
     }
-  })
+    // Generous wall budget: the input rotation (measured ~2x at these
+    // sizes) makes some generations descend from a starter seed, which is
+    // slower than the historical steady-only stream. Correctness, not
+    // speed, is pinned here; the speed pins live in the measurement
+    // describes below.
+  }, 120_000)
 
   it('contradiction boards carry every acceptance gate (n = 8..10)', () => {
     // The k = -1 class is measured at n = 8..10 (the recorded contradiction
@@ -743,10 +757,15 @@ describe('generateStarBattle technique-tier measurements (acceptance, wall-clock
       report[`n=15 ${difficulty}`] =
         `median=${median(clocks).toFixed(0)}ms all=[${clocks.map((t) => t.toFixed(0)).join(',')}] ` +
         `witnessWaves=[${witnessWaves.join(',')}] giveUps=${giveUps}/6`
-      // Expert at n=15 samples k=2 at ~8% per walk, so a median under the
-      // half-budget and a give-up rate under a third are the measured
-      // shape; a regression that collapses the acceptance rate fails here.
-      expect(median(clocks)).toBeLessThan(TECHNIQUE_TIER_TARGET[difficulty] === 2 ? 15000 : 5000)
+      // Expert at n=15 samples k=2 at ~8% per walk, so 48 walks keep the
+      // give-up probability under ~2% while the 30 s wall clock bounds the
+      // worst case at large sides. The input rotation (walk-input phase,
+      // TECHNIQUE_WALK_INPUT_MENU) makes roughly half the generations
+      // descend from a starter seed — measured 2026-10-07 medians 5.7 s
+      // (challenging) / 5.1 s (expert) with zero give-ups — so the
+      // challenging ceiling moved from 5 s to 12 s; a regression that
+      // collapses the acceptance rate still fails here loudly.
+      expect(median(clocks)).toBeLessThan(TECHNIQUE_TIER_TARGET[difficulty] === 2 ? 15000 : 12000)
       expect(giveUps).toBeLessThanOrEqual(2)
     }
     console.log(`technique tiers n=15 — ${Object.entries(report).map(([k, v]) => `${k}: ${v}`).join(' | ')}`)
@@ -820,4 +839,144 @@ describe('generateStarBattle technique-tier measurements (acceptance, wall-clock
       }
     }
   }, 60000)
+})
+
+describe('technique-tier walk-input rotation', () => {
+  it('rotates the tier menu deterministically by walk index and phase', () => {
+    // Phase 0 is the plain round-robin: walk 0 is the historical steady
+    // input. The per-generation phase (derived from the request seed)
+    // offsets which entry walk 0 starts from — that offset is what makes a
+    // tier's GENERATIONS sample different basins, pinned next.
+    expect(techniqueTierWalkInput('challenging', 0, 0)).toEqual({
+      seedDifficulty: 'steady',
+      meter: 'base',
+    })
+    expect(techniqueTierWalkInput('challenging', 1, 0)).toEqual({
+      seedDifficulty: 'starter',
+      meter: 'base',
+    })
+    expect(techniqueTierWalkInput('challenging', 0, 1)).toEqual({
+      seedDifficulty: 'starter',
+      meter: 'base',
+    })
+    expect(techniqueTierWalkInput('challenging', 1, 1)).toEqual({
+      seedDifficulty: 'steady',
+      meter: 'base',
+    })
+    expect(techniqueTierWalkInput('expert', 2, 1)).toEqual({
+      seedDifficulty: 'starter',
+      meter: 'base',
+    })
+    expect(techniqueTierWalkInput('contradiction', 0, 0)).toEqual({
+      seedDifficulty: 'steady',
+      meter: 'confinement',
+    })
+    // Phase is irrelevant for the singleton contradiction menu.
+    expect(techniqueTierWalkInput('contradiction', 7, 1)).toEqual({
+      seedDifficulty: 'steady',
+      meter: 'confinement',
+    })
+  })
+
+  it('normalises negative walk indexes', () => {
+    expect(techniqueTierWalkInput('challenging', -1, 0)).toEqual(
+      techniqueTierWalkInput('challenging', 1, 0),
+    )
+    expect(techniqueTierWalkInput('challenging', -1, 1)).toEqual(
+      techniqueTierWalkInput('challenging', 1, 1),
+    )
+  })
+
+  it('every menu entry names a construction tier and a meter compatible with the tier target', () => {
+    for (const tier of TECHNIQUE_DIFFICULTIES) {
+      const menu = TECHNIQUE_WALK_INPUT_MENU[tier]
+      expect(menu.length).toBeGreaterThanOrEqual(1)
+      for (const input of menu) {
+        // Seeding from a technique tier would recurse into the rejection
+        // loop — the menu must only name construction tiers.
+        expect(['starter', 'steady']).toContain(input.seedDifficulty)
+      }
+      // Meter compatibility: a confinement-meter endpoint is always k = -1,
+      // so challenging/expert (targets 1/2) must never rotate one in; the
+      // contradiction tier descends on confinement.
+      if (tier === 'contradiction') {
+        expect(menu.every((input) => input.meter === 'confinement')).toBe(true)
+      } else {
+        expect(menu.every((input) => input.meter === 'base')).toBe(true)
+      }
+      // Consecutive entries differ — a multi-entry menu of identical
+      // inputs is not a rotation. (Contradiction is a deliberate
+      // singleton: a k = -1 board's witness is empty by definition, so
+      // seed diversity buys no class diversity — measured to only burn
+      // wall clock. See TECHNIQUE_WALK_INPUT_MENU's doc.)
+      if (menu.length > 1) {
+        for (let i = 1; i < menu.length; i += 1) {
+          expect(menu[i]).not.toEqual(menu[i - 1])
+        }
+      }
+    }
+  })
+
+  it('generated technique boards carry the endpoint signature, measured after acceptance', () => {
+    for (const tier of TECHNIQUE_DIFFICULTIES) {
+      const board = generateStarBattle({ n: 10, seed: 20_240, difficulty: tier })
+      expect(board.signature).toBeDefined()
+      // The attached signature is the measurement a caller would make
+      // themselves — the attachment adds no information and removes none.
+      const independent = measureStarBoardSignature(board.puzzle.colours, 10)
+      expect(board.signature).toEqual(independent)
+      expect(board.signature?.k).toBe(TECHNIQUE_TIER_TARGET[tier])
+      expect(starSignatureKey(independent)).toContain(`${board.signature?.k}|`)
+    }
+  }, 120_000)
+
+  it('construction-tier boards carry no signature (they are not walked)', () => {
+    for (const tier of CONSTRUCTION_DIFFICULTIES) {
+      const board = generateStarBattle({ n: 8, seed: 20_241, difficulty: tier })
+      expect(board.signature).toBeUndefined()
+    }
+  })
+
+  it('the rotation measurably diversifies the challenging tier at n = 10', () => {
+    // Fixed spaced seeds (the per-seed phase clusters on consecutive seeds —
+    // measured in the diversity probe; spacing makes the phase mix). The
+    // pins are the MEASURED rotation effects of 2026-10-07, not the target
+    // the study hoped for: the (k, witness) class modal share STAYS 1.0
+    // ({c1} — see the report), while the full-tuple share and the sea
+    // profile DO move. Those true effects are what the contract pins.
+    const seeds = [11_001, 21_007, 31_013, 41_019, 51_023, 61_031, 71_037, 81_041]
+    const collect = (): { keys: string[]; coreScores: Set<number>; classes: Set<string> } => {
+      const keys: string[] = []
+      const coreScores = new Set<number>()
+      const classes = new Set<string>()
+      for (const seed of seeds) {
+        const board = generateStarBattle({ n: 10, seed, difficulty: 'challenging' })
+        const signature = board.signature
+        expect(signature).toBeDefined()
+        keys.push(starSignatureKey(signature!))
+        coreScores.add(signature!.coreScore)
+        classes.add(`${signature!.k}|${signature!.witness.join('+')}`)
+      }
+      return { keys, coreScores, classes }
+    }
+
+    const first = collect()
+    // Determinism: the rotated generation is reproducible per (n, seed, tier).
+    expect(collect()).toEqual(first)
+
+    // The full-tuple modal share over the window is below the all-same
+    // mark (measured 0.375 on this seed set).
+    let window = createStarSignatureWindow()
+    for (const key of first.keys) {
+      window = recordStarSignature(window, key)
+    }
+    const stats = starSignatureWindowStats(window)
+    expect(stats.boards).toBe(seeds.length)
+    expect(stats.modalSignatureShare).toBeLessThanOrEqual(0.5)
+
+    // The sea profile no longer sits on every board: the rotation breaks
+    // the structural monotony even where the witness class holds (measured
+    // coreScores {4, 5} on this seed set — pre-rotation it was {5} only).
+    expect(first.coreScores.size).toBeGreaterThanOrEqual(2)
+  }, 120_000)
 })
