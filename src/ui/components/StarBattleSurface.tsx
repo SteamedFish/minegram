@@ -24,14 +24,17 @@ import type { StarMarkToken } from './starMarkTokens'
  * toolbar is a sibling of both, so a failed board can never be a dead end:
  * the size and difficulty controls stay reachable and are the natural escape.
  *
- * The optional `tierFeasibility` signal tells the surface which tiers the
- * engine can print at a given side; an unavailable tier renders as a disabled
- * pill so it cannot be selected, and the live tier being unavailable at the
- * live size is said in words under the control. When the signal is absent the
- * surface treats every tier as available — the behaviour before the engine
- * grew the table. The signal's shape is the surface's contract with the
- * engine lane: a predicate over (side, tier), so any engine table or function
- * adapts with a one-line wrapper at the host.
+ * The two availability signals tell the surface which tiers the engine can
+ * print at a given side. The measured one (`tierAvailability`) is the rich
+ * signal: an `unavailable` tier renders as a disabled pill with the honest
+ * note — no board in N generation-scale tries, never a claim of
+ * impossibility — an `unreliable` tier stays selectable but wears its thin
+ * evidence, and `unmeasured` renders exactly like no signal at all. The
+ * boolean `tierFeasibility` is the legacy shape: `false` is a disabled pill
+ * with the generic copy, the behaviour the game shipped with before the
+ * engine measured feasibility. With neither signal the surface treats every
+ * tier as available. Both are plain predicates over (side, tier), so any
+ * engine table or snapshot adapts with a one-line wrapper at the host.
  *
  * The interaction vocabulary, stated where the player meets it (the rules
  * block under the toolbar):
@@ -116,6 +119,29 @@ export interface StarFailureInfo {
  */
 export type StarTierFeasibility = (side: number, tier: StarDifficulty) => boolean
 
+/**
+ * The measured availability of one (side, tier) cell, in the engine's
+ * vocabulary: `available` prints reliably, `unreliable` sometimes prints
+ * (a warned but valid choice), `unavailable` produced no board in every
+ * sampled unit, and `unmeasured` asserts nothing. The surface owns this
+ * shape — the host projects the engine's report into it — so the component
+ * never imports below the UI layer.
+ */
+export interface StarTierAvailability {
+  readonly status: 'available' | 'unreliable' | 'unavailable' | 'unmeasured'
+  /** Units sampled: the N in "no board was found in N tries". */
+  readonly samples: number
+  /** Units that produced a board: the evidence behind `unreliable`. */
+  readonly hits: number
+}
+
+/** The cell before any measurement resolves; renders exactly like no signal. */
+export const UNMEASURED_TIER_AVAILABILITY: StarTierAvailability = Object.freeze({
+  status: 'unmeasured',
+  samples: 0,
+  hits: 0,
+})
+
 export type StarMark = 'blank' | 'star' | null
 
 export interface StarBattleSurfaceProps {
@@ -129,6 +155,15 @@ export interface StarBattleSurfaceProps {
   readonly failure?: StarFailureInfo | null
   /** Which tiers the engine can print at a given side; absent = all of them. */
   readonly tierFeasibility?: StarTierFeasibility
+  /**
+   * The measured per-tier availability at a given side; absent = the boolean
+   * signal above decides (or, with neither signal, every tier is available —
+   * the behaviour before feasibility existed). When present it takes
+   * precedence: `unavailable` is an unselectable pill with the honest note,
+   * `unreliable` is selectable but marked, and `unmeasured` renders exactly
+   * like no signal at all.
+   */
+  readonly tierAvailability?: (side: number, tier: StarDifficulty) => StarTierAvailability
   /** Remaining lives; `maxLives` is this round's configured maximum, `>= lives`. */
   readonly lives: number
   readonly maxLives: number
@@ -209,6 +244,17 @@ interface StarCopy {
   readonly tierUnavailable: string
   /** Under the difficulty control when the live tier is unavailable at the live size. `{tier}` is its label. */
   readonly tierUnavailableNote: string
+  /**
+   * The measured-signal pill suffix and live-tier note. The note states the
+   * evidence — no board in `{samples}` generation-scale tries — and must
+   * never claim the combination is impossible: a slow-failing cell is over
+   * the measurement's budget, not proven empty.
+   */
+  readonly tierUnavailableMeasured: string
+  readonly tierUnavailableMeasuredNote: string
+  /** The measured-signal markings for a tier that sometimes prints: selectable, but the label says how thin the evidence is. */
+  readonly tierUnreliable: string
+  readonly tierUnreliableNote: string
   readonly banner: {
     readonly wonTitle: string
     readonly wonBody: string
@@ -283,6 +329,10 @@ const en: StarCopy = {
   },
   tierUnavailable: 'Not available at this size',
   tierUnavailableNote: '{tier} is not available at this size.',
+  tierUnavailableMeasured: 'No board found in {samples} tries',
+  tierUnavailableMeasuredNote: '{tier}: no board was found at this size in {samples} generation-scale tries.',
+  tierUnreliable: 'Only {hits} of {samples} tries produced a board',
+  tierUnreliableNote: '{tier} produced a board in only {hits} of {samples} tries at this size, so printing may fail.',
   banner: {
     wonTitle: 'Board complete',
     wonBody: 'Lives {lives}. The next board starts on its own.',
@@ -359,6 +409,10 @@ const zhCN: StarCopy = {
   },
   tierUnavailable: '此尺寸不可用',
   tierUnavailableNote: '{tier} 在此尺寸不可用。',
+  tierUnavailableMeasured: '尝试 {samples} 次都没有生成出棋盘',
+  tierUnavailableMeasuredNote: '{tier}：在此尺寸 {samples} 次生成尝试都没有得到棋盘。',
+  tierUnreliable: '只有 {hits}/{samples} 次尝试能生成棋盘',
+  tierUnreliableNote: '{tier}：在此尺寸只有 {hits}/{samples} 次尝试能生成出棋盘，生成可能失败。',
   banner: {
     wonTitle: '棋盘完成',
     wonBody: '剩余生命 {lives}。下一局会自动开始。',
@@ -903,13 +957,39 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
   const pipCount = Math.max(0, props.maxLives)
   const failure = props.failure ?? null
 
-  // The engine's feasibility signal, defaulted to "every tier prints" so the
-  // absence of the signal is behaviourally invisible. A tier the engine
-  // cannot print at the current side renders as a disabled pill: still
-  // legible, never selectable.
-  const tierUnavailable = (tier: StarDifficulty): boolean =>
-    props.tierFeasibility !== undefined ? !props.tierFeasibility(n, tier) : false
-  const liveTierUnavailable = tierUnavailable(props.difficulty)
+  // The engine's availability signal. Precedence: the measured signal when
+  // the host supplies one; otherwise the legacy boolean predicate, where
+  // `false` maps to an unavailable cell with the generic copy (that is the
+  // behaviour the boolean signal's tests pin); with neither, every cell is
+  // unmeasured, which is bit-for-bit the game before the signals existed.
+  const measuredSignal = props.tierAvailability !== undefined
+  const availabilityOf = (tier: StarDifficulty): StarTierAvailability => {
+    if (props.tierAvailability !== undefined) {
+      return props.tierAvailability(n, tier)
+    }
+    if (props.tierFeasibility !== undefined) {
+      return props.tierFeasibility(n, tier)
+        ? { status: 'available', samples: 0, hits: 0 }
+        : { status: 'unavailable', samples: 0, hits: 0 }
+    }
+    return UNMEASURED_TIER_AVAILABILITY
+  }
+  /** A pill's suffix naming the evidence; `null` when the pill needs none. */
+  const availabilityLabel = (tier: StarDifficulty): string | null => {
+    const availability = availabilityOf(tier)
+    if (availability.status === 'unavailable') {
+      return measuredSignal
+        ? fill(copy.tierUnavailableMeasured, { samples: availability.samples })
+        : copy.tierUnavailable
+    }
+    if (availability.status === 'unreliable') {
+      return fill(copy.tierUnreliable, { hits: availability.hits, samples: availability.samples })
+    }
+    return null
+  }
+  const liveAvailability = availabilityOf(props.difficulty)
+  const liveTierUnavailable = liveAvailability.status === 'unavailable'
+  const liveTierUnreliable = liveAvailability.status === 'unreliable'
 
   return (
     <div className="mg-star-surface" data-status={status} data-testid="star-surface">
@@ -953,18 +1033,22 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
           </span>
         </div>
         {/* Difficulty: the segmented idiom with one addition the shared
-            SegmentedControl does not have — a per-option disabled state, so a
-            tier the engine cannot print at the current side is a legible but
-            unselectable pill. The markup and classes are SegmentedControl's
-            own, so the look and the radiogroup semantics are unchanged. When
-            the live tier is unavailable at the live size, that is said in
-            words under the control: a disabled pill alone would look like a
-            bug. */}
+            SegmentedControl does not have — a per-option availability state,
+            so a tier the engine cannot print at the current side is a legible
+            but unselectable pill and a tier that only sometimes prints stays
+            selectable but wears its thin evidence. The markup and classes are
+            SegmentedControl's own, so the look and the radiogroup semantics
+            are unchanged. When the live tier is unavailable or unreliable at
+            the live size, that is said in words under the control: a marked
+            pill alone would look like a rendering bug. */}
         <div className="mg-star-difficulty" data-testid="star-difficulty">
           <div className="mg-seg" role="radiogroup" aria-label={copy.difficultyLabel} id="mg-star-difficulty">
             {STAR_DIFFICULTIES.map((tier) => {
               const optionId = `mg-star-difficulty-${tier}`
-              const unavailable = tierUnavailable(tier)
+              const availability = availabilityOf(tier)
+              const unavailable = availability.status === 'unavailable'
+              const unreliable = availability.status === 'unreliable'
+              const suffix = availabilityLabel(tier)
               return (
                 <span className="mg-seg__item" key={tier}>
                   <input
@@ -975,9 +1059,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
                     value={tier}
                     checked={props.difficulty === tier}
                     disabled={controlsDisabled || unavailable}
-                    aria-label={
-                      unavailable ? `${copy.difficulties[tier]} — ${copy.tierUnavailable}` : undefined
-                    }
+                    aria-label={suffix === null ? undefined : `${copy.difficulties[tier]} — ${suffix}`}
                     onChange={() => {
                       props.onDifficultyChange(tier)
                     }}
@@ -987,6 +1069,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
                     htmlFor={optionId}
                     data-tier={tier}
                     data-unavailable={unavailable ? 'true' : undefined}
+                    data-availability={unreliable ? 'unreliable' : undefined}
                   >
                     {copy.difficulties[tier]}
                   </label>
@@ -996,7 +1079,20 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
           </div>
           {liveTierUnavailable ? (
             <p className="mg-star-difficulty__note" data-testid="star-tier-note" role="note">
-              {fill(copy.tierUnavailableNote, { tier: copy.difficulties[props.difficulty] })}
+              {measuredSignal
+                ? fill(copy.tierUnavailableMeasuredNote, {
+                    tier: copy.difficulties[props.difficulty],
+                    samples: liveAvailability.samples,
+                  })
+                : fill(copy.tierUnavailableNote, { tier: copy.difficulties[props.difficulty] })}
+            </p>
+          ) : liveTierUnreliable ? (
+            <p className="mg-star-difficulty__note" data-testid="star-tier-note" role="note">
+              {fill(copy.tierUnreliableNote, {
+                tier: copy.difficulties[props.difficulty],
+                hits: liveAvailability.hits,
+                samples: liveAvailability.samples,
+              })}
             </p>
           ) : null}
         </div>

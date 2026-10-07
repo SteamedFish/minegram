@@ -355,6 +355,19 @@
   color: var(--ink-2);
 }
 
+/* A tier that sometimes prints: still selectable, but the dashed edge says
+   the evidence is thin — printing may fail — without taking the choice away.
+   Hiding it would be a lie in the other direction: the cell DID produce
+   boards. */
+.mg-star-difficulty .mg-seg__label[data-availability='unreliable'] {
+  border-style: dashed;
+  color: var(--ink-2);
+}
+
+.mg-star-difficulty .mg-seg__label[data-availability='unreliable']:hover {
+  color: var(--ink);
+}
+
 /* Said under the difficulty control when the live tier is unavailable at the
    live size: a disabled pill alone would read as a rendering bug. */
 .mg-star-difficulty__note {
