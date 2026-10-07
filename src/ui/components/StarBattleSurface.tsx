@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { SegmentedControl } from './primitives'
+import type { StarMarkToken } from './starMarkTokens'
 
 /**
  * Star Battle surface: the whole second game as one props-driven view.
@@ -312,13 +313,11 @@ function isWrong(index: number, code: number, puzzle: StarBattlePuzzle): boolean
  * What a cell displays as. A locked cell is certified correct, so the solution
  * — not the mark code — says whether it locked as a star or a blank; the game
  * fills blanks (auto-blank) with the same locked code, and this stays right
- * under both shapes of the write.
+ * under both shapes of the write. The token vocabulary is STAR_MARK_TOKENS,
+ * whose type this derives from, so a new token cannot exist here without
+ * existing there — where the stylesheet contract test can see it.
  */
-function displayMark(
-  index: number,
-  code: number,
-  puzzle: StarBattlePuzzle,
-): 'unmarked' | 'blank' | 'star' | 'locked-star' | 'locked-blank' {
+function displayMark(index: number, code: number, puzzle: StarBattlePuzzle): StarMarkToken {
   if (code === LOCKED) {
     return isSolutionCell(index, puzzle) ? 'locked-star' : 'locked-blank'
   }

@@ -500,21 +500,35 @@
 }
 
 .mg-star-cell[data-mark='star'] .mg-star-cell__glyph,
-.mg-star-cell[data-mark='locked'] .mg-star-cell__glyph {
+.mg-star-cell[data-mark='locked-star'] .mg-star-cell__glyph {
   display: grid;
 }
 
-.mg-star-cell[data-mark='blank'] .mg-star-cell__glyph {
+/* blank and locked-blank share ONE rule: a game-filled cell must read
+   exactly like a player-filled one — same dot, same size, same colour — and
+   it carries no ring, because the ring acknowledges a correct mark the
+   player made, not a blank the game wrote. */
+.mg-star-cell[data-mark='blank'] .mg-star-cell__glyph,
+.mg-star-cell[data-mark='locked-blank'] .mg-star-cell__glyph {
   display: grid;
   font-size: clamp(9px, calc(90cqi / var(--cols)), 26px);
   color: var(--ink-3);
 }
 
+/* Unmarked states the absence explicitly, so every token displayMark can
+   emit (starMarkTokens.ts, the single source of truth) has a rule here. */
+.mg-star-cell[data-mark='unmarked'] .mg-star-cell__glyph {
+  display: none;
+}
+
 /* A locked star is the game's own acknowledgement: a confirm ring, never a
    charge. The ring sits on the plate, not the fill — plate gaps on both
    sides — so it reads the same on a 21% teal as on an 84% pastel, and as a
-   box-shadow (not an outline) it still composes with a keyboard focus ring. */
-.mg-star-cell[data-mark='locked'] {
+   box-shadow (not an outline) it still composes with a keyboard focus ring.
+   A locked BLANK deliberately gets no ring: filling is the game's job, not
+   the player's achievement, and ringing every auto-filled cell would paint
+   most of the board the moment one star lands. */
+.mg-star-cell[data-mark='locked-star'] {
   box-shadow:
     0 0 0 var(--rule-w) var(--surface-2),
     0 0 0 calc(var(--rule-w) + var(--rule-w-heavy)) var(--confirm),
