@@ -15,8 +15,23 @@ import type { StarMarkToken } from './starMarkTokens'
  * Star Battle surface: the whole second game as one props-driven view.
  * Presentational only — every mark request leaves through `onMark`, every
  * navigation through `onNewRound` / `onDifficultyChange` / `onSizeChange` /
- * `onMaxLivesChange` / `onBackToPicker`. It never mutates a prop and never
- * reaches for a store.
+ * `onMaxLivesChange` / `onRetry` / `onBackToPicker`. It never mutates a prop
+ * and never reaches for a store.
+ *
+ * The surface renders in EVERY round state, including the two that have no
+ * board: `puzzle === null` states the case with the empty card, and a
+ * projected `failure` states the generation fault with the failure card. The
+ * toolbar is a sibling of both, so a failed board can never be a dead end:
+ * the size and difficulty controls stay reachable and are the natural escape.
+ *
+ * The optional `tierFeasibility` signal tells the surface which tiers the
+ * engine can print at a given side; an unavailable tier renders as a disabled
+ * pill so it cannot be selected, and the live tier being unavailable at the
+ * live size is said in words under the control. When the signal is absent the
+ * surface treats every tier as available — the behaviour before the engine
+ * grew the table. The signal's shape is the surface's contract with the
+ * engine lane: a predicate over (side, tier), so any engine table or function
+ * adapts with a one-line wrapper at the host.
  *
  * The interaction vocabulary, stated where the player meets it (the rules
  * block under the toolbar):
@@ -78,20 +93,50 @@ export interface StarBattlePuzzle {
   readonly solution: readonly number[]
 }
 
+/**
+ * A generation failure, projected to player-facing strings by the host (the
+ * surface never sees the raw diagnostics, and the raw `reason` token is
+ * carried only for `data-reason`, never rendered). `remedies` is ordered.
+ */
+export interface StarFailureInfo {
+  /** The raw failure token; a data attribute and nothing else. */
+  readonly reason: string
+  readonly headline: string
+  readonly explanation: string
+  readonly remedies: readonly string[]
+  /** False for a deterministic fault, where retrying the same request cannot help. */
+  readonly retryable: boolean
+}
+
+/**
+ * The engine's tier-feasibility signal: `true` when a board of `side` at
+ * `tier` can be generated. Optional on purpose — the surface degrades to
+ * "every tier available" when the host supplies nothing, which is the
+ * behaviour the game shipped with before the engine measured feasibility.
+ */
+export type StarTierFeasibility = (side: number, tier: StarDifficulty) => boolean
+
 export type StarMark = 'blank' | 'star' | null
 
 export interface StarBattleSurfaceProps {
   readonly locale: 'en' | 'zh'
-  readonly puzzle: StarBattlePuzzle
+  /** `null` while no certified board exists — the empty card states the case. */
+  readonly puzzle: StarBattlePuzzle | null
   /** Length `n * n`: 0 unmarked, 1 blank, 2 star, 3 locked-correct. Read-only. */
   readonly marks: Uint8Array
   readonly status: 'idle' | 'generating' | 'playing' | 'won' | 'lost'
+  /** A generation failure to state in place of the board; `null` when there is none. */
+  readonly failure?: StarFailureInfo | null
+  /** Which tiers the engine can print at a given side; absent = all of them. */
+  readonly tierFeasibility?: StarTierFeasibility
   /** Remaining lives; `maxLives` is this round's configured maximum, `>= lives`. */
   readonly lives: number
   readonly maxLives: number
   readonly mistakes: number
   readonly streak: number
   readonly difficulty: StarDifficulty
+  /** The store's current board side; drives the size selector even before a board exists. */
+  readonly side: number
   /** The supported board-side range; the host reads it off the domain constants. */
   readonly minSide: number
   readonly maxSide: number
@@ -101,6 +146,8 @@ export interface StarBattleSurfaceProps {
   readonly maxLivesCeiling: number
   readonly onMark: (row: number, col: number, next: StarMark) => void
   readonly onNewRound: () => void
+  /** Reuses the exact seed of the most recent failed request (the failure card's retry). */
+  readonly onRetry: () => void
   readonly onDifficultyChange: (difficulty: StarDifficulty) => void
   readonly onSizeChange: (n: number) => void
   readonly onMaxLivesChange: (n: number) => void
@@ -147,6 +194,21 @@ interface StarCopy {
     readonly generatingTitle: string
     readonly generatingBody: string
   }
+  /**
+   * The generation-failure card. Headline, explanation and remedies are
+   * projected by the host from the shared failure dictionary; only the two
+   * affordance strings — and the note that points at the toolbar, the way out
+   * of a failed board — live here.
+   */
+  readonly failure: {
+    readonly retry: string
+    /** Said under the card's actions: the toolbar above is the real escape. */
+    readonly changeNote: string
+  }
+  /** Why a difficulty pill is disabled: the engine cannot print this tier at this size. */
+  readonly tierUnavailable: string
+  /** Under the difficulty control when the live tier is unavailable at the live size. `{tier}` is its label. */
+  readonly tierUnavailableNote: string
   readonly banner: {
     readonly wonTitle: string
     readonly wonBody: string
@@ -216,6 +278,12 @@ const en: StarCopy = {
     generatingTitle: 'Printing the board',
     generatingBody: 'This takes a moment.',
   },
+  failure: {
+    retry: 'Retry',
+    changeNote: 'Change the board size or difficulty above, or go back to pick another game.',
+  },
+  tierUnavailable: 'Not available at this size',
+  tierUnavailableNote: '{tier} is not available at this size.',
   banner: {
     wonTitle: 'Board complete',
     wonBody: 'Lives {lives}. The next board starts on its own.',
@@ -287,6 +355,12 @@ const zhCN: StarCopy = {
     generatingTitle: '正在生成棋盘',
     generatingBody: '需要一点时间。',
   },
+  failure: {
+    retry: '重试',
+    changeNote: '可以在上方更改棋盘尺寸或难度，或返回选择其他游戏。',
+  },
+  tierUnavailable: '此尺寸不可用',
+  tierUnavailableNote: '{tier} 在此尺寸不可用。',
   banner: {
     wonTitle: '棋盘完成',
     wonBody: '剩余生命 {lives}。下一局会自动开始。',
@@ -421,9 +495,12 @@ const DRAG_THRESHOLD_PX = 8
 
 export function StarBattleSurface(props: StarBattleSurfaceProps) {
   const { puzzle, marks, status } = props
-  const n = puzzle.n
+  // The grid's side; before a board exists the store's configured side drives
+  // the size selector, so `n` is never borrowed from a puzzle that isn't there.
+  const n = puzzle?.n ?? props.side
   const copy = getStarCopy(props.locale)
   const playing = status === 'playing'
+  const controlsDisabled = status === 'generating'
 
   const gridRef = useRef<HTMLDivElement | null>(null)
   const cellsRef = useRef<(HTMLDivElement | null)[]>([])
@@ -431,7 +508,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
   const marksRef = useRef(marks)
   const previousMarksRef = useRef(marks)
   const previousStatusRef = useRef(status)
-  const seenSeedRef = useRef(puzzle.seed)
+  const seenSeedRef = useRef(puzzle?.seed ?? 0)
   const liveRef = useRef<HTMLDivElement | null>(null)
   const [roving, setRoving] = useState(0)
   const [notice, setNotice] = useState('')
@@ -440,7 +517,10 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
     marksRef.current = marks
   }, [marks])
 
-  const derived = useMemo(() => deriveStarState(marks, puzzle), [marks, puzzle])
+  const derived = useMemo<StarDerived>(
+    () => (puzzle === null ? { starIndices: [], conflicts: new Set<number>() } : deriveStarState(marks, puzzle)),
+    [marks, puzzle],
+  )
 
   // A new board invalidates the roving index. Cell refs are NOT cleared here:
   // this effect runs after the refs attach, so clearing would leave the focus
@@ -448,13 +528,19 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
   // cells render, which is enough.
   useEffect(() => {
     setRoving(0)
-  }, [puzzle.seed])
+  }, [puzzle?.seed])
 
   // Announce newly wrong marks and the round's end through the one polite region.
   useEffect(() => {
-    if (seenSeedRef.current !== puzzle.seed) {
+    if (seenSeedRef.current !== puzzle?.seed) {
       // The round turned over; the new board's marks are the new baseline.
-      seenSeedRef.current = puzzle.seed
+      seenSeedRef.current = puzzle?.seed ?? 0
+      previousMarksRef.current = marks
+      previousStatusRef.current = status
+      return
+    }
+    if (puzzle === null) {
+      // No board, nothing to announce; the failure card states the case itself.
       previousMarksRef.current = marks
       previousStatusRef.current = status
       return
@@ -768,27 +854,27 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
     }
   }, [clearLongPress])
 
-  function cellLabel(index: number): string {
+  function cellLabel(index: number, board: StarBattlePuzzle): string {
     const code = marks[index] ?? 0
     const at = fill(copy.cell.at, {
       row: Math.floor(index / n) + 1,
       col: (index % n) + 1,
-      colour: (puzzle.colours[index] ?? 0) + 1,
+      colour: (board.colours[index] ?? 0) + 1,
     })
     const state = (() => {
       if (code === LOCKED) {
-        return isSolutionCell(index, puzzle)
+        return isSolutionCell(index, board)
           ? copy.cell.states.lockedStar
           : copy.cell.states.lockedBlank
       }
       if (code === 2) {
-        if (isWrong(index, code, puzzle)) {
+        if (isWrong(index, code, board)) {
           return copy.cell.states.wrongStar
         }
         return derived.conflicts.has(index) ? copy.cell.states.conflict : copy.cell.states.star
       }
       if (code === 1) {
-        return isWrong(index, code, puzzle) ? copy.cell.states.wrongBlank : copy.cell.states.blank
+        return isWrong(index, code, board) ? copy.cell.states.wrongBlank : copy.cell.states.blank
       }
       return copy.cell.states.unmarked
     })()
@@ -808,6 +894,15 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
   }
 
   const pipCount = Math.max(0, props.maxLives)
+  const failure = props.failure ?? null
+
+  // The engine's feasibility signal, defaulted to "every tier prints" so the
+  // absence of the signal is behaviourally invisible. A tier the engine
+  // cannot print at the current side renders as a disabled pill: still
+  // legible, never selectable.
+  const tierUnavailable = (tier: StarDifficulty): boolean =>
+    props.tierFeasibility !== undefined ? !props.tierFeasibility(n, tier) : false
+  const liveTierUnavailable = tierUnavailable(props.difficulty)
 
   return (
     <div className="mg-star-surface" data-status={status} data-testid="star-surface">
@@ -850,32 +945,68 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
             </span>
           </span>
         </div>
+        {/* Difficulty: the segmented idiom with one addition the shared
+            SegmentedControl does not have — a per-option disabled state, so a
+            tier the engine cannot print at the current side is a legible but
+            unselectable pill. The markup and classes are SegmentedControl's
+            own, so the look and the radiogroup semantics are unchanged. When
+            the live tier is unavailable at the live size, that is said in
+            words under the control: a disabled pill alone would look like a
+            bug. */}
         <div className="mg-star-difficulty" data-testid="star-difficulty">
-          <SegmentedControl
-            id="mg-star-difficulty"
-            label={copy.difficultyLabel}
-            value={props.difficulty}
-            options={STAR_DIFFICULTIES.map((tier) => ({
-              value: tier,
-              label: copy.difficulties[tier],
-            }))}
-            disabled={status === 'generating'}
-            onChange={props.onDifficultyChange}
-          />
+          <div className="mg-seg" role="radiogroup" aria-label={copy.difficultyLabel} id="mg-star-difficulty">
+            {STAR_DIFFICULTIES.map((tier) => {
+              const optionId = `mg-star-difficulty-${tier}`
+              const unavailable = tierUnavailable(tier)
+              return (
+                <span className="mg-seg__item" key={tier}>
+                  <input
+                    className="mg-seg__input"
+                    type="radio"
+                    id={optionId}
+                    name="mg-star-difficulty"
+                    value={tier}
+                    checked={props.difficulty === tier}
+                    disabled={controlsDisabled || unavailable}
+                    aria-label={
+                      unavailable ? `${copy.difficulties[tier]} — ${copy.tierUnavailable}` : undefined
+                    }
+                    onChange={() => {
+                      props.onDifficultyChange(tier)
+                    }}
+                  />
+                  <label
+                    className="mg-seg__label"
+                    htmlFor={optionId}
+                    data-tier={tier}
+                    data-unavailable={unavailable ? 'true' : undefined}
+                  >
+                    {copy.difficulties[tier]}
+                  </label>
+                </span>
+              )
+            })}
+          </div>
+          {liveTierUnavailable ? (
+            <p className="mg-star-difficulty__note" data-testid="star-tier-note" role="note">
+              {fill(copy.tierUnavailableNote, { tier: copy.difficulties[props.difficulty] })}
+            </p>
+          ) : null}
         </div>
         {/* Board size: the same segmented idiom as difficulty, one chip per
            supported side, the numerals themselves as the labels so nothing is
-           locale-specific. The current side is the live board's own n. */}
+           locale-specific. The checked chip is the store's configured side,
+           which is the live board's own n once one exists. */}
         <div className="mg-star-size" data-testid="star-size">
           <SegmentedControl
             id="mg-star-size"
             label={copy.size.label}
-            value={String(puzzle.n)}
+            value={String(props.side)}
             options={boardSizes(props.minSide, props.maxSide).map((side) => ({
               value: String(side),
               label: String(side),
             }))}
-            disabled={status === 'generating'}
+            disabled={controlsDisabled}
             onChange={(value) => {
               props.onSizeChange(Number(value))
             }}
@@ -892,7 +1023,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
               value: String(lives),
               label: String(lives),
             }))}
-            disabled={status === 'generating'}
+            disabled={controlsDisabled}
             onChange={(value) => {
               props.onMaxLivesChange(Number(value))
             }}
@@ -938,7 +1069,43 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
         </p>
       </section>
 
-      {status === 'idle' || status === 'generating' ? (
+      {/* The three faces of "no playable board", in precedence order. A
+          generation failure states the fault and its remedy but never hides
+          the toolbar: changing the size or difficulty above — or retrying, or
+          going back — is the way out, and every one of those controls stays
+          on screen. While nothing has been requested yet (or the request is
+          still printing) the empty card states the case. Otherwise the board. */}
+      {failure !== null ? (
+        <section
+          className="mg-star-failure"
+          role="alert"
+          aria-atomic="true"
+          data-kind={failure.retryable ? 'retryable' : 'deterministic'}
+          data-reason={failure.reason}
+          data-testid="star-failure"
+        >
+          <h2 className="mg-star-failure__headline">{failure.headline}</h2>
+          <p className="mg-star-failure__explanation">{failure.explanation}</p>
+          <ol className="mg-star-failure__remedies">
+            {failure.remedies.map((remedy, index) => (
+              <li className="mg-star-failure__remedy" key={index}>
+                {remedy}
+              </li>
+            ))}
+          </ol>
+          <div className="mg-star-failure__actions">
+            {failure.retryable ? (
+              <button type="button" className="mg-button" onClick={props.onRetry}>
+                {copy.failure.retry}
+              </button>
+            ) : null}
+            <button type="button" className="mg-button" onClick={props.onBackToPicker}>
+              {copy.back}
+            </button>
+          </div>
+          <p className="mg-star-failure__note">{copy.failure.changeNote}</p>
+        </section>
+      ) : status === 'idle' || status === 'generating' || puzzle === null ? (
         <div className="mg-star-empty" data-testid="star-empty">
           <h2 className="mg-star-empty__title">
             {status === 'idle' ? copy.empty.idleTitle : copy.empty.generatingTitle}
@@ -986,7 +1153,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
                       }
                       data-inert={playing ? undefined : 'true'}
                       data-testid="star-cell"
-                      aria-label={cellLabel(index)}
+                      aria-label={cellLabel(index, puzzle)}
                       tabIndex={roving === index ? 0 : -1}
                       onFocus={() => {
                         setRoving(index)

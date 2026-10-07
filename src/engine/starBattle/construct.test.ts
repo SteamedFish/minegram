@@ -100,7 +100,22 @@ describe('generateStarBattle validity rule (construction tiers)', () => {
     for (const n of [4, 6, 9, 13]) {
       for (const difficulty of CONSTRUCTION_DIFFICULTIES) {
         for (const seed of [1, 2, 3]) {
-          const { puzzle } = generateStarBattle({ n, seed, difficulty })
+          // REASON FOR THE shaping FLAG (2026-10-07): steady's product
+          // boards are post-processed by the hub-free shaping descent,
+          // which leaves the validity-rule basin BY DESIGN — that is what
+          // makes them structurally unlike the strips+sea sea-hub boards.
+          // The validity rule remains the certificate of the PAINTING
+          // (still load-bearing for starter and for the walk's seed
+          // stream), so this battery pins it through `shaping: false`;
+          // the shaped product's certificate is the propagation solve,
+          // pinned by the uniqueness cross-checks and the acceptance
+          // battery below. Starter is asserted on its product path.
+          const { puzzle } = generateStarBattle({
+            n,
+            seed,
+            difficulty,
+            shaping: difficulty === 'steady' ? false : true,
+          })
           assertStarBattlePuzzle(puzzle)
           const { colours, solution } = puzzle
           // Recover the proof order from the painting: the star of row r
@@ -455,7 +470,15 @@ describe('generateStarBattle connected regions (player contract)', () => {
     for (const n of [4, 5, 6, 8, 10, 12, 13, 15]) {
       for (const difficulty of CONSTRUCTION_DIFFICULTIES) {
         for (const seed of [1, 2, 3]) {
-          const { puzzle } = generateStarBattle({ n, seed, difficulty })
+          // Same reason as the battery above: steady is pinned on its
+          // PAINTING via `shaping: false`; its shaped product leaves the
+          // validity-rule basin by design.
+          const { puzzle } = generateStarBattle({
+            n,
+            seed,
+            difficulty,
+            shaping: difficulty === 'steady' ? false : true,
+          })
           const { colours, solution } = puzzle
           const pos = solution.map((column, row) => colours[row * n + column])
           const rowOfColumn = new Int16Array(n)
@@ -476,6 +499,93 @@ describe('generateStarBattle connected regions (player contract)', () => {
           }
         }
       }
+    }
+  })
+})
+
+describe('generateStarBattle hub-free construction (player requirement 2026-10-07)', () => {
+  /**
+   * This file's OWN hub/share scan — a third adjacency implementation,
+   * independent of structure.ts's, so a shared bug cannot hide behind
+   * agreement. Hub = a region orthogonally adjacent to every other.
+   */
+  function ownHubScan(colours: Uint8Array, n: number): { hubCount: number; largestShare: number } {
+    const counts = new Uint32Array(n)
+    for (let index = 0; index < n * n; index += 1) {
+      counts[colours[index]] += 1
+    }
+    let largest = 0
+    for (let colour = 0; colour < n; colour += 1) {
+      largest = Math.max(largest, counts[colour])
+    }
+    const degrees = new Uint32Array(n)
+    const touches = new Set<string>()
+    const record = (a: number, b: number): void => {
+      if (a !== b) {
+        touches.add(a < b ? `${a}-${b}` : `${b}-${a}`)
+      }
+    }
+    for (let row = 0; row < n; row += 1) {
+      for (let column = 0; column < n; column += 1) {
+        const index = row * n + column
+        if (column + 1 < n) {
+          record(colours[index], colours[index + 1])
+        }
+        if (row + 1 < n) {
+          record(colours[index], colours[index + n])
+        }
+      }
+    }
+    for (const key of touches) {
+      const [a, b] = key.split('-').map(Number)
+      degrees[a] += 1
+      degrees[b] += 1
+    }
+    let hubCount = 0
+    for (let colour = 0; colour < n; colour += 1) {
+      if (degrees[colour] === n - 1) {
+        hubCount += 1
+      }
+    }
+    return { hubCount, largestShare: largest / (n * n) }
+  }
+
+  it('steady product boards carry no hub and a largest region <= 40% at n >= 6', () => {
+    for (const n of [6, 8, 10, 12, 13, 15]) {
+      for (const seed of [1, 2, 3]) {
+        const { puzzle } = generateStarBattle({ n, seed, difficulty: 'steady' })
+        const scan = ownHubScan(puzzle.colours, n)
+        expect(scan.hubCount).toBe(0)
+        expect(scan.largestShare).toBeLessThanOrEqual(0.4)
+        expect(countComponentsPerRegion(puzzle.colours, n)).toEqual(
+          Array.from({ length: n }, () => 1),
+        )
+      }
+    }
+  })
+
+  it('steady at n = 4 and n = 5 keeps the painted board — shaping measured unreachable there', () => {
+    // Measured within budget pre-implementation (module doc): n = 4 has too
+    // little room for four non-trivial regions; n = 5 plateaus on a
+    // measurable share of seeds (3/20 production-stream give-ups). A
+    // construction tier that throws breaks the never-fails contract, and
+    // returning a hub board on give-up is forbidden — so the small sides
+    // keep the painting. Pinning the fallback so a future size fix must
+    // update this consciously.
+    for (const n of [4, 5]) {
+      const { puzzle } = generateStarBattle({ n, seed: 11, difficulty: 'steady' })
+      expect(ownHubScan(puzzle.colours, n).hubCount).toBe(1)
+    }
+  })
+
+  it('starter keeps its sea hub — the 3-wave contract is measured incompatible', () => {
+    // Measured: hub-free <= 40% starter boards exist at n = 10 but not at
+    // n = 15 within budget (module doc), and the project rules pin the
+    // starter painting (singletons in a sea IS that tier). Pin the current
+    // behaviour so the exclusion stays a conscious choice.
+    for (const n of [10, 15]) {
+      const { puzzle } = generateStarBattle({ n, seed: 1, difficulty: 'starter' })
+      expect(ownHubScan(puzzle.colours, n).hubCount).toBe(1)
     }
   })
 })

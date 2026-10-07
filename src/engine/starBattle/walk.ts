@@ -45,6 +45,21 @@
  *    does not have (or, under the 'confinement' meter, that NO pure
  *    deduction technique can start — a k = -1 candidate).
  *
+ * The SHAPE GATE (optional, `request.shape`): the accepted board must
+ * additionally have no hub region (a region adjacent to every other) and/or
+ * keep its largest region under a share cap — the measured structural
+ * difference between our strips+sea construction and the boards a human
+ * singled out as interesting (structure.ts module doc). The meter alone
+ * descends to level 0 on hub boards almost always (measured: 13 of 14
+ * plain endpoints had a hub), so the gate is a DESCENT, not a stop-check:
+ * once the meter reaches zero, accepted candidates may not increase the
+ * scalarised defect (hub count + share excess; see
+ * {@link starShapeDefect}), strict decreases reset the stagnation counter,
+ * and the walk stops only at meter 0 AND defect 0. The cheap structure
+ * scan runs BEFORE the expensive full-catalogue certificate so defect
+ * rejections never pay for it. Measured cost of the level-0 tail at n = 15:
+ * median ~69 extra accepted mutations, median walk ~410 ms.
+ *
  * Budget semantics (load-bearing, generation contract): the search is
  * bounded by a mutation-attempt cap and a wall-clock cap. Exceeding either
  * throws {@link StarWalkBudgetExhaustedError}. A budget-exhausted search
@@ -75,6 +90,12 @@ import {
   type StarCatalogueRule,
 } from './catalogue'
 import { generateStarBattle, type StarDifficulty } from './construct'
+import {
+  measureStarBoardStructure,
+  regionStaysConnectedWithout,
+  starShapeDefect,
+  type StarShapeGate,
+} from './structure'
 
 /**
  * The base rule subset (exclusion + hidden singles), as a catalogue rules
@@ -152,6 +173,17 @@ export interface StarWalkRequest {
    * is unchanged.
    */
   readonly meter?: 'base' | 'confinement'
+  /**
+   * The optional shape gate (structure.ts): when set, the walk stops only
+   * when the meter places zero stars AND the board satisfies the gate (no
+   * hub region, largest region under the share cap). Between meter level 0
+   * and defect 0 the walk continues descending on the scalarised structure
+   * defect — accepted level-0 candidates may not increase it, strict
+   * decreases reset the stagnation counter. The technique tiers set
+   * `{ noHub: true, maxLargestRegionShare: 0.4 }`; omitting this keeps the
+   * original meter-only behaviour byte-identical.
+   */
+  readonly shape?: StarShapeGate
   /** Maximum number of proposed mutations across all epochs. Default 20000. */
   readonly maxAttempts?: number
   /** Maximum wall-clock milliseconds for the whole search. Default 5000. */
@@ -212,63 +244,13 @@ export interface StarWalkBoard {
   readonly csTrials: number
   /** Largest colour region's share of the board, in (0, 1]. */
   readonly largestRegionShare: number
+  /** Regions adjacent to every other region (0 when a shape gate with noHub was met). */
+  readonly hubCount: number
   /** Measured wall-clock of the whole search. */
   readonly elapsedMs: number
   /** The normalised numeric seed (what determinism keys on). */
   readonly normalizedSeed: number
   readonly seedDifficulty: StarDifficulty
-}
-
-/**
- * True iff the region `region` of `colours`, with cell `index` removed,
- * forms at most one non-empty 4-connected component. A region that keeps
- * its shape minus `index` in one flood fill is safe to vacate. (The gained
- * region cannot split: the move only ever repaints to a neighbour's
- * colour, so the new cell attaches to an existing component.)
- */
-function regionStaysConnectedWithout(colours: Uint8Array, n: number, index: number, region: number): boolean {
-  let start = -1
-  let regionSize = 0
-  for (let cell = 0; cell < n * n; cell += 1) {
-    if (colours[cell] === region) {
-      regionSize += 1
-      if (cell !== index && start === -1) {
-        start = cell
-      }
-    }
-  }
-  // region minus index is empty: vacating would delete the region entirely.
-  if (start === -1) {
-    return false
-  }
-  const seen = new Uint8Array(n * n)
-  const stack = [start]
-  seen[start] = 1
-  let reached = 1
-  while (stack.length > 0) {
-    const cell = stack.pop() as number
-    const row = (cell / n) | 0
-    const column = cell % n
-    const neighbours = [
-      row > 0 ? cell - n : -1,
-      row + 1 < n ? cell + n : -1,
-      column > 0 ? cell - 1 : -1,
-      column + 1 < n ? cell + 1 : -1,
-    ]
-    for (const neighbour of neighbours) {
-      if (
-        neighbour >= 0 &&
-        neighbour !== index &&
-        seen[neighbour] === 0 &&
-        colours[neighbour] === region
-      ) {
-        seen[neighbour] = 1
-        reached += 1
-        stack.push(neighbour)
-      }
-    }
-  }
-  return reached === regionSize - 1
 }
 
 /**
@@ -290,21 +272,6 @@ function basePlacedCount(colours: Uint8Array, n: number): number {
  */
 function confinementPlacedCount(colours: Uint8Array, n: number): number {
   return solveStarCatalogue(colours, n, { csDepth: 0 }).placed
-}
-
-/** The largest colour region's share of the n×n board, in (0, 1]. */
-function largestRegionShareOf(colours: Uint8Array, n: number): number {
-  const counts = new Uint32Array(n)
-  for (let index = 0; index < n * n; index += 1) {
-    counts[colours[index]] += 1
-  }
-  let largest = 0
-  for (let colour = 0; colour < n; colour += 1) {
-    if (counts[colour] > largest) {
-      largest = counts[colour]
-    }
-  }
-  return largest / (n * n)
 }
 
 /**
@@ -342,6 +309,7 @@ export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
   assertStarBattleSide(n)
   const seedDifficulty = request.seedDifficulty ?? 'steady'
   const meter = request.meter ?? 'base'
+  const shape = request.shape ?? null
   const meterPlaced =
     meter === 'base' ? basePlacedCount : confinementPlacedCount
   const maxAttempts = request.maxAttempts ?? 20000
@@ -377,7 +345,17 @@ export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
   for (;;) {
     // --- (re)seed the epoch -----------------------------------------------
     const epochRng = baseRng.derive(`epoch-${epoch}`)
-    const generated = generateStarBattle({ n, seed: epochRng.derive('seed-board').seed, difficulty: seedDifficulty })
+    // shaping: false — the descent seeds from the PRE-SHAPING painting. The
+    // historical difficulty stream (acceptance rates, k distribution) was
+    // measured on painted seeds, and this walk's own shape gate shapes the
+    // ENDPOINT (level-0 tail), so seeding from a shaped board would re-roll
+    // those measurements for no structural gain.
+    const generated = generateStarBattle({
+      n,
+      seed: epochRng.derive('seed-board').seed,
+      difficulty: seedDifficulty,
+      shaping: false,
+    })
     const seedColours = generated.puzzle.colours
     const protectedCells = solutionCellSet(seedColours, n)
     if (protectedCells === null) {
@@ -393,7 +371,13 @@ export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
     let current = epochBasePlacedSeed
     epochBasePlaced = current
     let sinceImprovement = 0
-    let solved = current === 0
+    // Shape-gate state for this epoch: the scalarised defect of the board
+    // currently at meter level 0. Infinite until the meter first reaches 0
+    // (or for the whole epoch when no shape gate is requested).
+    let levelZeroDefect = Number.POSITIVE_INFINITY
+    let solved =
+      current === 0 &&
+      (shape === null || starShapeDefect(measureStarBoardStructure(colours, n), shape) === 0)
 
     while (!solved) {
       if (attempts >= maxAttempts) {
@@ -471,7 +455,21 @@ export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
         continue
       }
 
-      // --- gate (c): the full catalogue must still solve it (uniqueness) --
+      // --- gate (c): the shape defect may not increase at meter level 0 ----
+      // Runs BEFORE the expensive full-catalogue certificate: a defect
+      // rejection rolls back without paying for it. Sideways (equal-defect)
+      // level-0 moves stay accepted — they are the drift that escapes local
+      // optima, exactly as the meter descent allows sideways moves.
+      let candidateDefect = 0
+      if (shape !== null && candidateBase === 0) {
+        candidateDefect = starShapeDefect(measureStarBoardStructure(colours, n), shape)
+        if (current === 0 && candidateDefect > levelZeroDefect) {
+          colours[index] = from
+          continue
+        }
+      }
+
+      // --- gate (d): the full catalogue must still solve it (uniqueness) --
       const certified = solveStarCatalogue(colours, n, { csDepth: FULL_CATALOGUE_CS_DEPTH })
       if (!certified.solved) {
         colours[index] = from
@@ -479,13 +477,26 @@ export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
       }
 
       // --- accept ----------------------------------------------------------
-      if (candidateBase < current) {
-        sinceImprovement = 0
+      if (shape !== null && candidateBase === 0) {
+        // Meter level 0: the structure defect takes over the improvement
+        // signal (strict decreases reset stagnation; meter improvements
+        // already handled above). The stop condition is defect 0.
+        if (candidateDefect < levelZeroDefect) {
+          sinceImprovement = 0
+          levelZeroDefect = candidateDefect
+        }
+        solved = levelZeroDefect === 0
+      } else {
+        if (candidateBase < current) {
+          sinceImprovement = 0
+        }
+        // No shape gate (or the meter is still above 0): the original stop
+        // condition — the meter alone at zero.
+        solved = candidateBase === 0
       }
       current = candidateBase
       acceptedMutations += 1
       epochBasePlaced = current
-      solved = current === 0
     }
 
     if (solved) {
@@ -509,6 +520,16 @@ export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
     )
   }
 
+  const finalStructure = measureStarBoardStructure(colours, n)
+  if (shape !== null && starShapeDefect(finalStructure, shape) !== 0) {
+    // The stop condition is defect 0; reaching here is an internal
+    // invariant violation, reported loudly rather than as a board.
+    throw new Error(
+      `star battle descent produced a board that violates its shape gate ` +
+        `(n=${n}, seed=${normalizedSeed}); the acceptance gate is broken`,
+    )
+  }
+
   return Object.freeze({
     n,
     colours: colours.slice(),
@@ -524,7 +545,8 @@ export function walkStarBattleBoard(request: StarWalkRequest): StarWalkBoard {
     used: finalSolve.used,
     csPasses: finalSolve.csPasses,
     csTrials: finalSolve.csTrials,
-    largestRegionShare: largestRegionShareOf(colours, n),
+    largestRegionShare: finalStructure.largestRegionShare,
+    hubCount: finalStructure.hubCount,
     elapsedMs,
     normalizedSeed,
     seedDifficulty,

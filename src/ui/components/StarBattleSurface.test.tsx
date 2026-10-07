@@ -55,12 +55,14 @@ function defaults(): StarBattleSurfaceProps {
     mistakes: 0,
     streak: 0,
     difficulty: 'starter',
+    side: N,
     minSide: 4,
     maxSide: 15,
     minLives: 1,
     maxLivesCeiling: 9,
     onMark: () => {},
     onNewRound: () => {},
+    onRetry: () => {},
     onDifficultyChange: () => {},
     onSizeChange: () => {},
     onMaxLivesChange: () => {},
@@ -430,6 +432,14 @@ describe('StarBattleSurface — round states', () => {
     expect(container.querySelector('[data-testid="star-empty"]')?.textContent).toContain('Printing the board')
   })
 
+  it('a null puzzle states the empty case instead of a fabricated board', () => {
+    render({ puzzle: null, status: 'generating' })
+    expect(container.querySelector('[data-testid="star-grid"]')).toBeNull()
+    expect(container.querySelector('[data-testid="star-empty"]')?.textContent).toContain(
+      'Printing the board',
+    )
+  })
+
   it('a won board shows a banner whose primary control starts the next round', () => {
     const onNewRound = vi.fn()
     render({ status: 'won', lives: 3, maxLives: 5, onNewRound })
@@ -463,6 +473,155 @@ describe('StarBattleSurface — round states', () => {
     expect(container.querySelector('.mg-star-live')?.textContent).toContain('Board complete')
     render({ status: 'lost' })
     expect(container.querySelector('.mg-star-live')?.textContent).toContain('Out of lives')
+  })
+})
+
+describe('StarBattleSurface — a generation failure is a state, not a dead end', () => {
+  const failure = {
+    reason: 'resource-limit',
+    headline: 'The board could not be printed',
+    explanation: 'The generation ran out of budget.',
+    remedies: ['Try a smaller board.', 'Try an easier difficulty.'],
+    retryable: true,
+  }
+
+  it('states the failure in place of the board, with retry and the way back', () => {
+    const onRetry = vi.fn()
+    const onBackToPicker = vi.fn()
+    render({ puzzle: null, status: 'idle', failure, onRetry, onBackToPicker })
+    expect(container.querySelector('[data-testid="star-grid"]')).toBeNull()
+    const card = container.querySelector('[data-testid="star-failure"]') as HTMLElement
+    expect(card.getAttribute('data-kind')).toBe('retryable')
+    expect(card.getAttribute('data-reason')).toBe('resource-limit')
+    expect(card.textContent).toContain('The board could not be printed')
+    expect(card.textContent).toContain('The generation ran out of budget.')
+    expect(card.querySelectorAll('.mg-star-failure__remedy')).toHaveLength(2)
+    // The note under the actions names the toolbar as the real escape.
+    expect(card.querySelector('.mg-star-failure__note')?.textContent).toContain('board size or difficulty')
+    const buttons = card.querySelectorAll('button')
+    expect(buttons).toHaveLength(2)
+    click(buttons[0] as Element)
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    click(buttons[1] as Element)
+    expect(onBackToPicker).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides retry for a deterministic failure but keeps the way back', () => {
+    render({ puzzle: null, status: 'idle', failure: { ...failure, retryable: false } })
+    const card = container.querySelector('[data-testid="star-failure"]') as HTMLElement
+    expect(card.getAttribute('data-kind')).toBe('deterministic')
+    const buttons = card.querySelectorAll('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]?.textContent).toBe('All games')
+  })
+
+  it('keeps the size and difficulty controls reachable and live while the failure shows', () => {
+    const onSizeChange = vi.fn()
+    const onDifficultyChange = vi.fn()
+    render({ puzzle: null, status: 'idle', failure, onSizeChange, onDifficultyChange })
+    const twelve = container.querySelector<HTMLInputElement>("[data-testid='star-size'] input[value='12']")
+    expect(twelve).not.toBeNull()
+    expect(twelve?.disabled).toBe(false)
+    act(() => {
+      ;(twelve as HTMLInputElement).click()
+    })
+    expect(onSizeChange).toHaveBeenCalledWith(12)
+    const steady = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='steady']",
+    )
+    expect(steady?.disabled).toBe(false)
+    act(() => {
+      ;(steady as HTMLInputElement).click()
+    })
+    expect(onDifficultyChange).toHaveBeenCalledWith('steady')
+  })
+
+  it('renders the failure card in Chinese under a Chinese locale', () => {
+    render({ locale: 'zh', puzzle: null, status: 'idle', failure })
+    const card = container.querySelector('[data-testid="star-failure"]') as HTMLElement
+    expect(card.querySelector('.mg-star-failure__note')?.textContent).toContain('更改棋盘尺寸或难度')
+    expect(card.querySelector('button')?.textContent).toBe('重试')
+  })
+})
+
+describe('StarBattleSurface — tier feasibility', () => {
+  it('with no signal, every tier renders enabled — the behaviour before the signal existed', () => {
+    render()
+    const options = container.querySelectorAll<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[type='radio']",
+    )
+    expect(options.length).toBeGreaterThan(0)
+    for (const option of Array.from(options)) {
+      expect(option.disabled).toBe(false)
+    }
+    expect(
+      container.querySelectorAll("[data-testid='star-difficulty'] .mg-seg__label[data-unavailable='true']"),
+    ).toHaveLength(0)
+    expect(container.querySelector('[data-testid="star-tier-note"]')).toBeNull()
+  })
+
+  it('a tier the signal refuses is a disabled, marked pill that cannot be selected', () => {
+    const onDifficultyChange = vi.fn()
+    render({
+      difficulty: 'starter',
+      tierFeasibility: (_side, tier) => tier !== 'expert' && tier !== 'contradiction',
+      onDifficultyChange,
+    })
+    const expert = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='expert']",
+    )
+    expect(expert?.disabled).toBe(true)
+    expect(expert?.getAttribute('aria-label')).toContain('Not available at this size')
+    expect(
+      container
+        .querySelector("[data-testid='star-difficulty'] .mg-seg__label[data-tier='expert']")
+        ?.getAttribute('data-unavailable'),
+    ).toBe('true')
+    const steady = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='steady']",
+    )
+    expect(steady?.disabled).toBe(false)
+    act(() => {
+      ;(expert as HTMLInputElement).click()
+    })
+    expect(onDifficultyChange).not.toHaveBeenCalled()
+    act(() => {
+      ;(steady as HTMLInputElement).click()
+    })
+    expect(onDifficultyChange).toHaveBeenCalledWith('steady')
+  })
+
+  it('the feasibility predicate is asked at the current side, board or no board', () => {
+    const seen: Array<[number, string]> = []
+    render({
+      side: 8,
+      puzzle: null,
+      status: 'idle',
+      tierFeasibility: (side, tier) => {
+        seen.push([side, tier])
+        return true
+      },
+    })
+    // One call per pill, plus one for the live-tier note check.
+    expect(seen.length).toBeGreaterThanOrEqual(STAR_DIFFICULTIES.length)
+    for (const [side] of seen) {
+      expect(side).toBe(8)
+    }
+  })
+
+  it('when the live tier is unavailable at the live size, the note says so, in both locales', () => {
+    render({ difficulty: 'expert', tierFeasibility: (_side, tier) => tier !== 'expert' })
+    expect(container.querySelector('[data-testid="star-tier-note"]')?.textContent).toBe(
+      'Expert is not available at this size.',
+    )
+    render({
+      locale: 'zh',
+      difficulty: 'expert',
+      tierFeasibility: (_side, tier) => tier !== 'expert',
+    })
+    expect(container.querySelector('[data-testid="star-tier-note"]')?.textContent).toBe(
+      '专家 在此尺寸不可用。',
+    )
   })
 })
 

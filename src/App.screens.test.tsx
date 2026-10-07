@@ -5,6 +5,7 @@ import { App } from './App'
 import { DEFAULT_STAR_SIDE } from './domain/starBattle'
 import { getCopy } from './ui/copy'
 import { createGameStore, disposeGameStore, setGameStore } from './ui/gameStore'
+import { getStarCopy } from './ui/components/StarBattleSurface'
 import {
   setStarBattleStore,
   type StarBattleSnapshot,
@@ -15,9 +16,10 @@ import {
  * The multi-game shell's contract: the picker is the entry point on every
  * load, picking a game is the first act that can touch a store, the chrome on
  * each screen is deliberate (footer everywhere, minegram's panels only on
- * minegram, star battle's toolbar only on star battle), a null puzzle never
- * renders the surface, a generation failure is visible with retry, and a
- * restored locale is honoured before any game is chosen.
+ * minegram, star battle's toolbar only on star battle), the surface renders in
+ * every star battle state — a null puzzle states the empty case, a generation
+ * failure shows its card under the toolbar so the controls stay reachable —
+ * and a restored locale is honoured before any game is chosen.
  *
  * The Star Battle store is faked through `setStarBattleStore`, mirroring how
  * App.test.tsx installs its own game store: actions are spies, the snapshot is
@@ -395,7 +397,7 @@ describe('App screens — picker to star battle and back', () => {
     expect(one('[data-testid="gamesbar-back"]').textContent).toBe('全部游戏')
   })
 
-  it('surfaces a generation failure with retry, and the card is honest about the reason', () => {
+  it('surfaces a generation failure with the toolbar still reachable — the report of the dead end', () => {
     fake = installStarStore(
       starSnapshot({
         status: 'idle',
@@ -408,14 +410,49 @@ describe('App screens — picker to star battle and back', () => {
     expect(card.getAttribute('data-reason')).toBe('resource-limit')
     const t = getCopy('en')
     expect(card.textContent).toContain(t.failure.reasons['resource-limit'].headline)
-    // Retry is the store's retry; the way back is offered too.
+    // Retry is the store's retry, labelled from the surface's own dictionary;
+    // the way back is offered too.
+    const starCopy = getStarCopy('en')
     const retry = card.querySelector('button')
-    expect(retry?.textContent).toBe(t.failure.actions.retry)
+    expect(retry?.textContent).toBe(starCopy.failure.retry)
     click(retry as Element)
     expect(fake.actions.retry).toHaveBeenCalledTimes(1)
     const buttons = card.querySelectorAll('button')
     click(buttons[buttons.length - 1] as Element)
     expect(fake.actions.backToPicker).toHaveBeenCalledTimes(1)
     expect(one('[data-testid="game-picker"]')).toBeTruthy()
+  })
+
+  it('a failed board is never a dead end: size and difficulty change straight from the failure state', () => {
+    fake = installStarStore(
+      starSnapshot({
+        status: 'idle',
+        failure: { reason: 'resource-limit', message: 'out of budget', details: {} },
+      }),
+    )
+    render(<App />)
+    click(pickerCard('starbattle'))
+    // The failure card and the surface's toolbar are on screen TOGETHER: the
+    // card no longer replaces the controls, which was the player's dead end.
+    const card = one('[data-testid="star-failure"]')
+    expect(card.textContent).toContain(getStarCopy('en').failure.changeNote)
+    const twelve = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-size'] input[value='12']",
+    )
+    expect(twelve).not.toBeNull()
+    expect(twelve?.disabled).toBe(false)
+    act(() => {
+      ;(twelve as HTMLInputElement).click()
+    })
+    expect(fake.actions.setSide).toHaveBeenCalledWith(12)
+    const steady = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='steady']",
+    )
+    expect(steady).not.toBeNull()
+    expect(steady?.disabled).toBe(false)
+    act(() => {
+      ;(steady as HTMLInputElement).click()
+    })
+    expect(fake.actions.setDifficulty).toHaveBeenCalledWith('steady')
   })
 })
