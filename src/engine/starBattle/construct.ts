@@ -262,8 +262,12 @@ export const STAR_DIFFICULTIES: readonly StarDifficulty[] = [
 /** The construction tiers: solved by the base rules alone, painted directly. */
 type StarConstructionDifficulty = 'starter' | 'steady'
 
-/** The technique tiers: descended, then rejection-sampled on the basis k. */
-type StarTechniqueDifficulty = 'challenging' | 'expert' | 'contradiction'
+/**
+ * The technique tiers: descended, then rejection-sampled on the basis k.
+ * Exported for {@link ./feasibility.ts}, which measures per-(side, tier)
+ * generatability against exactly these targets and budgets.
+ */
+export type StarTechniqueDifficulty = 'challenging' | 'expert' | 'contradiction'
 
 /** True for the technique tiers ('challenging' | 'expert' | 'contradiction'). */
 function isTechniqueTier(difficulty: StarDifficulty): difficulty is StarTechniqueDifficulty {
@@ -334,17 +338,22 @@ const ATTEMPTS: Readonly<Record<StarConstructionDifficulty, number>> = {
  * the 30 s wall clock bounds the worst case at large sides. Exceeding
  * either throws {@link StarTechniqueTierBudgetExhaustedError}; a search
  * that ran out of budget NEVER returns an off-target board.
+ *
+ * Exported for {@link ./feasibility.ts}: the per-generation success model
+ * `1 - (1 - p)^walkAttempts` must track the shipped budget, never a copy.
  */
-const TECHNIQUE_WALK_ATTEMPTS = 48
-const TECHNIQUE_TIER_WALL_CLOCK_MS = 30_000
+export const TECHNIQUE_WALK_ATTEMPTS = 48
+export const TECHNIQUE_TIER_WALL_CLOCK_MS = 30_000
 
 /**
  * The minimum-basis target per technique tier: 'challenging' boards need
  * exactly one confinement technique idea, 'expert' boards need exactly
  * two, 'contradiction' boards need none to suffice (k = -1: only
- * case-splitting solves them).
+ * case-splitting solves them). Exported for {@link ./feasibility.ts}: the
+ * feasibility probe rejection-samples the walk stream on exactly these
+ * targets, so a redefinition of a tier retunes the probe automatically.
  */
-const TECHNIQUE_TIER_TARGET: Readonly<Record<StarTechniqueDifficulty, number>> = {
+export const TECHNIQUE_TIER_TARGET: Readonly<Record<StarTechniqueDifficulty, number>> = {
   challenging: 1,
   expert: 2,
   contradiction: -1,
@@ -353,9 +362,13 @@ const TECHNIQUE_TIER_TARGET: Readonly<Record<StarTechniqueDifficulty, number>> =
 /**
  * The shape gate every tier except starter certifies: no hub region and
  * the largest region capped at 40% — the measured structural signature of
- * the boards the human enjoys (structure.ts module doc).
+ * the boards the human enjoys (structure.ts module doc). Exported for
+ * {@link ./feasibility.ts}: the probe walks with the gate generation
+ * actually uses, so a change to the shipped gate (or its retirement, per
+ * the 2026-10-07 ruling that shape is not a gate) retargets the probe
+ * through this single export.
  */
-const STAR_TIER_SHAPE_GATE: StarShapeGate = Object.freeze({
+export const STAR_TIER_SHAPE_GATE: StarShapeGate = Object.freeze({
   noHub: true,
   maxLargestRegionShare: STAR_SHAPE_MAX_LARGEST_REGION_SHARE,
 })
