@@ -549,7 +549,7 @@ describe('StarBattleSurface — a generation failure is a state, not a dead end'
   })
 })
 
-describe('StarBattleSurface — tier feasibility', () => {
+describe('StarBattleSurface — no availability signal', () => {
   it('with no signal, every tier renders enabled — the behaviour before the signal existed', () => {
     render()
     const options = container.querySelectorAll<HTMLInputElement>(
@@ -563,70 +563,6 @@ describe('StarBattleSurface — tier feasibility', () => {
       container.querySelectorAll("[data-testid='star-difficulty'] .mg-seg__label[data-unavailable='true']"),
     ).toHaveLength(0)
     expect(container.querySelector('[data-testid="star-tier-note"]')).toBeNull()
-  })
-
-  it('a tier the signal refuses is a disabled, marked pill that cannot be selected', () => {
-    const onDifficultyChange = vi.fn()
-    render({
-      difficulty: 'starter',
-      tierFeasibility: (_side, tier) => tier !== 'expert' && tier !== 'contradiction',
-      onDifficultyChange,
-    })
-    const expert = container.querySelector<HTMLInputElement>(
-      "[data-testid='star-difficulty'] input[value='expert']",
-    )
-    expect(expert?.disabled).toBe(true)
-    expect(expert?.getAttribute('aria-label')).toContain('Not available at this size')
-    expect(
-      container
-        .querySelector("[data-testid='star-difficulty'] .mg-seg__label[data-tier='expert']")
-        ?.getAttribute('data-unavailable'),
-    ).toBe('true')
-    const steady = container.querySelector<HTMLInputElement>(
-      "[data-testid='star-difficulty'] input[value='steady']",
-    )
-    expect(steady?.disabled).toBe(false)
-    act(() => {
-      ;(expert as HTMLInputElement).click()
-    })
-    expect(onDifficultyChange).not.toHaveBeenCalled()
-    act(() => {
-      ;(steady as HTMLInputElement).click()
-    })
-    expect(onDifficultyChange).toHaveBeenCalledWith('steady')
-  })
-
-  it('the feasibility predicate is asked at the current side, board or no board', () => {
-    const seen: Array<[number, string]> = []
-    render({
-      side: 8,
-      puzzle: null,
-      status: 'idle',
-      tierFeasibility: (side, tier) => {
-        seen.push([side, tier])
-        return true
-      },
-    })
-    // One call per pill, plus one for the live-tier note check.
-    expect(seen.length).toBeGreaterThanOrEqual(STAR_DIFFICULTIES.length)
-    for (const [side] of seen) {
-      expect(side).toBe(8)
-    }
-  })
-
-  it('when the live tier is unavailable at the live size, the note says so, in both locales', () => {
-    render({ difficulty: 'expert', tierFeasibility: (_side, tier) => tier !== 'expert' })
-    expect(container.querySelector('[data-testid="star-tier-note"]')?.textContent).toBe(
-      'Expert is not available at this size.',
-    )
-    render({
-      locale: 'zh',
-      difficulty: 'expert',
-      tierFeasibility: (_side, tier) => tier !== 'expert',
-    })
-    expect(container.querySelector('[data-testid="star-tier-note"]')?.textContent).toBe(
-      '专家 在此尺寸不可用。',
-    )
   })
 })
 
@@ -718,6 +654,24 @@ describe('StarBattleSurface — measured tier availability', () => {
     expect(note?.textContent).toContain('24')
   })
 
+  it('the availability function is asked at the current side, board or no board', () => {
+    const seen: Array<[number, string]> = []
+    render({
+      side: 8,
+      puzzle: null,
+      status: 'idle',
+      tierAvailability: (side, tier) => {
+        seen.push([side, tier])
+        return availability('available', 48, 48)
+      },
+    })
+    // One call per pill, plus one for the live-tier note check.
+    expect(seen.length).toBeGreaterThanOrEqual(STAR_DIFFICULTIES.length)
+    for (const [side] of seen) {
+      expect(side).toBe(8)
+    }
+  })
+
   it('an unmeasured cell behaves as if there were no signal: enabled, unmarked, no note', () => {
     render({ tierAvailability: () => availability('unmeasured', 0, 0) })
     const options = container.querySelectorAll<HTMLInputElement>(
@@ -732,11 +686,11 @@ describe('StarBattleSurface — measured tier availability', () => {
     expect(container.querySelector('[data-testid="star-tier-note"]')).toBeNull()
   })
 
-  it('the measured signal takes precedence when both signals are present', () => {
+  it('the unavailable pill is disabled even when every other cell reports available', () => {
+    // A lone `unavailable` cell in an otherwise all-available report is
+    // still a disabled pill: the measured signal is the only source.
     render({
       difficulty: 'starter',
-      // The boolean signal says everything prints; the measured one knows better.
-      tierFeasibility: () => true,
       tierAvailability: ALL_MEASURED({ starter: availability('unavailable', 48, 0) }),
     })
     const starter = container.querySelector<HTMLInputElement>(
