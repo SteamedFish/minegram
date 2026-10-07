@@ -695,15 +695,17 @@ describe('star battle store: marking', () => {
     expect(harness.snapshot().streak).toBe(1)
   })
 
-  it('a correct blank assertion locks with no charge', () => {
+  it('a correct blank assertion stays the player\'s own mark with no charge', () => {
     const harness = createHarness()
     startPlaying(harness)
     const [blankIndex] = nonSolutionCells(PUZZLE_A)
 
     harness.store.actions.onMark(Math.floor(blankIndex! / SIDE), blankIndex! % SIDE, 'blank')
 
-    expect(harness.snapshot().marks[blankIndex!]).toBe(3)
+    // STAR_BLANK (1), not STAR_LOCKED (3): a correct blank is retractable.
+    expect(harness.snapshot().marks[blankIndex!]).toBe(1)
     expect(harness.snapshot().lives).toBe(5)
+    expect(harness.snapshot().streak).toBe(0)
   })
 
   it('a wrong assertion costs one point and stays unlocked so it can be fixed', () => {
@@ -772,9 +774,9 @@ describe('star battle store: marking', () => {
     const stars = solutionCells(PUZZLE_A)
     const blanks = nonSolutionCells(PUZZLE_A)
 
-    // 'blank' on a blank cell locks it.
+    // 'blank' on a blank cell writes a player blank: free, unlocked.
     harness.store.actions.onMark(0, 0, 'blank')
-    expect(harness.snapshot().marks[0]).toBe(3)
+    expect(harness.snapshot().marks[0]).toBe(1) // STAR_BLANK, retractable
     // 'star' on a star cell locks it.
     harness.store.actions.onMark(Math.floor(stars[0]! / SIDE), stars[0]! % SIDE, 'star')
     expect(harness.snapshot().marks[stars[0]!]).toBe(3)

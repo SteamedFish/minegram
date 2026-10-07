@@ -1,17 +1,26 @@
 /**
  * Star Battle play-state transitions. Mirrors the Minegram gameplay contract
  * (see `src/application/gameReducer.ts`, which this module deliberately does
- * NOT import): correct marks lock and refuse any later assertion, wrong marks
- * cost one life and stay visible so the player can fix them, re-asserting the
+ * NOT import): correct stars lock and refuse any later assertion, wrong stars
+ * cost one life and stay visible so the player can fix them, blanks — right
+ * or wrong — are never charged and never lock (see below), re-asserting the
  * mark a cell already carries is free, an all-inert batch is silent and charges
  * nothing, lives clamp at zero and zero loses, and the single win predicate
  * runs AFTER the batch is applied — after the auto-fill below — so the batch
  * that completes the round wins instead of soft-locking it.
  *
- * The resource is LIVES, not score: a wrong non-retract assertion costs
- * exactly one life, clamped at zero, and zero is `status: 'lost'`. There is no
- * positive score alongside it — a resource that only ever decreases by one
- * per mistake is lives.
+ * The resource is LIVES, not score: a wrong star costs exactly one life,
+ * clamped at zero, and zero is `status: 'lost'`. There is no positive score
+ * alongside it — a resource that only ever decreases by one per mistake is
+ * lives. A wrong BLANK costs nothing, exactly as `AGENTS.md` states: an
+ * untrue blank cannot be distinguished from a player's note, so only a
+ * claimed star can cost anything. A blank is a negative statement, not a
+ * find: it earns no streak, acknowledges nothing, and — correct or wrong —
+ * stays the player's own `STAR_BLANK`, retractable at will. Most cells on a
+ * board are blank, so locking or charging them would make the commonest
+ * action irreversible or expensive; the reported bug (right-click to mark a
+ * cell blank, click again, and it will not cancel) was exactly a correct
+ * blank locking like a star.
  *
  * Auto-fill, mirroring Minegram's auto-reveal: when a star assertion is
  * CORRECT the cell becomes `STAR_LOCKED`, and the rules themselves then
@@ -35,10 +44,18 @@
  * RETRACT a cell back to unmarked (`'clear'`): a misclick would otherwise
  * make the round permanently unwinnable. Retraction is free, refunds nothing,
  * never locks, and a locked cell refuses it silently — see
- * `StarCellAssertion`. A retracted cell the rules exclude is simply refilled
- * as a locked blank by the next correct star, so the auto-fill can never need
- * undoing: a correct star locks immediately, and a locked cell refuses every
- * later assertion, retraction included.
+ * `StarCellAssertion`. Player blanks stay retractable by construction (only
+ * stars and the auto-fill ever lock), and a retracted cell the rules exclude
+ * is simply refilled as a locked blank by the next correct star, so the
+ * auto-fill can never need undoing: a correct star locks immediately, and a
+ * locked cell refuses every later assertion, retraction included.
+ *
+ * Provenance is honest in the stored state rather than hidden: a typed blank
+ * is `STAR_BLANK` (the player's, changeable) and a filled blank is
+ * `STAR_LOCKED` (the game's, permanent). The two must still READ identically
+ * on the board — `src/styles/starbattle.markTokens.test.ts` pins that blank
+ * and locked-blank share one visual rule — because a visible difference
+ * would tell the player which cells were handed to them, and that is noise.
  */
 import {
   STAR_BLANK,
@@ -64,12 +81,14 @@ export type StarCellAssertion = 'blank' | 'star' | 'clear'
 
 /**
  * Play state. `marks` is a flat array of the domain mark constants with
- * `STAR_LOCKED` written only by the reducer — by a correct player assertion
- * or by the auto-fill, which are indistinguishable in the stored state.
- * State objects are frozen and every transition emits a fresh `Uint8Array`;
- * callers must treat the array as read-only (a frozen `Uint8Array` does not
- * freeze its elements, so the discipline is enforced by convention here,
- * exactly as Minegram's frozen mark arrays are).
+ * `STAR_LOCKED` written only by the reducer — by a correct star assertion or
+ * by the auto-fill. A player blank stays `STAR_BLANK` whether or not it
+ * matches the solution: provenance is real information (a filled cell is
+ * permanent, a typed cell is the player's to change), and the renderer keeps
+ * the two visually identical. State objects are frozen and every transition
+ * emits a fresh `Uint8Array`; callers must treat the array as read-only (a
+ * frozen `Uint8Array` does not freeze its elements, so the discipline is
+ * enforced by convention here, exactly as Minegram's frozen mark arrays are).
  */
 export interface StarBattleState {
   readonly status: StarBattleStatus
@@ -229,16 +248,17 @@ function prepareStarBatch(state: StarBattleState, value: unknown): PreparedStarB
 
 /**
  * The single win predicate: every cell carries a mark that is correct for the
- * solution. `STAR_LOCKED` always counts (the reducer writes it only where the
- * solution is blank — on a correct star assertion or on an auto-filled
- * exclusion — and never a wrong mark); an unlocked `STAR_STAR`/`STAR_BLANK`
- * counts only when it matches the solution — unreachable in real play, since
- * a correct first assertion locks immediately, but the semantic check keeps
- * the predicate honest if the locking invariant ever breaks. A wrong mark
- * therefore never coexists with a win: a round holding an incorrect mark is
- * not won, and correcting it is the player's job. A blank the player typed
- * and a blank the game filled are indistinguishable here — provenance is a
- * property of the mark array, never of the renderer.
+ * solution. `STAR_LOCKED` always counts (the reducer writes it only where
+ * the solution is blank — by the auto-fill — or on a correct star, and never
+ * a wrong mark); an unlocked `STAR_STAR`/`STAR_BLANK` counts only when it
+ * matches the solution — reachable in real play for a typed blank, which
+ * stays the player's own mark and counts without locking, and the semantic
+ * check keeps the predicate honest if the locking invariant ever breaks. A
+ * wrong mark therefore never coexists with a win: a round holding an
+ * incorrect mark is not won, and correcting it is the player's job. Whether
+ * a blank counted because the player typed it or because the game filled it
+ * is invisible here — provenance is a property of the mark array, never of
+ * the renderer, and both spellings of a correct blank win alike.
  */
 export function roundIsComplete(puzzle: StarBattlePuzzle, marks: Uint8Array): boolean {
   const { n, solution } = puzzle
@@ -386,15 +406,25 @@ function applyStarMarkBatch(state: StarBattleState, value: unknown): StarBattleR
       // the solution, so it can never be right or wrong for it.
       continue
     }
+    if (mark === 'blank') {
+      // A blank — right or wrong — is never charged and never acknowledged:
+      // it is a negative statement, not a find. The player's note stays
+      // written as STAR_BLANK; whether it matches the solution is not the
+      // game's business (an untrue blank cannot be distinguished from a
+      // note, so only a claimed star can cost anything), and a correct blank
+      // counts toward the win predicate exactly as a locked one does. It
+      // stays retractable — the reported bug's fix: right-click to blank,
+      // click again, and the mark must cancel.
+      continue
+    }
+    // mark === 'star': a find either locks or costs.
     if (assertionMatchesPuzzle(puzzle, index, mark)) {
       marks[index] = STAR_LOCKED
       streak += 1
-      if (mark === 'star') {
-        freshStars.push(index)
-      }
+      freshStars.push(index)
       continue
     }
-    // Wrong mark: one life, no lock, the player's mark stays so they can see
+    // Wrong star: one life, no lock, the player's mark stays so they can see
     // and fix it. Correcting it later is a fresh first assertion on that
     // value — no refund, and (when the correction is right) no charge.
     lives = Math.max(0, lives - 1)
@@ -505,7 +535,9 @@ export function previewStarMarkBatch(state: StarBattleState, value: unknown): St
       // charged nor refunded, so it cannot reach zero either.
       continue
     }
-    if (!assertionMatchesPuzzle(puzzle, index, mark)) {
+    if (mark === 'star' && !assertionMatchesPuzzle(puzzle, index, mark)) {
+      // Only a claimed star can cost a life: a blank is a note, right or
+      // wrong, and is never charged.
       livesLost += 1
       if (livesLost >= state.lives) {
         break

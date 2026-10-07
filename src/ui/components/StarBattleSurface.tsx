@@ -227,7 +227,6 @@ interface StarCopy {
       readonly lockedStar: string
       readonly lockedBlank: string
       readonly wrongStar: string
-      readonly wrongBlank: string
       readonly conflict: string
     }
   }
@@ -302,7 +301,6 @@ const en: StarCopy = {
       lockedStar: 'locked star',
       lockedBlank: 'locked empty',
       wrongStar: 'wrong star, minus one life',
-      wrongBlank: 'wrong empty mark, minus one life',
       conflict: 'too close to another star',
     },
   },
@@ -379,7 +377,6 @@ const zhCN: StarCopy = {
       lockedStar: '已锁定的星标',
       lockedBlank: '已锁定的空白',
       wrongStar: '错误的星标，扣一条命',
-      wrongBlank: '错误的空白，扣一条命',
       conflict: '与另一颗星相邻',
     },
   },
@@ -418,8 +415,16 @@ function isSolutionCell(index: number, puzzle: StarBattlePuzzle): boolean {
   return puzzle.solution[Math.floor(index / puzzle.n)] === index % puzzle.n
 }
 
+/**
+ * Only a wrong STAR is flagged: a blank — right or wrong — renders exactly
+ * like any other blank. Flagging a blank on a star cell would leak the
+ * solution (the player would see which cells are stars without earning it),
+ * and charging or announcing it is equally forbidden: an untrue blank cannot
+ * be distinguished from a player's note, so only a claimed star can be wrong
+ * in a way the game answers.
+ */
 function isWrong(index: number, code: number, puzzle: StarBattlePuzzle): boolean {
-  return (code === 2 && !isSolutionCell(index, puzzle)) || (code === 1 && isSolutionCell(index, puzzle))
+  return code === 2 && !isSolutionCell(index, puzzle)
 }
 
 /**
@@ -874,7 +879,9 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
         return derived.conflicts.has(index) ? copy.cell.states.conflict : copy.cell.states.star
       }
       if (code === 1) {
-        return isWrong(index, code, board) ? copy.cell.states.wrongBlank : copy.cell.states.blank
+        // A typed blank reads as a blank no matter what the solution says:
+        // isWrong never fires for code 1, so no wrong-blank label exists.
+        return copy.cell.states.blank
       }
       return copy.cell.states.unmarked
     })()

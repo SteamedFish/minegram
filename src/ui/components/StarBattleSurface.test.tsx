@@ -384,12 +384,14 @@ describe('StarBattleSurface — keyboard', () => {
 })
 
 describe('StarBattleSurface — wrong marks and conflicts, stated on the cells', () => {
-  it('flags a wrong star and a wrong blank on data-wrong', () => {
+  it('flags a wrong star on data-wrong; a blank on a star cell reads as a plain blank', () => {
     // Cell 0 is row 0, column 0 — solution[0] is 1, so a star there is wrong;
-    // cell 1 IS a solution cell, so a blank there is wrong.
+    // cell 1 IS a solution cell, so a blank there is wrong — and must still
+    // render exactly like a correct blank: flagging it would leak the answer.
     render({ marks: marksWith({ 0: 2, 1: 1 }) })
     expect(cell(0).getAttribute('data-wrong')).toBe('true')
-    expect(cell(1).getAttribute('data-wrong')).toBe('true')
+    expect(cell(1).getAttribute('data-wrong')).toBeNull()
+    expect(cell(1).getAttribute('data-mark')).toBe('blank')
     expect(cell(2).getAttribute('data-wrong')).toBeNull()
   })
 
@@ -415,11 +417,14 @@ describe('StarBattleSurface — mistakes are announced, not just coloured', () =
     expect(cell(0).getAttribute('aria-label')).toContain('错误的星标')
   })
 
-  it('announces a wrong blank the same way', () => {
+  it('a wrong blank is silent: no live announcement, the label of a plain blank', () => {
+    // 标错空白，应该静默 — a blank on a star cell must not announce the
+    // mistake nor label the cell as wrong; it reads exactly like a note.
     render()
     render({ marks: marksWith({ 1: 1 }) })
-    expect(container.querySelector('.mg-star-live')?.textContent).toContain('Wrong mark')
-    expect(cell(1).getAttribute('aria-label')).toContain('wrong empty mark')
+    expect(container.querySelector('.mg-star-live')?.textContent).toBe('')
+    expect(cell(1).getAttribute('aria-label')).toContain('empty')
+    expect(cell(1).getAttribute('aria-label')).not.toContain('wrong')
   })
 })
 
