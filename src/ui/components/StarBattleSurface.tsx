@@ -40,10 +40,34 @@ import type { StarMarkToken } from './starMarkTokens'
  * without restructuring.
  */
 
-export type StarDifficulty = 'starter' | 'steady' | 'challenging'
+/**
+ * The five difficulty tiers, kept locally on purpose. The layer boundary
+ * (`src/ui/layerBoundary.test.ts`) forbids a value import from the engine,
+ * so the surface owns its own copy of the engine's `StarDifficulty` union
+ * and `STAR_DIFFICULTIES` order. The copy below is the exhaustiveness
+ * guard: `StarCopy.difficulties` is a `Record<StarDifficulty, string>`, so
+ * an engine tier that lands here without a label fails `tsc` at this file,
+ * not as an `undefined` pill on the player.
+ *
+ * What each tier is (the engine's module doc is the authority):
+ * - starter / steady: base rules solve the board; they differ in depth.
+ * - challenging: the base rules place nothing; exactly one confinement
+ *   technique is necessary and sufficient.
+ * - expert: the base rules place nothing; no single technique suffices,
+ *   some pair does.
+ * - contradiction: no confinement-technique subset solves at all; the
+ *   board requires a proof by contradiction.
+ */
+export type StarDifficulty = 'starter' | 'steady' | 'challenging' | 'expert' | 'contradiction'
 
 /** The ordered tier ids — the engine aligns its difficulty analysis to this. */
-export const STAR_DIFFICULTIES: readonly StarDifficulty[] = ['starter', 'steady', 'challenging']
+export const STAR_DIFFICULTIES: readonly StarDifficulty[] = [
+  'starter',
+  'steady',
+  'challenging',
+  'expert',
+  'contradiction',
+]
 
 export interface StarBattlePuzzle {
   readonly n: number
@@ -160,7 +184,13 @@ const en: StarCopy = {
   streak: 'Streak',
   back: 'All games',
   difficultyLabel: 'Difficulty',
-  difficulties: { starter: 'Starter', steady: 'Steady', challenging: 'Challenging' },
+  difficulties: {
+    starter: 'Starter',
+    steady: 'Steady',
+    challenging: 'Challenging',
+    expert: 'Expert',
+    contradiction: 'Contradiction',
+  },
   size: { label: 'Board size' },
   maxLives: { label: 'Starting lives' },
   rules: {
@@ -223,7 +253,16 @@ const zhCN: StarCopy = {
   streak: '连胜',
   back: '全部游戏',
   difficultyLabel: '难度',
-  difficulties: { starter: '入门', steady: '进阶', challenging: '挑战' },
+  difficulties: {
+    starter: '入门',
+    steady: '进阶',
+    challenging: '挑战',
+    expert: '专家',
+    // 反证, not 矛盾: the tier means "solvable only by proof by
+    // contradiction", and 矛盾 would read as the adjacency conflict this
+    // game already draws on the cells.
+    contradiction: '反证',
+  },
   size: { label: '棋盘尺寸' },
   maxLives: { label: '初始生命' },
   rules: {
@@ -811,17 +850,19 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
             </span>
           </span>
         </div>
-        <SegmentedControl
-          id="mg-star-difficulty"
-          label={copy.difficultyLabel}
-          value={props.difficulty}
-          options={STAR_DIFFICULTIES.map((tier) => ({
-            value: tier,
-            label: copy.difficulties[tier],
-          }))}
-          disabled={status === 'generating'}
-          onChange={props.onDifficultyChange}
-        />
+        <div className="mg-star-difficulty" data-testid="star-difficulty">
+          <SegmentedControl
+            id="mg-star-difficulty"
+            label={copy.difficultyLabel}
+            value={props.difficulty}
+            options={STAR_DIFFICULTIES.map((tier) => ({
+              value: tier,
+              label: copy.difficulties[tier],
+            }))}
+            disabled={status === 'generating'}
+            onChange={props.onDifficultyChange}
+          />
+        </div>
         {/* Board size: the same segmented idiom as difficulty, one chip per
            supported side, the numerals themselves as the labels so nothing is
            locale-specific. The current side is the live board's own n. */}

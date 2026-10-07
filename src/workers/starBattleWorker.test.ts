@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { StarBattlePuzzle } from '../domain/starBattle'
-import type {
-  StarGeneratedBoard,
-  StarGenerationRequest,
+import {
+  STAR_DIFFICULTIES,
+  type StarGeneratedBoard,
+  type StarGenerationRequest,
 } from '../engine/starBattle/construct'
 import {
   STAR_DIFFICULTY_TIERS,
@@ -265,8 +266,25 @@ describe('isStarBattleWorkerResponse', () => {
 // ======================================================================================
 
 describe('difficulty tiers', () => {
-  it('lists the three contract tiers in order', () => {
-    expect(STAR_DIFFICULTY_TIERS).toEqual(['starter', 'steady', 'challenging'])
+  it('re-exports the engine tier list unchanged', () => {
+    // Asserting a hand-copied literal here is what let the tier list drift: the engine grew
+    // `expert` and `contradiction` while this test still demanded three ids, and the suite
+    // failed on a fact that was never wrong. Comparing against the engine's own list means a
+    // rename or a re-order now fails HERE instead, where the cause is visible.
+    expect(STAR_DIFFICULTY_TIERS).toEqual([...STAR_DIFFICULTIES])
+  })
+
+  it('keeps the documented tier ids and order', () => {
+    // The other direction: if the engine's list silently changes shape, the re-export still
+    // matches and the test above passes. This pins what the ids actually are, which is the
+    // part a reader needs to trust.
+    expect([...STAR_DIFFICULTIES]).toEqual([
+      'starter',
+      'steady',
+      'challenging',
+      'expert',
+      'contradiction',
+    ])
   })
 
   it('guards the tier boundary, failing closed on anything else', () => {

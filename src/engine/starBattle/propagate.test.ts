@@ -207,7 +207,14 @@ describe('propagateStarBoard', () => {
 })
 
 describe('propagateStarBoard cross-validated against independent brute force', () => {
-  const difficulties = ['starter', 'steady', 'challenging'] as const
+  // Construction tiers only: for these, the production solver is the
+  // acceptance certificate and MUST solve every generated board. The
+  // technique tiers ('challenging', 'expert', 'contradiction') exist
+  // precisely because base rules must stall on them — asserting
+  // propagation solves them contradicts their contract. Their correctness
+  // cross-checks (full-catalogue certificate + exact counter) are pinned
+  // in construct.test.ts, which owns the tier gates.
+  const difficulties = ['starter', 'steady'] as const
   const nodeBudget = 5_000_000
 
   const expectAgreement = (
@@ -237,7 +244,7 @@ describe('propagateStarBoard cross-validated against independent brute force', (
     }
   }
 
-  // Measured cost (isolated run, this machine): every one of the 36
+  // Measured cost (isolated run, this machine): every one of the 24
   // brute forces finishes in under 1ms, the whole case in under 5ms. The
   // explicit timeout is the suite-wide generous ceiling — far above any
   // CPU-contention slowdown the full run can produce — so a hang fails
@@ -265,11 +272,12 @@ describe('propagateStarBoard cross-validated against independent brute force', (
     }
   })
 
-  // The explicit timeout is deliberate: this case expands three
-  // 20-million-node search trees at n=15, measuring 3.9s total isolated
-  // (worst single board 2.1s) on this machine, and exceeding vitest's 5s
-  // default under full-suite CPU contention — observed directly as a
-  // 5000ms timeout failure when the suite runs all files at once. 30s is
+  // The explicit timeout is deliberate: this case expands
+  // 20-million-node search trees at n=15, and the worst single board
+  // measured 2.1s isolated on this machine — already near vitest's 5s
+  // default under full-suite CPU contention, which was observed directly
+  // as a 5000ms timeout failure when the suite runs all files at once.
+  // 30s is
   // ~8x the isolated cost, absorbing any worker contention. The cost is
   // inherent (exhausting 15! is infeasible by design; count.ts is the
   // instrument for exact small-n uniqueness), and shrinking the node

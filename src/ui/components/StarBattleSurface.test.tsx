@@ -490,13 +490,62 @@ describe('StarBattleSurface — chrome', () => {
   it('changes difficulty through the segmented control', () => {
     const onDifficultyChange = vi.fn()
     render({ difficulty: 'starter', onDifficultyChange })
-    expect(STAR_DIFFICULTIES).toEqual(['starter', 'steady', 'challenging'])
+    expect(STAR_DIFFICULTIES).toEqual([
+      'starter',
+      'steady',
+      'challenging',
+      'expert',
+      'contradiction',
+    ])
     const option = container.querySelector<HTMLInputElement>("input[value='steady']")
     expect(option).not.toBeNull()
     act(() => {
       option?.click()
     })
     expect(onDifficultyChange).toHaveBeenCalledWith('steady')
+  })
+
+  it('renders every tier as a labelled option, including the two technique tiers', () => {
+    render({ difficulty: 'expert' })
+    const group = container.querySelector<HTMLElement>('[data-testid="star-difficulty"] .mg-seg')
+    expect(group?.getAttribute('role')).toBe('radiogroup')
+    expect(group?.getAttribute('aria-label')).toBe('Difficulty')
+    const options = container.querySelectorAll<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[type='radio']",
+    )
+    expect(Array.from(options).map((option) => option.value)).toEqual([
+      'starter',
+      'steady',
+      'challenging',
+      'expert',
+      'contradiction',
+    ])
+    expect(
+      Array.from(options).map((option) => option.closest('.mg-seg__item')?.textContent?.trim()),
+    ).toEqual(['Starter', 'Steady', 'Challenging', 'Expert', 'Contradiction'])
+    expect(
+      container.querySelector<HTMLInputElement>("[data-testid='star-difficulty'] input:checked")
+        ?.value,
+    ).toBe('expert')
+  })
+
+  it('selecting the contradiction tier reports it, in Chinese labels too', () => {
+    const onDifficultyChange = vi.fn()
+    render({ locale: 'zh', onDifficultyChange })
+    const group = container.querySelector<HTMLElement>('[data-testid="star-difficulty"] .mg-seg')
+    expect(group?.getAttribute('aria-label')).toBe('难度')
+    const labels = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-testid='star-difficulty'] .mg-seg__label"),
+    ).map((label) => label.textContent?.trim())
+    expect(labels).toEqual(['入门', '进阶', '挑战', '专家', '反证'])
+    const contradiction = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='contradiction']",
+    )
+    expect(contradiction).not.toBeNull()
+    act(() => {
+      contradiction?.click()
+    })
+    expect(onDifficultyChange).toHaveBeenCalledWith('contradiction')
   })
 
   it('renders every size in the given range as a segmented option', () => {
