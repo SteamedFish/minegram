@@ -17,6 +17,29 @@
  * construct.ts); this module is the MEASUREMENT side that proves whether
  * the injection worked.
  *
+ * THE THIRD MECHANISM, AND THE NULL THAT CHANGED THE CONTRACT (measured
+ * 2026-10-07, this lane, then deleted with its module): an MCMC rejection
+ * drift over legal colourings — proposal = repaint one cell to a
+ * 4-neighbour's colour, accept iff one connected region per colour AND
+ * exactly one star solution (Metropolis-corrected), NO objective function,
+ * ~1,000 accepted boards per leg. It was the right instrument for the
+ * STRUCTURAL axis (sea starts lose the hub within hundreds of accepted
+ * steps) and the wrong one for the witness axis: drifted boards gated on
+ * the old challenging contract (base stalls AND k = 1) came out 10/11
+ * class {c1} at n = 10 — statistically identical to the walk's 11/12 —
+ * and checkpoint legs of 2000 proposals from {c1}, {c3} and sea starts each
+ * left their basin within one leg and converged to the same profile. Two
+ * samplers sharing no machinery agreeing on the same conditional
+ * distribution is the measured proof that the {c1} concentration is a
+ * property of the puzzle-class space "base-stall AND one idea finishes
+ * it", not of any generator. The module was measured, tested, and called
+ * by nothing; per this repo's rule against unreachable code it was
+ * deleted with this record standing in for its module doc. The remaining
+ * class diversity (witnesses {c1} AND {c3} with base placing 1–7 stars)
+ * lives under a DIFFERENT contract than "base places zero" — which is
+ * what the 2026-10-07 re-tier of 'challenging' (construct.ts,
+ * `techniqueTierAcceptsBasis`) acts on.
+ *
  * THE LOAD-BEARING BOUNDARY: the signature is computed on a walk's ENDPOINT
  * and must NEVER feed back into the descent. A signature that participates
  * in the search re-creates the non-monotone descent that made five earlier

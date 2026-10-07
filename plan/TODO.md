@@ -844,6 +844,21 @@ about n = 8).
   owner within hundreds of accepted steps, pinned by tests) and would be the right
   starting point for any future tier whose contract drops "base places zero".
 
+- [x] **Re-tier `challenging` on witness identity and make shaping failure non-fatal.**
+  Three mechanisms landing on the same distribution is the evidence that the {c1}
+  concentration is a property of the class space, so the contract changed, not the
+  sampler: `challenging` is now k = 1 whose witness is NOT line confinement
+  (`techniqueTierAcceptsBasis`), and a shaping give-up falls back to the painted board
+  with `shapeAudit.gateMet: false` instead of failing generation (the player's ruling).
+  The drift was deleted with its record preserved in `signature.ts`'s module doc —
+  measured, unused, and this repo keeps no unreachable code. Deep-probe availability:
+  challenging ships at n = 4, 5, marginal at 7, 8, `unavailable` at n ≥ 9 (n = 10
+  ≈ 0.8% per walk — generations land ~1/3 of the time, below the 90% bar; n = 15
+  0/72). Challenging's `{c1}` share fell from 1.000 to 0.000 where the tier ships.
+  Open consequences for the product lanes: the picker's copy must not promise
+  challenging at sizes the probe reports `unavailable` (the default 10 is one), and
+  the UI lane owns whatever presentation that decision gets.
+
 - [ ] **Give the game picker a real per-game record.** `GamePicker` already renders
   a rounds-played / best-streak line and rings the selected card, but `src/App.tsx`
   passes `selected={null}` and no `stats`, so every card reads "Not played yet".

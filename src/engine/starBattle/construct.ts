@@ -93,12 +93,17 @@
  * base subset places nothing on them by definition.
  *
  * Measured in the walk stream (2026-10-07, seeds documented in
- * minimumBasis tests and construct tests): k = 1 acceptance is ~75–92%
- * (challenging usually lands on the first walk); k = 2 is ~8% at n = 15
- * (~12 walks median, worst observed 18) and ~17% at n = 5. k = -1 boards
- * (no confinement subset solves; see minimumBasis.ts) DO occur in the
- * stream — measured at n = 8, 10 — and are rejected by both technique
- * tiers; a "requires contradiction" tier would target exactly them. At n =
+ * minimumBasis tests and construct tests), under the contracts then
+ * shipped: k = 1 acceptance was ~75–92% and k = 2 ~8% at n = 15 (~12
+ * walks median, worst observed 18). THE CHALLENGING NUMBERS MOVED with
+ * the 2026-10-07 re-tier (see {@link techniqueTierAcceptsBasis}): the
+ * tier no longer accepts the {c1} witness, so its per-walk acceptance is
+ * the non-freebie k = 1 rate recorded below, and the tier is
+ * correspondingly rarer — the honest availability lives in
+ * {@link ./feasibility.ts}, never in a claim here. k = -1 boards (no
+ * confinement subset solves; see minimumBasis.ts) DO occur in the
+ * stream — measured at n = 8, 10 — and are rejected by both k-targeted
+ * technique tiers; the 'contradiction' tier targets exactly them. At n =
  * 4 no k = 2 board was observed in 40 walks, so expert at n = 4 honestly
  * exhausts its budget and throws {@link StarTechniqueTierBudgetExhaustedError}
  * instead of returning an off-target board.
@@ -200,10 +205,18 @@
  *    mutations at n = 10, ~69 at n = 15). Acceptance here re-verifies the
  *    gate with this module's own instruments as gate (e).
  *
- * Give-up semantics (generation contract): a shaping search that exhausts
- * its attempt or wall-clock budget throws {@link StarShapeBudgetExhaustedError}
- * — never returning a hub board. Wall clock gates only when the search
- * gives up, never which board is accepted, so determinism holds.
+ * Give-up semantics (generation contract, CHANGED 2026-10-07 per the
+ * player's ruling 「偶尔小概率出现而不是一直出现，没关系，只要合法，不用刻意排除」):
+ * a shaping search that exhausts its attempt or wall-clock budget used to
+ * throw {@link StarShapeBudgetExhaustedError} and fail the whole
+ * generation — a generation failure being a WORSE outcome than a legal
+ * but boring board, which is exactly backwards from the ruling. The
+ * caller now CATCHES the error, ships the painted (unshaped) board, and
+ * records the miss as {@link StarGeneratedBoard.shapeAudit} — an audit
+ * field, not a rejection. The shaping itself stays: it is cheap and it
+ * is what delivers structural variety (hubs went 6/6 → 0/6 on it). Wall
+ * clock gates only when the search gives up, never which board is
+ * accepted, so determinism holds either way.
  *
  * Acceptance: a board is accepted only if it is fully connected AND
  * {@link propagateStarBoard} solves it (all n stars placed). For n ≤ 5
@@ -221,7 +234,7 @@ import {
 import { createSeededRandom, type SeededRandom } from '../rng'
 import { solveStarCatalogue } from './catalogue'
 import { countStarSolutions } from './count'
-import { measureMinimumBasis } from './minimumBasis'
+import { measureMinimumBasis, type StarConfinementRule, type StarMinimumBasis } from './minimumBasis'
 import { propagateStarBoard } from './propagate'
 import { measureStarBoardSignature, type StarBoardSignature } from './signature'
 import {
@@ -237,12 +250,18 @@ import { StarWalkBudgetExhaustedError, walkStarBattleBoard } from './walk'
 /**
  * The five difficulty tiers. 'starter' and 'steady' are CONSTRUCTION
  * tiers: the painted board itself obeys the validity rule and the base
- * rules solve it. 'challenging', 'expert' and 'contradiction' are
- * TECHNIQUE tiers: the board is found by descent
+ * rules solve it — 'starter' is the shallow 3-wave collapse, 'steady'
+ * the deep (13–22 wave) long-but-routine band; steady is an honest
+ * depth tier, not a technique tier. 'challenging', 'expert' and
+ * 'contradiction' are TECHNIQUE tiers: the board is found by descent
  * ({@link walkStarBattleBoard}) and the base rules place nothing on it;
  * what separates them is the minimum confinement basis
- * ({@link measureMinimumBasis}): 1, 2, and -1 (no pure-deduction subset
- * solves; the board requires contradiction).
+ * ({@link measureMinimumBasis}) under the FULL tier contracts
+ * ({@link techniqueTierAcceptsBasis}): 'challenging' is k = 1 whose
+ * witness is NOT line confinement (the {c1}/{c2} whole-line freebie —
+ * measured to be the entire old class), 'expert' is k = 2, and
+ * 'contradiction' is k = -1 (no pure-deduction subset solves; the board
+ * requires contradiction).
  */
 export type StarDifficulty =
   | 'starter'
@@ -325,6 +344,19 @@ export interface StarGeneratedBoard {
    * predicate on it would be dead code.
    */
   readonly signature?: StarBoardSignature
+  /**
+   * Construction tiers only: the hub-free shape gate's audit on the
+   * SHIPPED board. `gateMet: true` — the shaping descent reached defect 0
+   * (no hub, largest region ≤ 40%). `gateMet: false` — either shaping was
+   * never attempted by design (starter; steady at n = 4, 5) or the
+   * descent exhausted its budget and generation FELL BACK to the painted
+   * board (player ruling, 2026-10-07: 「偶尔小概率出现…没关系，只要合法，不用刻意
+   * 排除」 — a legal-but-unshaped board ships with the gate honestly
+   * reported, never a generation failure). Technique tiers carry no
+   * `shapeAudit`: their shape gate is acceptance gate (e), re-verified on
+   * every accepted board.
+   */
+  readonly shapeAudit?: { readonly gateMet: boolean }
 }
 
 /**
@@ -356,17 +388,67 @@ export const TECHNIQUE_WALK_ATTEMPTS = 48
 export const TECHNIQUE_TIER_WALL_CLOCK_MS = 30_000
 
 /**
- * The minimum-basis target per technique tier: 'challenging' boards need
- * exactly one confinement technique idea, 'expert' boards need exactly
+ * The minimum-basis k every technique tier targets: 'challenging' boards
+ * need exactly one confinement technique idea, 'expert' boards need exactly
  * two, 'contradiction' boards need none to suffice (k = -1: only
  * case-splitting solves them). Exported for {@link ./feasibility.ts}: the
  * feasibility probe rejection-samples the walk stream on exactly these
  * targets, so a redefinition of a tier retunes the probe automatically.
+ *
+ * The k target is NOT the whole contract for 'challenging' — see
+ * {@link techniqueTierAcceptsBasis}: the tier additionally constrains the
+ * WITNESS identity. k alone is why every one-idea board shipped as the
+ * {c1} freebie (measured class-modal share 1.000 at n = 10 and n = 15,
+ * twice, by two independent samplers).
  */
 export const TECHNIQUE_TIER_TARGET: Readonly<Record<StarTechniqueDifficulty, number>> = {
   challenging: 1,
   expert: 2,
   contradiction: -1,
+}
+
+/**
+ * Whether a measured minimum basis satisfies the tier's FULL contract.
+ * For 'expert' and 'contradiction' this is the k target alone; for
+ * 'challenging' it additionally requires the witness to NOT be line
+ * confinement (neither `c1` nor `c2` — one idea under two labels,
+ * minimumBasis.ts).
+ *
+ * WHY the witness constraint exists (measured, 2026-10-07, two
+ * independent samplers agreeing): under the old "k = 1 and base stalls"
+ * contract, challenging's (k, witness) class-modal share measured 1.000
+ * ({c1}) at n = 10 and n = 15 under seed-tier rotation (`fcab9d1`) AND
+ * under MCMC rejection drift (`f735a0f`). The concentration is a property
+ * of the conditional puzzle-class space — "base-stall boards solvable by
+ * exactly one idea" are almost always whole-line freebie boards, because
+ * at the base-stall bottom only line confinement revives propagation —
+ * not a generator artifact a sampler can diversify away. Three mechanisms
+ * failed to move it (rotation, drift, both together; checkpoint legs from
+ * {c1}, {c3} and sea starts each leave their basin within one leg). The
+ * contract therefore changed: 'challenging' is k = 1 whose solving idea
+ * is genuinely different — box confinement (c3) or shadow (c4). Under
+ * the canonical witness choice (first solving subset of minimal idea
+ * count, minimumBasis.ts) `rules ∩ {c1, c2} = ∅` is exact: had any
+ * single line-confinement subset solved, canonical order would have
+ * reported IT as the witness.
+ *
+ * Consequence, measured and recorded in this module's doc: the tier is
+ * rarer than the old k = 1 contract (the freebie was the generic
+ * one-idea class). The feasibility probe reports the honest per-(side,
+ * tier) availability; a side where no non-freebie k = 1 board was found
+ * within the probe budget reads `unavailable` there.
+ */
+export function techniqueTierAcceptsBasis(
+  difficulty: StarTechniqueDifficulty,
+  basis: Pick<StarMinimumBasis, 'k' | 'rules'>,
+): boolean {
+  if (basis.k !== TECHNIQUE_TIER_TARGET[difficulty]) {
+    return false
+  }
+  if (difficulty !== 'challenging') {
+    return true
+  }
+  return !basis.rules.includes('c1') && !basis.rules.includes('c2')
 }
 
 /**
@@ -539,6 +621,8 @@ export class StarTechniqueTierBudgetExhaustedError extends Error {
   readonly walks: number
   /** Minimum basis of the last rejected walk, when one completed. */
   readonly lastK: number | null
+  /** Witness subset of the last rejected walk, when one completed. */
+  readonly lastWitness: readonly StarConfinementRule[] | null
   readonly elapsedMs: number
   readonly reason: 'walk-attempts' | 'wall-clock'
 
@@ -549,6 +633,7 @@ export class StarTechniqueTierBudgetExhaustedError extends Error {
     readonly targetK: number
     readonly walks: number
     readonly lastK: number | null
+    readonly lastWitness: readonly StarConfinementRule[] | null
     readonly elapsedMs: number
     readonly reason: 'walk-attempts' | 'wall-clock'
   }) {
@@ -556,6 +641,7 @@ export class StarTechniqueTierBudgetExhaustedError extends Error {
       `star battle ${fields.difficulty} generation exhausted its ${fields.reason} budget ` +
         `(n=${fields.n}, seed=${fields.seed}, walks=${fields.walks}, ` +
         `targetK=${fields.targetK}, lastK=${String(fields.lastK)}, ` +
+        `lastWitness={${fields.lastWitness?.join(',') ?? ''}}, ` +
         `${fields.elapsedMs.toFixed(1)}ms) without reaching a board of that difficulty`,
     )
     this.name = 'StarTechniqueTierBudgetExhaustedError'
@@ -565,6 +651,7 @@ export class StarTechniqueTierBudgetExhaustedError extends Error {
     this.targetK = fields.targetK
     this.walks = fields.walks
     this.lastK = fields.lastK
+    this.lastWitness = fields.lastWitness
     this.elapsedMs = fields.elapsedMs
     this.reason = fields.reason
   }
@@ -839,8 +926,19 @@ function shapeSteadyColours(request: {
   readonly solution: readonly number[]
   readonly seedWaves: number
   readonly rng: SeededRandom
+  /**
+   * Budget overrides — the production caller always ships the module
+   * defaults ({@link SHAPE_MAX_ATTEMPTS} / {@link SHAPE_WALL_CLOCK_MS});
+   * the parameters exist so the fallback wrapper
+   * ({@link resolveShapedSteadyColours}) can be pinned with a forced
+   * give-up, which natural seeds never produce (measured 0/3000).
+   */
+  readonly maxAttempts?: number
+  readonly wallClockMs?: number
 }): { readonly colours: Uint8Array; readonly waves: number } {
   const { n, colours: painted, solution, seedWaves, rng } = request
+  const maxAttempts = request.maxAttempts ?? SHAPE_MAX_ATTEMPTS
+  const wallClockMs = request.wallClockMs ?? SHAPE_WALL_CLOCK_MS
   const band = waveBand(n, 'steady')
   // Depth gate: never shallower than the painted winner (the tier's wave
   // depth IS its difficulty contract — a shaped board must not be a shall
@@ -859,8 +957,8 @@ function shapeSteadyColours(request: {
   let bestDefect = Number.POSITIVE_INFINITY
   const startedAt = performance.now()
 
-  for (let attempt = 0; attempt < SHAPE_MAX_ATTEMPTS; attempt += 1) {
-    if (performance.now() - startedAt >= SHAPE_WALL_CLOCK_MS) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (performance.now() - startedAt >= wallClockMs) {
       throw new StarShapeBudgetExhaustedError({
         n,
         seed: rng.seed,
@@ -932,11 +1030,45 @@ function shapeSteadyColours(request: {
   throw new StarShapeBudgetExhaustedError({
     n,
     seed: rng.seed,
-    attempts: SHAPE_MAX_ATTEMPTS,
+    attempts: maxAttempts,
     elapsedMs: performance.now() - startedAt,
     reason: 'attempts',
     bestDefect,
   })
+}
+
+/**
+ * The shaping give-up wrapper (player ruling, 2026-10-07 — a shaping
+ * failure is never a generation failure): run the hub-free shaping
+ * descent and, when it exhausts its budget, FALL BACK to the painted
+ * board with `gateMet: false` instead of throwing. The painted board is
+ * legal by construction (it already passed the painting gates); the
+ * only thing it lacks is the structural variety the gate exists for.
+ * `gateMet: true` means the descent reached defect 0 and the shaped
+ * board must still pass the caller's certification nets. Exported for
+ * the tests: natural seeds never give up (measured 0/3000 at n = 6..10),
+ * so the wrapper's budget overrides exist to force a give-up
+ * deterministically. The production caller passes no overrides.
+ */
+export function resolveShapedSteadyColours(request: {
+  readonly n: number
+  readonly colours: Uint8Array
+  readonly solution: readonly number[]
+  readonly seedWaves: number
+  readonly rng: SeededRandom
+  readonly maxAttempts?: number
+  readonly wallClockMs?: number
+}): { readonly colours: Uint8Array; readonly waves: number; readonly gateMet: boolean } {
+  try {
+    const shaped = shapeSteadyColours(request)
+    return { colours: shaped.colours, waves: shaped.waves, gateMet: true }
+  } catch (error) {
+    if (!(error instanceof StarShapeBudgetExhaustedError)) {
+      throw error
+    }
+    // Budget exhausted: keep the painted board, honestly unaudited.
+    return { colours: request.colours, waves: request.seedWaves, gateMet: false }
+  }
 }
 
 /**
@@ -1069,11 +1201,15 @@ function generateConstructionBoard(request: {
   // wave count is what the board reports), and the exact counter for n <= 5.
   // The shaped board must be no SHALLOWER than the painted winner it
   // replaces (lower = seedWaves) and no deeper than the band ceiling (or
-  // the winner itself, when the painting already exceeded it).
+  // the winner itself, when the painting already exceeded it). A shaping
+  // give-up falls back to the painted board with `gateMet: false` (the
+  // player ruling — see {@link resolveShapedSteadyColours}); only the
+  // shaped board pays for certification.
   let outputColours = bestColours
   let outputWaves = bestWaves
+  let shapeGateMet = false
   if (request.shaping && constructionDifficulty === 'steady' && n >= 6) {
-    const shaped = shapeSteadyColours({
+    const shaped = resolveShapedSteadyColours({
       n,
       colours: bestColours,
       solution: bestSolution,
@@ -1082,32 +1218,35 @@ function generateConstructionBoard(request: {
     })
     outputColours = shaped.colours
     outputWaves = shaped.waves
-    if (!regionsConnected(outputColours, n)) {
-      throw new Error(
-        `star battle shaping invariant violated: shaped board is not fully connected ` +
-          `(n=${n}, seed=${rng.seed})`,
-      )
-    }
-    const structure = measureStarBoardStructure(outputColours, n)
-    if (!structure.connected) {
-      throw new Error(
-        `star battle shaping invariant violated: union-find disagrees with the flood fill ` +
-          `(n=${n}, seed=${rng.seed})`,
-      )
-    }
-    const certified = propagateStarBoard(outputColours, n)
-    if (!certified.solved) {
-      throw new Error(
-        `star battle shaping invariant violated: shaped board failed the propagation certificate ` +
-          `(n=${n}, seed=${rng.seed})`,
-      )
-    }
-    outputWaves = certified.waves
-    if (n <= 5 && countStarSolutions(outputColours, n, 2) !== 1) {
-      throw new Error(
-        `star battle shaping invariant violated: shaped board failed the exact counter ` +
-          `(n=${n}, seed=${rng.seed})`,
-      )
+    shapeGateMet = shaped.gateMet
+    if (shaped.gateMet) {
+      if (!regionsConnected(outputColours, n)) {
+        throw new Error(
+          `star battle shaping invariant violated: shaped board is not fully connected ` +
+            `(n=${n}, seed=${rng.seed})`,
+        )
+      }
+      const structure = measureStarBoardStructure(outputColours, n)
+      if (!structure.connected) {
+        throw new Error(
+          `star battle shaping invariant violated: union-find disagrees with the flood fill ` +
+            `(n=${n}, seed=${rng.seed})`,
+        )
+      }
+      const certified = propagateStarBoard(outputColours, n)
+      if (!certified.solved) {
+        throw new Error(
+          `star battle shaping invariant violated: shaped board failed the propagation certificate ` +
+            `(n=${n}, seed=${rng.seed})`,
+        )
+      }
+      outputWaves = certified.waves
+      if (n <= 5 && countStarSolutions(outputColours, n, 2) !== 1) {
+        throw new Error(
+          `star battle shaping invariant violated: shaped board failed the exact counter ` +
+            `(n=${n}, seed=${rng.seed})`,
+        )
+      }
     }
   }
 
@@ -1123,7 +1262,12 @@ function generateConstructionBoard(request: {
   // touches solution cells, so the planted permutation survives intact.
   assertStarBattlePuzzle(puzzle)
 
-  return Object.freeze({ puzzle, waves: outputWaves, difficulty: constructionDifficulty })
+  return Object.freeze({
+    puzzle,
+    waves: outputWaves,
+    difficulty: constructionDifficulty,
+    shapeAudit: Object.freeze({ gateMet: shapeGateMet }),
+  })
 }
 
 /**
@@ -1170,6 +1314,7 @@ function generateTechniqueTierBoard(request: {
   const rng = createSeededRandom(seed)
   const startedAt = performance.now()
   let lastK: number | null = null
+  let lastWitness: readonly StarConfinementRule[] | null = null
 
   // The per-generation phase: which menu entry walk 0 descends from is a
   // deterministic function of the request seed, so a tier's GENERATIONS
@@ -1186,6 +1331,7 @@ function generateTechniqueTierBoard(request: {
         targetK,
         walks: walk,
         lastK,
+        lastWitness,
         elapsedMs: performance.now() - startedAt,
         reason: 'wall-clock',
       })
@@ -1259,17 +1405,20 @@ function generateTechniqueTierBoard(request: {
       continue
     }
 
-    // Gate (d): the difficulty target — the minimum confinement basis.
-    // THE ACCEPTANCE TRAP, enforced structurally: `measureMinimumBasis`
-    // enumerates ALL 16 confinement subsets explicitly and verifies their
-    // solving family is upward-closed (throwing on violation) — k is never
-    // inferred from the full-catalogue certificate above, which with a
-    // non-monotone engine would prove nothing about subset solves. For
-    // 'contradiction' the walk's meter guarantees the deepest subset
-    // stalls; the enumeration here is the explicit, independent check.
+    // Gate (d): the difficulty target — the tier's FULL contract via
+    // {@link techniqueTierAcceptsBasis} (for 'challenging' that is k = 1
+    // AND a non-line-confinement witness, not k alone). THE ACCEPTANCE
+    // TRAP, enforced structurally: `measureMinimumBasis` enumerates ALL
+    // 16 confinement subsets explicitly and verifies their solving family
+    // is upward-closed (throwing on violation) — k is never inferred from
+    // the full-catalogue certificate above, which with a non-monotone
+    // engine would prove nothing about subset solves. For 'contradiction'
+    // the walk's meter guarantees the deepest subset stalls; the
+    // enumeration here is the explicit, independent check.
     const basis = measureMinimumBasis(walked.colours, n)
     lastK = basis.k
-    if (basis.k !== targetK) {
+    lastWitness = basis.rules
+    if (!techniqueTierAcceptsBasis(difficulty, basis)) {
       continue
     }
 
@@ -1318,6 +1467,7 @@ function generateTechniqueTierBoard(request: {
     targetK,
     walks: TECHNIQUE_WALK_ATTEMPTS,
     lastK,
+    lastWitness,
     elapsedMs: performance.now() - startedAt,
     reason: 'walk-attempts',
   })
