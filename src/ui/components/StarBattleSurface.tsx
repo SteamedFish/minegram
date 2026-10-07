@@ -64,12 +64,20 @@ import type { StarMarkToken } from './starMarkTokens'
  * an engine tier that lands here without a label fails `tsc` at this file,
  * not as an `undefined` pill on the player.
  *
- * What each tier is (the engine's module doc is the authority):
- * - starter / steady: base rules solve the board; they differ in depth.
- * - challenging: the base rules place nothing; exactly one confinement
- *   technique is necessary and sufficient.
- * - expert: the base rules place nothing; no single technique suffices,
- *   some pair does.
+ * What each tier is (the engine's `techniqueTierAcceptsBasis` doc is the
+ * authority, re-tiered 2026-10-07):
+ * - starter / steady: the base rules alone solve the board; they differ
+ *   only in depth — starter in short chains, steady long but routine.
+ *   Neither is a technique tier.
+ * - challenging: the base rules place nothing, and exactly one idea beyond
+ *   them finishes the board — but never the freebie: the witness must not
+ *   be line confinement (a whole row or column of one colour handing the
+ *   line over). The class decays with side, so this is a small-side tier:
+ *   solid at n = 4–5, thin at n = 7–8, not offered at n >= 9. The measured
+ *   availability signal, not this comment, is what tells the player where
+ *   it prints.
+ * - expert: the base rules place nothing; no single idea suffices, some
+ *   pair does.
  * - contradiction: no confinement-technique subset solves at all; the
  *   board requires a proof by contradiction.
  */
@@ -188,6 +196,15 @@ interface StarCopy {
   readonly back: string
   readonly difficultyLabel: string
   readonly difficulties: Record<StarDifficulty, string>
+  /**
+   * What the live tier is, said in words under the control — the labels
+   * alone ('Steady', 'Challenging') promise nothing the engine must keep.
+   * The statements are tier contracts, not board promises: within a tier
+   * the SHAPES vary, the solving idea does not (measured: three generator
+   * mechanisms all landed on one technique per tier), so no description
+   * may imply the technique itself rotates board to board.
+   */
+  readonly difficultyDescriptions: Record<StarDifficulty, string>
   readonly size: {
     /** The radiogroup's accessible name; the options are the numerals themselves. */
     readonly label: string
@@ -281,6 +298,14 @@ const en: StarCopy = {
     expert: 'Expert',
     contradiction: 'Contradiction',
   },
+  difficultyDescriptions: {
+    starter: 'The placement rules alone solve it; the chains are short.',
+    steady: 'The placement rules alone solve it too, but the chains run long — routine work throughout.',
+    challenging:
+      'One idea beyond the rules finishes it — and not the free one: no single colour owns a whole row or column to hand you the line.',
+    expert: 'Two ideas beyond the rules are needed; either one alone is not enough.',
+    contradiction: 'No set of ideas suffices on its own; the board yields only to a proof by contradiction.',
+  },
   size: { label: 'Board size' },
   maxLives: { label: 'Starting lives' },
   rules: {
@@ -359,6 +384,13 @@ const zhCN: StarCopy = {
     // contradiction", and 矛盾 would read as the adjacency conflict this
     // game already draws on the cells.
     contradiction: '反证',
+  },
+  difficultyDescriptions: {
+    starter: '只靠摆放规则就能解开，链条很短。',
+    steady: '只靠摆放规则也能解开，只是链条很长——全程都是常规推理。',
+    challenging: '需要规则之外的一个想法才能解开——但不是白送的那种：不会有颜色独占整行或整列，把答案直接交到你手上。',
+    expert: '需要规则之外的两个想法，只有一个不够。',
+    contradiction: '任何技巧组合单独都不够，只能靠反证法解开。',
   },
   size: { label: '棋盘尺寸' },
   maxLives: { label: '初始生命' },
@@ -1044,6 +1076,16 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
               )
             })}
           </div>
+          {/* What the live tier IS, said in words: the label alone promises
+              nothing the engine must keep. Hidden when the live tier is
+              unavailable at this size — a description sitting next to the
+              honest "no board found" note would read as a promise the size
+              cannot keep; the note alone is the truth there. */}
+          {liveTierUnavailable ? null : (
+            <p className="mg-star-difficulty__description" data-testid="star-tier-description">
+              {copy.difficultyDescriptions[props.difficulty]}
+            </p>
+          )}
           {liveTierUnavailable ? (
             <p className="mg-star-difficulty__note" data-testid="star-tier-note" role="note">
               {fill(copy.tierUnavailableMeasuredNote, {
