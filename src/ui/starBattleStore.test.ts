@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_STAR_LIVES, MAX_STAR_SIDE, MIN_STAR_LIVES, MIN_STAR_SIDE, type StarBattlePuzzle } from '../domain/starBattle'
+import type { StarDifficulty } from '../engine/starBattle/construct'
+import type {
+  StarTierFeasibility,
+  StarTierFeasibilityReport,
+  StarTierFeasibilityStatus,
+} from '../engine/starBattle/feasibility'
 import { deriveRandomSeed, normalizeRandomSeed } from '../engine/rng'
 import {
   STAR_NEXT_ROUND_SEED_LABEL,
@@ -193,6 +199,10 @@ function createHarness(overrides: Partial<StarBattleStoreOptions> = {}): Harness
   const visibility = createFakeVisibility()
   const store = createStarBattleStore({
     side: SIDE,
+    // Availability is 'unmeasured' forever unless a test injects its own
+    // probe: no existing test sees publishes it did not ask for, and no test
+    // ever runs the real wall-clock-bounded engine probe.
+    feasibilityProbe: () => new Promise(() => {}),
     workerFactory: () => {
       const worker = createFakeWorker()
       workers.push(worker)
@@ -982,5 +992,234 @@ describe('star battle store: lifecycle', () => {
     window.localStorage.setItem('minegram.star-battle.difficulty', 'challenging')
     const harness = createHarness({ difficulty: 'steady' })
     expect(harness.snapshot().difficulty).toBe('steady')
+  })
+})
+
+// ======================================================================================
+// Tier availability
+// ======================================================================================
+
+interface Deferred<T> {
+  readonly promise: Promise<T>
+  readonly resolve: (value: T) => void
+  readonly reject: (error: unknown) => void
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+/** A flush long enough for the store's probe `.then` chain to run. */
+async function flushProbe(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+function feasibilityEntry(
+  status: StarTierFeasibilityStatus,
+  samples: number,
+  hits: number,
+): StarTierFeasibility {
+  return Object.freeze({
+    status,
+    basis: 'measured-walks',
+    samples,
+    hits,
+    rate95: Object.freeze([0, 1]) as readonly [number, number],
+    generationSuccess: null,
+  })
+}
+
+/**
+ * A full five-tier report: every tier `available` unless overridden. Tests
+ * assert status transitions and their consequences — never wall-clock sample
+ * counts, which the probe's own documentation says vary with machine load.
+ */
+function feasibilityReport(
+  overrides: Partial<Record<StarDifficulty, StarTierFeasibility>> = {},
+): StarTierFeasibilityReport {
+  return Object.freeze({
+    starter: overrides.starter ?? feasibilityEntry('available', 8, 8),
+    steady: overrides.steady ?? feasibilityEntry('available', 8, 8),
+    challenging: overrides.challenging ?? feasibilityEntry('available', 48, 48),
+    expert: overrides.expert ?? feasibilityEntry('available', 48, 48),
+    contradiction: overrides.contradiction ?? feasibilityEntry('available', 48, 48),
+  })
+}
+
+const UNAVAILABLE = (samples: number): StarTierFeasibility =>
+  feasibilityEntry('unavailable', samples, 0)
+
+describe('star battle store: tier availability', () => {
+  it('carries unmeasured availability until the probe resolves, then republishes the measured answer', async () => {
+    const gate = createDeferred<StarTierFeasibilityReport>()
+    const harness = createHarness({ feasibilityProbe: () => gate.promise })
+    expect(harness.snapshot().tierAvailability.contradiction.status).toBe('unmeasured')
+
+    let publishes = 0
+    harness.store.subscribe(() => {
+      publishes += 1
+    })
+    gate.resolve(feasibilityReport({ contradiction: UNAVAILABLE(48) }))
+    await flushProbe()
+
+    expect(publishes).toBeGreaterThan(0)
+    expect(harness.snapshot().tierAvailability.contradiction).toEqual({
+      status: 'unavailable',
+      samples: 48,
+      hits: 0,
+    })
+    expect(harness.snapshot().tierAvailability.expert.status).toBe('available')
+  })
+
+  it('re-warms on a side change and drops a stale side’s late resolution', async () => {
+    const probedSides: number[] = []
+    const gates = new Map<number, Deferred<StarTierFeasibilityReport>>()
+    const harness = createHarness({
+      feasibilityProbe: (n) => {
+        probedSides.push(n)
+        const gate = createDeferred<StarTierFeasibilityReport>()
+        gates.set(n, gate)
+        return gate.promise
+      },
+    })
+    // Warmed at construction for the initial side.
+    expect(probedSides).toEqual([SIDE])
+
+    harness.store.actions.setSide(8)
+    expect(probedSides).toEqual([SIDE, 8])
+    // setSide launched a generation at the new side; it stays in flight.
+
+    let publishes = 0
+    harness.store.subscribe(() => {
+      publishes += 1
+    })
+    gates.get(8)!.resolve(feasibilityReport())
+    await flushProbe()
+    expect(harness.snapshot().tierAvailability.expert.status).toBe('available')
+    expect(harness.snapshot().side).toBe(8)
+    expect(publishes).toBeGreaterThan(0)
+
+    // The old side's probe landing late must not republish or retarget.
+    const settled = publishes
+    gates.get(SIDE)!.resolve(feasibilityReport({ contradiction: UNAVAILABLE(48) }))
+    await flushProbe()
+    expect(publishes).toBe(settled)
+    expect(harness.snapshot().difficulty).toBe('starter')
+  })
+
+  it('recovers a dead selection parked on a failure: retargets to the nearest working tier and prints it', async () => {
+    const gate = createDeferred<StarTierFeasibilityReport>()
+    const harness = createHarness({
+      difficulty: 'contradiction',
+      feasibilityProbe: () => gate.promise,
+    })
+    harness.store.actions.startNewRound('star-fixture-a')
+    fail(harness.workers[0]!)
+    expect(harness.snapshot().failure).not.toBeNull()
+
+    gate.resolve(feasibilityReport({ contradiction: UNAVAILABLE(48) }))
+    await flushProbe()
+
+    // The preference moved to the nearest tier below that prints, persisted…
+    expect(harness.snapshot().difficulty).toBe('expert')
+    expect(window.localStorage.getItem('minegram.star-battle.difficulty')).toBe('expert')
+    // …and the player is not parked on the failure: the fallback board is
+    // already printing, so the dead selection never strands them.
+    expect(harness.workers).toHaveLength(2)
+    const recovery = lastRequest(harness.workers[1]!)
+    expect(recovery.difficulty).toBe('expert')
+    expect(recovery.n).toBe(SIDE)
+    expect(harness.snapshot().failure).toBeNull()
+    expect(harness.snapshot().status).toBe('generating')
+  })
+
+  it('recovers when the failure lands after the measurement', async () => {
+    const gate = createDeferred<StarTierFeasibilityReport>()
+    const harness = createHarness({
+      difficulty: 'contradiction',
+      feasibilityProbe: () => gate.promise,
+    })
+    harness.store.actions.startNewRound('star-fixture-a')
+
+    gate.resolve(feasibilityReport({ contradiction: UNAVAILABLE(48) }))
+    await flushProbe()
+    // The request is still printing: the preference moves, the round is not yanked.
+    expect(harness.snapshot().difficulty).toBe('expert')
+    expect(harness.workers).toHaveLength(1)
+
+    fail(harness.workers[0]!)
+    // The failure this measurement explains recovers immediately.
+    expect(harness.workers).toHaveLength(2)
+    expect(lastRequest(harness.workers[1]!).difficulty).toBe('expert')
+    expect(harness.snapshot().failure).toBeNull()
+  })
+
+  it('never yanks a playing round: the retarget applies to the next launch', async () => {
+    const gate = createDeferred<StarTierFeasibilityReport>()
+    const harness = createHarness({
+      difficulty: 'starter',
+      feasibilityProbe: () => gate.promise,
+    })
+    harness.store.actions.startNewRound('star-fixture-a')
+    succeed(harness.workers[0]!, PUZZLE_A)
+
+    gate.resolve(feasibilityReport({ starter: UNAVAILABLE(8) }))
+    await flushProbe()
+
+    // The live board is untouched…
+    expect(harness.snapshot().status).toBe('playing')
+    expect(harness.snapshot().puzzle).toBe(PUZZLE_A)
+    expect(harness.workers).toHaveLength(1)
+    // …but the dead preference moved on for the next launch.
+    expect(harness.snapshot().difficulty).toBe('steady')
+  })
+
+  it('prefers the nearest working tier on either side when everything below is dead', async () => {
+    const gate = createDeferred<StarTierFeasibilityReport>()
+    const harness = createHarness({
+      difficulty: 'starter',
+      feasibilityProbe: () => gate.promise,
+    })
+    harness.store.actions.startNewRound('star-fixture-a')
+    fail(harness.workers[0]!)
+
+    gate.resolve(
+      feasibilityReport({
+        starter: UNAVAILABLE(8),
+        steady: UNAVAILABLE(8),
+        challenging: UNAVAILABLE(48),
+      }),
+    )
+    await flushProbe()
+
+    expect(harness.snapshot().difficulty).toBe('expert')
+  })
+
+  it('measurement never blocks or delays the first board', async () => {
+    const gate = createDeferred<StarTierFeasibilityReport>()
+    const harness = createHarness({ feasibilityProbe: () => gate.promise })
+    harness.store.actions.startNewRound('star-fixture-a')
+    // The probe is still pending and the board is already printing.
+    expect(harness.workers).toHaveLength(1)
+    expect(harness.snapshot().status).toBe('generating')
+  })
+
+  it('a failed probe stays optimistic and publishes nothing', async () => {
+    const gate = createDeferred<StarTierFeasibilityReport>()
+    const harness = createHarness({ feasibilityProbe: () => gate.promise })
+    let publishes = 0
+    harness.store.subscribe(() => {
+      publishes += 1
+    })
+    gate.reject(new Error('probe boom'))
+    await flushProbe()
+    expect(publishes).toBe(0)
+    expect(harness.snapshot().tierAvailability.contradiction.status).toBe('unmeasured')
   })
 })

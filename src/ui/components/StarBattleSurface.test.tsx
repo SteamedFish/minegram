@@ -630,6 +630,122 @@ describe('StarBattleSurface — tier feasibility', () => {
   })
 })
 
+describe('StarBattleSurface — measured tier availability', () => {
+  function availability(
+    status: 'available' | 'unreliable' | 'unavailable' | 'unmeasured',
+    samples: number,
+    hits: number,
+  ): { status: 'available' | 'unreliable' | 'unavailable' | 'unmeasured'; samples: number; hits: number } {
+    return { status, samples, hits }
+  }
+
+  const ALL_MEASURED = (
+    overrides: Partial<Record<(typeof STAR_DIFFICULTIES)[number], ReturnType<typeof availability>>>,
+  ) => {
+    return (_side: number, tier: (typeof STAR_DIFFICULTIES)[number]) =>
+      overrides[tier] ?? availability('available', 48, 48)
+  }
+
+  it('an unavailable cell is not selectable, and the honest note carries the sample count — never a claim of impossibility', () => {
+    const onDifficultyChange = vi.fn()
+    render({
+      difficulty: 'expert',
+      tierAvailability: ALL_MEASURED({ expert: availability('unavailable', 1200, 0) }),
+      onDifficultyChange,
+    })
+    const expert = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='expert']",
+    )
+    expect(expert?.disabled).toBe(true)
+    expect(expert?.getAttribute('aria-label')).toContain('1200')
+    const note = container.querySelector('[data-testid="star-tier-note"]')
+    expect(note?.textContent).toContain('1200')
+    expect(note?.textContent).toMatch(/no board/i)
+    expect(note?.textContent).not.toMatch(/impossible/i)
+    act(() => {
+      ;(expert as HTMLInputElement).click()
+    })
+    expect(onDifficultyChange).not.toHaveBeenCalled()
+    // An available neighbour stays selectable.
+    const steady = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='steady']",
+    )
+    expect(steady?.disabled).toBe(false)
+  })
+
+  it('the honest note stays honest in Chinese: the count, and never 不可能', () => {
+    render({
+      locale: 'zh',
+      difficulty: 'contradiction',
+      tierAvailability: ALL_MEASURED({ contradiction: availability('unavailable', 276, 0) }),
+    })
+    const note = container.querySelector('[data-testid="star-tier-note"]')
+    expect(note?.textContent).toContain('276')
+    expect(note?.textContent).not.toContain('不可能')
+  })
+
+  it('an unreliable cell stays selectable but is marked with its thin evidence', () => {
+    const onDifficultyChange = vi.fn()
+    render({
+      difficulty: 'starter',
+      tierAvailability: ALL_MEASURED({ contradiction: availability('unreliable', 24, 2) }),
+      onDifficultyChange,
+    })
+    // The live tier is an available one; the note belongs to the unreliable
+    // cell's own label until it is chosen.
+    expect(container.querySelector('[data-testid="star-tier-note"]')).toBeNull()
+    const contradiction = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='contradiction']",
+    )
+    expect(contradiction?.disabled).toBe(false)
+    expect(
+      container
+        .querySelector("[data-testid='star-difficulty'] .mg-seg__label[data-tier='contradiction']")
+        ?.getAttribute('data-availability'),
+    ).toBe('unreliable')
+    expect(contradiction?.getAttribute('aria-label')).toContain('2')
+    act(() => {
+      ;(contradiction as HTMLInputElement).click()
+    })
+    expect(onDifficultyChange).toHaveBeenCalledWith('contradiction')
+    // Once live, the thin evidence is said in words under the control.
+    render({
+      difficulty: 'contradiction',
+      tierAvailability: ALL_MEASURED({ contradiction: availability('unreliable', 24, 2) }),
+    })
+    const note = container.querySelector('[data-testid="star-tier-note"]')
+    expect(note?.textContent).toContain('2')
+    expect(note?.textContent).toContain('24')
+  })
+
+  it('an unmeasured cell behaves as if there were no signal: enabled, unmarked, no note', () => {
+    render({ tierAvailability: () => availability('unmeasured', 0, 0) })
+    const options = container.querySelectorAll<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[type='radio']",
+    )
+    for (const option of Array.from(options)) {
+      expect(option.disabled).toBe(false)
+    }
+    expect(
+      container.querySelectorAll("[data-testid='star-difficulty'] .mg-seg__label[data-availability]"),
+    ).toHaveLength(0)
+    expect(container.querySelector('[data-testid="star-tier-note"]')).toBeNull()
+  })
+
+  it('the measured signal takes precedence when both signals are present', () => {
+    render({
+      difficulty: 'starter',
+      // The boolean signal says everything prints; the measured one knows better.
+      tierFeasibility: () => true,
+      tierAvailability: ALL_MEASURED({ starter: availability('unavailable', 48, 0) }),
+    })
+    const starter = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='starter']",
+    )
+    expect(starter?.disabled).toBe(true)
+  })
+})
+
 describe('StarBattleSurface — chrome', () => {
   it('shows the lives as pips, spent ones dimmed, with a spoken total', () => {
     render({ lives: 3, maxLives: 5 })

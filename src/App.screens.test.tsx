@@ -5,7 +5,7 @@ import { App } from './App'
 import { DEFAULT_STAR_SIDE } from './domain/starBattle'
 import { getCopy } from './ui/copy'
 import { createGameStore, disposeGameStore, setGameStore } from './ui/gameStore'
-import { getStarCopy } from './ui/components/StarBattleSurface'
+import { getStarCopy, STAR_DIFFICULTIES, UNMEASURED_TIER_AVAILABILITY } from './ui/components/StarBattleSurface'
 import {
   setStarBattleStore,
   type StarBattleSnapshot,
@@ -46,6 +46,11 @@ function starSnapshot(overrides: Partial<StarBattleSnapshot> = {}): StarBattleSn
     difficulty: 'starter',
     side: DEFAULT_STAR_SIDE,
     failure: null,
+    // No measurement in these tests: every tier reads unmeasured, which is
+    // the surface's no-signal behaviour.
+    tierAvailability: Object.freeze(
+      Object.fromEntries(STAR_DIFFICULTIES.map((tier) => [tier, UNMEASURED_TIER_AVAILABILITY])),
+    ) as StarBattleSnapshot['tierAvailability'],
     version: 0,
     ...overrides,
   })

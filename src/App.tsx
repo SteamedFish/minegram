@@ -28,7 +28,7 @@ import { RoundBanner } from './ui/components/RoundBanner'
 import { SettingsPanel } from './ui/components/SettingsPanel'
 import { defaultDraft } from './ui/components/defaults'
 import { StatusRegion } from './ui/components/StatusRegion'
-import { StarBattleSurface, type StarFailureInfo } from './ui/components/StarBattleSurface'
+import { StarBattleSurface, UNMEASURED_TIER_AVAILABILITY, type StarFailureInfo } from './ui/components/StarBattleSurface'
 import {
   defaultFingerMarking,
   useLocale,
@@ -306,6 +306,13 @@ export function App() {
             mistakes={starSnapshot.mistakes}
             streak={starSnapshot.streak}
             difficulty={starSnapshot.difficulty}
+            tierAvailability={(side, tier) =>
+              // The snapshot carries the measured answer for the LIVE side;
+              // another side is optimistic 'unmeasured' until its probe lands.
+              side === starSnapshot.side
+                ? starSnapshot.tierAvailability[tier]
+                : UNMEASURED_TIER_AVAILABILITY
+            }
             minSide={MIN_STAR_SIDE}
             maxSide={MAX_STAR_SIDE}
             minLives={MIN_STAR_LIVES}

@@ -17,6 +17,17 @@
  * free, so a misclick cannot permanently void a round in which every one of
  * the n² cells must be asserted.
  *
+ * The store also owns the tier-availability query the picker renders: the
+ * UI layer boundary (`src/ui/layerBoundary.test.ts`) forbids components from
+ * reaching the engine's feasibility module, so this store — which already
+ * imports engine code — runs the per-side probe fire-and-forget, carries the
+ * measured answer on the snapshot as `tierAvailability`, and republishes when
+ * a probe resolves. Measurement never blocks a launch. When the measured
+ * answer says the live tier cannot print at the live side, the store moves
+ * the preference to the nearest tier that can and, if the player is parked
+ * on a failure this measurement explains, prints the retargeted board at
+ * once — a persisted dead selection must never strand the player.
+ *
  * Inert gestures never reach the reducer: `previewStarMarkBatch` reports
  * `affectedCount === 0` for a re-assertion, an all-locked batch (a locked
  * cell refuses a retract exactly as it refuses a changed assertion), or a
@@ -46,7 +57,11 @@ import {
   assertStarBattleSide,
   type StarBattlePuzzle,
 } from '../domain/starBattle'
-import type { StarDifficulty } from '../engine/starBattle/construct'
+import { STAR_DIFFICULTIES, type StarDifficulty } from '../engine/starBattle/construct'
+import {
+  measureStarBattleTierFeasibility,
+  type StarTierFeasibilityReport,
+} from '../engine/starBattle/feasibility'
 import { deriveRandomSeed, normalizeRandomSeed, type RandomSeed } from '../engine/rng'
 import { readStored, writeStored } from './components/storage'
 import {
@@ -67,6 +82,24 @@ import {
 export type StarBattleUiStatus = 'idle' | 'generating' | 'playing' | 'won' | 'lost'
 
 /**
+ * The availability classification for one (side, tier) cell, projected from
+ * the engine's feasibility report. The store owns the query (the UI layer
+ * boundary forbids components from reaching the engine), so the snapshot
+ * carries the measured answer and the surface renders it — `unmeasured` is
+ * the optimistic "no data yet" and must behave exactly like the game before
+ * measurement existed.
+ */
+export type StarTierAvailabilityStatus = 'available' | 'unreliable' | 'unavailable' | 'unmeasured'
+
+export interface StarTierAvailability {
+  readonly status: StarTierAvailabilityStatus
+  /** Units sampled: walks (technique tiers) or full generations (construction). */
+  readonly samples: number
+  /** Units that produced a board meeting the tier's target. */
+  readonly hits: number
+}
+
+/**
  * Everything the surface needs, projected. `puzzle` is `null` until a
  * certified board has arrived — the store never renders a board it has not
  * received as certified. `failure` carries the raw diagnostics whose
@@ -85,6 +118,13 @@ export interface StarBattleSnapshot {
   readonly difficulty: StarDifficulty
   readonly side: number
   readonly failure: GameFailureDiagnostics | null
+  /**
+   * Per-tier availability at the current `side`, measured by the engine's
+   * feasibility probe. Every cell starts `unmeasured` and a NEW snapshot is
+   * published when the probe for the live side resolves — the measurement
+   * never blocks a launch and never delays the first board.
+   */
+  readonly tierAvailability: Readonly<Record<StarDifficulty, StarTierAvailability>>
   readonly version: number
 }
 
@@ -185,6 +225,12 @@ export interface StarBattleStoreOptions {
   readonly sideStorageKey?: string
   /** Persistence key for the maximum-lives preference (test seam). */
   readonly livesStorageKey?: string
+  /**
+   * The per-side availability probe (test seam). Defaults to the engine's
+   * `measureStarBattleTierFeasibility`; tests inject a controlled one so no
+   * test ever runs the real, wall-clock-bounded probe.
+   */
+  readonly feasibilityProbe?: (n: number) => Promise<StarTierFeasibilityReport>
 }
 
 export const DEFAULT_STAR_WIN_INTERLUDE_MS = 2_500
@@ -318,7 +364,17 @@ interface ActiveStarRequest {
   readonly seed: number
   /** The maximum lives captured at launch; the round starts at it on success. */
   readonly maxLives: number
+  /** The tier the request launched with, and the side it was launched at. */
+  readonly tier: StarDifficulty
+  readonly n: number
 }
+
+/** The optimistic cell before any probe resolves: asserts nothing. */
+const UNMEASURED_AVAILABILITY: StarTierAvailability = Object.freeze({
+  status: 'unmeasured',
+  samples: 0,
+  hits: 0,
+})
 
 export function createStarBattleStore(options: StarBattleStoreOptions = {}): StarBattleStore {
   const sideStorageKey = options.sideStorageKey ?? STAR_SIDE_STORAGE_KEY
@@ -358,6 +414,15 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
   let internalTeardown = false
   /** The last seed the player (or a derivation) started a round with. */
   let authoredSeed: RandomSeed = 0
+  /**
+   * Measured per-side tier availability, filled fire-and-forget by
+   * {@link warmTierAvailability}. Only ever read at the live side; a stale
+   * side's late resolution is dropped.
+   */
+  const availabilityBySide = new Map<number, StarTierFeasibilityReport>()
+  /** Projected per-side records, cached so one side's snapshot shape is stable. */
+  const availabilityRecords = new Map<number, Readonly<Record<StarDifficulty, StarTierAvailability>>>()
+  const feasibilityProbe = options.feasibilityProbe ?? measureStarBattleTierFeasibility
 
   const listeners = new Set<() => void>()
   // Armed once per store and torn down in `dispose()`: the hidden-tab win
@@ -376,8 +441,116 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       difficulty,
       side,
       failure,
+      tierAvailability: availabilityRecord(side),
       version,
     })
+  }
+
+  /** The projected availability record for one side; `unmeasured` until its probe resolves. */
+  function availabilityRecord(current: number): Readonly<Record<StarDifficulty, StarTierAvailability>> {
+    const cached = availabilityRecords.get(current)
+    if (cached !== undefined) {
+      return cached
+    }
+    const report = availabilityBySide.get(current)
+    const record = Object.freeze(
+      Object.fromEntries(
+        STAR_DIFFICULTIES.map((tier) => {
+          const entry = report?.[tier]
+          return [
+            tier,
+            entry === undefined
+              ? UNMEASURED_AVAILABILITY
+              : Object.freeze({ status: entry.status, samples: entry.samples, hits: entry.hits }),
+          ]
+        }),
+      ),
+    ) as Readonly<Record<StarDifficulty, StarTierAvailability>>
+    availabilityRecords.set(current, record)
+    return record
+  }
+
+  /**
+   * Fire-and-forget per-side availability probe (lazy warming). Async,
+   * cached and deduplicated by the engine, so this never blocks a launch
+   * and never delays the first board. When the report lands it publishes a
+   * new snapshot — the picker re-renders with the measured answer — and, if
+   * the measurement shows the LIVE tier cannot print at the live side,
+   * recovers the selection instead of stranding the player on it.
+   */
+  function warmTierAvailability(target: number): void {
+    let probe: Promise<StarTierFeasibilityReport>
+    try {
+      probe = feasibilityProbe(target)
+    } catch {
+      // The store must never throw over a measurement; unmeasured renders
+      // exactly like the game before the probe existed.
+      return
+    }
+    probe
+      .then((report) => {
+        if (disposed || target !== side) {
+          // A stale side's resolution is dropped: the store has moved on.
+          return
+        }
+        availabilityBySide.set(target, report)
+        availabilityRecords.delete(target)
+        recoverUnavailableSelection(difficulty)
+        publish()
+      })
+      .catch(() => {
+        // A failed probe stays optimistic; nothing actionable for the store.
+      })
+  }
+
+  /**
+   * The measured answer says `tier` cannot print at the live side. Move the
+   * preference to the nearest tier that can — searching easier first, because
+   * a silent downgrade toward a playable board beats a silent upgrade — and
+   * if the player is parked on a generation failure this measurement
+   * explains, print the retargeted board at once: a failure card for a
+   * combination the game KNOWS cannot succeed is the dead end this feature
+   * exists to close. A live round is never yanked: the retargeted preference
+   * simply applies to the next launch.
+   */
+  function recoverUnavailableSelection(tier: StarDifficulty): void {
+    const report = availabilityBySide.get(side)
+    if (report === undefined || report[tier].status !== 'unavailable') {
+      return
+    }
+    const fallback = pickFallbackTier(report, tier)
+    if (fallback !== null && fallback !== difficulty) {
+      difficulty = fallback
+      writeStored(storageKey, fallback)
+    }
+    if (active === null && failure !== null) {
+      launch(authoredSeed)
+    }
+  }
+
+  /**
+   * The nearest selectable tier to a dead one: walk toward easier tiers
+   * first, then harder. `unreliable` counts as selectable — it sometimes
+   * prints, which is an honest choice to offer, unlike a known-empty cell.
+   */
+  function pickFallbackTier(
+    report: StarTierFeasibilityReport,
+    dead: StarDifficulty,
+  ): StarDifficulty | null {
+    const index = STAR_DIFFICULTIES.indexOf(dead)
+    for (let below = index - 1; below >= 0; below -= 1) {
+      const tier = STAR_DIFFICULTIES[below]
+      if (tier !== undefined && report[tier].status !== 'unavailable') {
+        return tier
+      }
+    }
+    for (let above = index + 1; above < STAR_DIFFICULTIES.length; above += 1) {
+      const tier = STAR_DIFFICULTIES[above]
+      if (tier !== undefined && report[tier].status !== 'unavailable') {
+        return tier
+      }
+    }
+    return null
   }
 
   let snapshot: StarBattleSnapshot = composeSnapshot()
@@ -488,7 +661,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       return false
     }
 
-    active = { requestId, generationId, worker, seed, maxLives }
+    active = { requestId, generationId, worker, seed, maxLives, tier: difficulty, n: side }
     authoredSeed = seed
     failure = null
     const request: StarBattleRequestMessage = {
@@ -549,6 +722,14 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       active = null
       terminateWorker(worker)
       failure = data.failure
+      // If measurement has already shown this request's tier cannot print at
+      // this side, the failure card is a dead end by definition — recover
+      // the selection instead of waiting for the player to dig out of it.
+      // A failure from a side the store has since left alone: the live
+      // side's own launch decides its fate.
+      if (current.n === side) {
+        recoverUnavailableSelection(current.tier)
+      }
       publish()
       return
     }
@@ -706,6 +887,10 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       side = next
       writeStored(sideStorageKey, String(next))
       publish()
+      // A different side is a different availability matrix: re-warm. Async
+      // and cached, so a side the probe already measured republishes from
+      // the cache and a fresh one resolves whenever it resolves.
+      warmTierAvailability(next)
       if (active !== null) {
         // A round is already printing; the persisted side applies next time.
         return
@@ -837,6 +1022,10 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
     }
     disposed = true
   }
+
+  // Warm the live side's availability at construction: the probe is async
+  // and cached, so this neither blocks nor delays anything the store prints.
+  warmTierAvailability(side)
 
   return Object.freeze({
     getSnapshot,
