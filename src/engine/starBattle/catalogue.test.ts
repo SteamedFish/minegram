@@ -20,6 +20,10 @@
 // Timeout/number casts in unrelated suites). The import is runtime-only
 // (vitest externalises node builtins); suppress the resolution error.
 import { describe, expect, it } from 'vitest'
+import {
+  HAND_K1_COLOURS,
+  HAND_KMINUS1_COLOURS,
+} from './fixtures/handBoards'
 // @ts-expect-error node:fs resolves at runtime under vitest, not under tsc
 import { readFileSync } from 'node:fs'
 import {
@@ -513,5 +517,60 @@ describe('catalogue soundness', () => {
     expect(result.solved).toBe(true)
     expect(result.marks[2]).toBe(2)
     expect(result.marks[6]).toBe(1)
+  })
+})
+
+describe('firstStarWave (the wave of the first closure-placed star)', () => {
+  it('solved base runs place their first star inside 1..waves on every fixture', () => {
+    for (const record of fixtures) {
+      const colours = toColours(record)
+      const result = solveStarCatalogue(colours, record.n, { rules: ['base'] })
+      expect(result.solved, `n=${record.n} seed=${record.seed}`).toBe(true)
+      expect(result.firstStarWave, `n=${record.n} seed=${record.seed}`).toBeGreaterThanOrEqual(1)
+      expect(result.firstStarWave, `n=${record.n} seed=${record.seed}`).toBeLessThanOrEqual(result.waves)
+    }
+  })
+
+  it('is 0 exactly when the run placed no star', () => {
+    // HAND_K1: base rules stall immediately (placed 0, waves 0).
+    const baseRun = solveStarCatalogue(HAND_K1_COLOURS, 4, { rules: ['base'], csDepth: 0 })
+    expect(baseRun.solved).toBe(false)
+    expect(baseRun.placed).toBe(0)
+    expect(baseRun.firstStarWave).toBe(0)
+  })
+
+  it('tentative case-split trials never leak a first-star wave into the outer run', () => {
+    // HAND_KMINUS1 with base+csDepth 1: the outer base closure places NO
+    // star (base alone places 0 on this board — see minimumBasis.test.ts's
+    // stall table); the solve commits blanks through case-split passes and
+    // the post-pass closures place the stars. Every star placement during
+    // the trial phase is TENTATIVE (snapshot/restored), and each trial's
+    // inner closure runs at outer wave 0 — without the save/restore in
+    // solveInner, firstStarWave would leak 1 from the first trial. The
+    // pinned values commit the no-leak behaviour; waves/csPasses are pinned
+    // alongside so the test breaks loudly if the run shape itself changes.
+    const result = solveStarCatalogue(HAND_KMINUS1_COLOURS, 10, { rules: ['base'], csDepth: 1 })
+    expect(result.solved).toBe(true)
+    expect(result.placed).toBe(10)
+    expect(result.waves).toBe(3)
+    expect(result.csPasses).toBe(2)
+    expect(result.firstStarWave).toBe(3)
+    // And the depth-0 control: the all-four confinement run stalls having
+    // placed 5 stars, its first at wave 2 (pinned in signature.test.ts too).
+    const stalled = solveStarCatalogue(HAND_KMINUS1_COLOURS, 10, {
+      rules: ['base', 'c1', 'c2', 'c3', 'c4'],
+      csDepth: 0,
+    })
+    expect(stalled.solved).toBe(false)
+    expect(stalled.placed).toBe(5)
+    expect(stalled.waves).toBe(3)
+    expect(stalled.firstStarWave).toBe(2)
+  })
+
+  it('is deterministic across identical runs', () => {
+    const first = solveStarCatalogue(HAND_KMINUS1_COLOURS, 10, { rules: ['base'], csDepth: 1 })
+    const second = solveStarCatalogue(HAND_KMINUS1_COLOURS, 10, { rules: ['base'], csDepth: 1 })
+    expect(second.firstStarWave).toBe(first.firstStarWave)
+    expect(second.waves).toBe(first.waves)
   })
 })

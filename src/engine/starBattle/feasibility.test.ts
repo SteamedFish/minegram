@@ -19,7 +19,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { MIN_STAR_SIDE, MAX_STAR_SIDE } from '../../domain/starBattle'
 import {
   clearStarBattleTierFeasibilityCache,
-  isStarTierFeasible,
   measureStarBattleTierFeasibility,
   readStarBattleTierFeasibility,
   type StarTierFeasibilityOptions,
@@ -38,9 +37,9 @@ afterEach(() => {
 
 describe('starBattle feasibility validation', () => {
   it('rejects out-of-range sides and invalid options loudly', async () => {
-    expect(() => isStarTierFeasible(MIN_STAR_SIDE - 1, 'expert')).toThrow(RangeError)
-    expect(() => isStarTierFeasible(MAX_STAR_SIDE + 1, 'expert')).toThrow(RangeError)
-    expect(() => isStarTierFeasible(4, 'absurd' as never)).toThrow(TypeError)
+    expect(() => readStarBattleTierFeasibility(MIN_STAR_SIDE - 1, 'expert')).toThrow(RangeError)
+    expect(() => readStarBattleTierFeasibility(MAX_STAR_SIDE + 1, 'expert')).toThrow(RangeError)
+    expect(() => readStarBattleTierFeasibility(4, 'absurd' as never)).toThrow(TypeError)
     await expect(
       measureStarBattleTierFeasibility(4, { maxWalksPerMeter: 0 }),
     ).rejects.toThrow(RangeError)
@@ -115,30 +114,5 @@ describe('starBattle feasibility at n = 4 (measured holes)', () => {
     expect(readStarBattleTierFeasibility(MIN_STAR_SIDE, 'challenging')).toBe(
       report.challenging,
     )
-  }, 60_000)
-})
-
-describe('isStarTierFeasible (the surface boolean)', () => {
-  it('answers optimistically before measurement, then the measured answer', async () => {
-    // n = 5: the default-budget probe resolves fast (measured ~2 s).
-    expect(isStarTierFeasible(5, 'expert')).toBe(true)
-
-    // The boolean kick-started the probe; awaiting through the public
-    // API must join that same in-flight measurement, not start a second.
-    const report = await measureStarBattleTierFeasibility(5)
-    expect(report.expert.status).toBe('available')
-    expect(report.contradiction.status).toBe('available')
-
-    expect(isStarTierFeasible(5, 'expert')).toBe(true)
-    expect(isStarTierFeasible(5, 'contradiction')).toBe(true)
-  }, 60_000)
-
-  it('reads false once measurement shows a cell is not available', async () => {
-    const report = await measureStarBattleTierFeasibility(MIN_STAR_SIDE, FAST)
-    expect(report.expert.status).toBe('unavailable')
-    expect(isStarTierFeasible(MIN_STAR_SIDE, 'expert')).toBe(false)
-    expect(isStarTierFeasible(MIN_STAR_SIDE, 'contradiction')).toBe(false)
-    expect(isStarTierFeasible(MIN_STAR_SIDE, 'challenging')).toBe(true)
-    expect(isStarTierFeasible(MIN_STAR_SIDE, 'steady')).toBe(true)
   }, 60_000)
 })

@@ -177,6 +177,17 @@ export interface StarCatalogueResult {
   readonly csPasses: number
   /** Assumption cells tested (the cost meter for case-splitting). */
   readonly csTrials: number
+  /**
+   * The 1-based wave index of the FIRST star the run's closure placed, or 0
+   * when the run placed no star at all. Only closure (wave) placements
+   * count: stars committed by a case-split pass sit between waves and are
+   * reported through `csPasses`, and tentative case-split trials never
+   * count (their instrumentation is rolled back with the rest of the
+   * tentative run). For `csDepth: 0` runs — the only runs the board
+   * signature reads — this is simply "the wave at which the first star was
+   * placed".
+   */
+  readonly firstStarWave: number
   /** `!solved`: nothing about the true solution count follows. */
   readonly stalled: boolean
   /**
@@ -253,6 +264,8 @@ interface RunCounters {
   used: Set<StarCatalogueRule>
   csPasses: number
   csTrials: number
+  /** 1-based wave of the first closure-placed star; 0 = none yet. */
+  firstStarWave: number
 }
 
 /** A deep copy of the mutable solver state, for snapshot/restore. */
@@ -895,6 +908,11 @@ class CatalogueSolver {
           this.contradiction = true
           return
         }
+        if (counters.firstStarWave === 0) {
+          // The wave that writes counts only after the apply (counters.waves
+          // increments below), so the current wave is waves + 1.
+          counters.firstStarWave = counters.waves + 1
+        }
         this.placeStar(index)
       }
       if (deadUnit) {
@@ -1015,10 +1033,12 @@ class CatalogueSolver {
   private solveInner(counters: RunCounters, depth: number): boolean {
     const outerUsed = counters.used
     const savedWaves = counters.waves
+    const savedFirstStarWave = counters.firstStarWave
     counters.used = new Set()
     const contra = this.closureInner(counters, depth)
     counters.used = outerUsed
     counters.waves = savedWaves
+    counters.firstStarWave = savedFirstStarWave
     return contra
   }
 
@@ -1087,6 +1107,7 @@ class CatalogueSolver {
       used: Object.freeze(new Set(counters.used)) as ReadonlySet<StarCatalogueRule>,
       csPasses: counters.csPasses,
       csTrials: counters.csTrials,
+      firstStarWave: counters.firstStarWave,
       stalled: !solved,
       marks: this.cells.slice(),
     })
@@ -1113,7 +1134,13 @@ export function solveStarCatalogue(
   assertStarColours(colours, n)
   const resolved = resolveOptions(options)
   const solver = new CatalogueSolver(colours, n, resolved.enabled)
-  const counters: RunCounters = { waves: 0, used: new Set(), csPasses: 0, csTrials: 0 }
+  const counters: RunCounters = {
+    waves: 0,
+    used: new Set(),
+    csPasses: 0,
+    csTrials: 0,
+    firstStarWave: 0,
+  }
   solver.solve(counters, resolved.csDepth, resolved.csBlank, resolved.csTrialCap)
   return solver.buildResult(counters)
 }

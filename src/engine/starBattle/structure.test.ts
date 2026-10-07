@@ -12,8 +12,15 @@
 import { describe, expect, it } from 'vitest'
 import { generateStarBattle } from './construct'
 import {
+  HAND_K0_COLOURS,
+  HAND_K1_COLOURS,
+  HAND_K2_COLOURS,
+  HAND_KMINUS1_COLOURS,
+} from './fixtures/handBoards'
+import {
   STAR_SHAPE_MAX_LARGEST_REGION_SHARE,
   measureStarBoardStructure,
+  measureStarStructuralCore,
   regionStaysConnectedWithout,
   starShapeDefect,
   starShapeSatisfied,
@@ -253,5 +260,89 @@ describe('regionStaysConnectedWithout', () => {
       [2, 3, 3, 3],
     ])
     expect(regionStaysConnectedWithout(singletons, 4, 5, 0)).toBe(false)
+  })
+})
+
+describe('measureStarStructuralCore', () => {
+  it('the sea-dominated starter construction scores the full profile', () => {
+    // HAND_K0: region 3 (the sea) owns row 3, is the largest (10/16 = 62.5%),
+    // spans every column (row 3 alone covers all four), covers ≥ 35%, and
+    // touches all four borders. Every predicate holds, and one colour holds
+    // all five.
+    const core = measureStarStructuralCore(HAND_K0_COLOURS, 4)
+    expect(core).toEqual({
+      lineOwner: true,
+      largestRegion: true,
+      columnSpan: true,
+      boardCoverage: true,
+      borderTouches: true,
+      coreScore: 5,
+    })
+  })
+
+  it('evenly-cut 2x2 blocks own no structural predicate except the trivial tie', () => {
+    // Four colours, four cells each, in quadrant blocks: no whole line,
+    // every colour ties at the maximum count, two columns each, 25%
+    // coverage, two borders each. coreScore is 1 — only the largest-region
+    // tie survives.
+    const colours = grid([
+      [0, 0, 1, 1],
+      [0, 0, 1, 1],
+      [2, 2, 3, 3],
+      [2, 2, 3, 3],
+    ])
+    const core = measureStarStructuralCore(colours, 4)
+    expect(core.lineOwner).toBe(false)
+    expect(core.largestRegion).toBe(true)
+    expect(core.columnSpan).toBe(false)
+    expect(core.boardCoverage).toBe(false)
+    expect(core.borderTouches).toBe(false)
+    expect(core.coreScore).toBe(1)
+  })
+
+  it('coreScore is a per-colour max, not a conjunction of existentials', () => {
+    // Hand-checked n = 4 grid:
+    //   row 0: 0 0 0 1     colour 1 owns column 3 (line owner, 3 borders)
+    //   row 1: 0 0 2 1     colour 0: 6 cells = 37.5% coverage, largest,
+    //   row 2: 0 2 2 1       spans columns 0..2 (3 of 4 = n − 1), but owns
+    //   row 3: 3 3 3 1       no line and touches only top+left (2 borders)
+    //   colour 1: owns the column and touches top/bottom/right (3 borders),
+    //     but is not the largest, spans one column, covers 25%.
+    //   Every existential boolean is true (each via SOME colour), yet no
+    //   colour holds all five: colour 0 holds 3, colour 1 holds 2.
+    const colours = grid([
+      [0, 0, 0, 1],
+      [0, 0, 2, 1],
+      [0, 2, 2, 1],
+      [3, 3, 3, 1],
+    ])
+    const core = measureStarStructuralCore(colours, 4)
+    expect(core.lineOwner).toBe(true)
+    expect(core.largestRegion).toBe(true)
+    expect(core.columnSpan).toBe(true)
+    expect(core.boardCoverage).toBe(true)
+    expect(core.borderTouches).toBe(true)
+    expect(core.coreScore).toBe(3)
+  })
+
+  it('the k >= 1 hand fixtures: existential sea profile survives the walk at n = 4, not at the profile level', () => {
+    // K1/K2 are walked boards: the existential sea booleans all still hold
+    // (the strips+sea shape survives a single descent at this size), but K2
+    // already drops to coreScore 4 — no single colour holds the whole
+    // profile. KMINUS1 at n = 10 still scores 5. These pins travel with the
+    // identical assertions in signature.test.ts.
+    expect(measureStarStructuralCore(HAND_K1_COLOURS, 4).coreScore).toBe(5)
+    const k2 = measureStarStructuralCore(HAND_K2_COLOURS, 4)
+    expect(k2.coreScore).toBe(4)
+    expect(k2.lineOwner).toBe(true)
+    expect(measureStarStructuralCore(HAND_KMINUS1_COLOURS, 10).coreScore).toBe(5)
+  })
+
+  it('rejects invalid input loudly and never mutates it', () => {
+    expect(() => measureStarStructuralCore(new Uint8Array(3), 4)).toThrow(RangeError)
+    expect(() => measureStarStructuralCore(HAND_K0_COLOURS, 4.5)).toThrow(TypeError)
+    const snapshot = HAND_K0_COLOURS.slice()
+    measureStarStructuralCore(HAND_K0_COLOURS, 4)
+    expect([...HAND_K0_COLOURS]).toEqual([...snapshot])
   })
 })

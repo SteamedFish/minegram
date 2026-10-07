@@ -19,23 +19,21 @@
 import { describe, expect, it } from 'vitest'
 import { fingerprintStarCatalogue, solveStarCatalogue } from './catalogue'
 import { countStarSolutions } from './count'
+import {
+  HAND_K0_COLOURS,
+  HAND_K1_COLOURS,
+  HAND_K2_COLOURS,
+  HAND_KMINUS1_COLOURS,
+} from './fixtures/handBoards'
 import { measureMinimumBasis } from './minimumBasis'
 
 /**
- * k = 0 fixture: the n = 4 starter construction (singleton regions 0..2,
- * region 3 the sea), hand-traced:
- *
- *     row 0: 3 0 3 3     star (0,1) — region 0 singleton
- *     row 1: 3 3 3 1     star (1,3) — region 1 singleton
- *     row 2: 2 3 3 3     star (2,0) — region 2 singleton
- *     row 3: 3 3 3 3     star (3,2) — sea
- *
- * Base rules place every star by hidden singles alone (each singleton
- * region forces its only cell; the sea collapses once the three exclusions
- * land), so no confinement rule is needed: k = 0. The wave count (3) is
- * the starter tier's documented collapse depth at every side.
+ * The fixtures live in `./fixtures/handBoards.ts` so the signature and
+ * firstStarWave test lanes pin against the SAME arrays; each narrative
+ * below describes the board at its new shared name (the `HAND_` prefix is
+ * the only change).
  */
-const K0_COLOURS = new Uint8Array([3, 0, 3, 3, 3, 3, 3, 1, 2, 3, 3, 3, 3, 3, 3, 3])
+const K0_COLOURS = HAND_K0_COLOURS
 const K0_SOLUTION = [1, 3, 0, 2]
 
 /**
@@ -55,7 +53,7 @@ const K0_SOLUTION = [1, 3, 0, 2]
  * below is EMPTY (removing any one idea leaves the others, which still
  * solve), while the minimum basis is genuinely 1.
  */
-const K1_COLOURS = new Uint8Array([1, 1, 0, 0, 1, 3, 3, 3, 3, 3, 2, 2, 3, 3, 3, 3])
+const K1_COLOURS = HAND_K1_COLOURS
 
 /**
  * k = 2 fixture: n = 4 board from the same search. Subset table under the
@@ -72,7 +70,7 @@ const K1_COLOURS = new Uint8Array([1, 1, 0, 0, 1, 3, 3, 3, 3, 3, 2, 2, 3, 3, 3, 
  * matching engine the witness solve takes 4 waves (the capped zone engine
  * needed 5): matching derives strictly more per wave, so cascades shorten.
  */
-const K2_COLOURS = new Uint8Array([2, 0, 0, 1, 2, 2, 3, 1, 2, 3, 3, 1, 2, 2, 3, 3])
+const K2_COLOURS = HAND_K2_COLOURS
 
 /**
  * k = -1 fixture: n = 10 board from the seeded walk stream (walk seed
@@ -92,12 +90,7 @@ const K2_COLOURS = new Uint8Array([2, 0, 0, 1, 2, 2, 3, 1, 2, 3, 3, 1, 2, 2, 3, 
  * and the independent exact counter agrees the solution is unique. This is
  * the measured class of the second human reference board (n = 9).
  */
-const KMINUS1_COLOURS = new Uint8Array([
-  1, 1, 1, 1, 1, 1, 1, 9, 0, 0, 1, 9, 9, 9, 9, 9, 9, 9, 2, 9, 1, 9, 3, 3, 3, 3, 3, 9, 2, 9,
-  1, 3, 3, 5, 4, 3, 3, 9, 9, 9, 1, 9, 3, 5, 4, 4, 9, 9, 9, 9, 9, 9, 9, 5, 5, 6, 6, 6, 9, 9,
-  9, 7, 7, 7, 8, 6, 6, 9, 9, 9, 9, 7, 9, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 8, 8, 9, 9,
-  9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
-])
+const KMINUS1_COLOURS = HAND_KMINUS1_COLOURS
 const KMINUS1_SOLUTION = [9, 0, 8, 2, 5, 3, 6, 1, 7, 4]
 /** Stall table under the matching engine: subset bitmask (bit i = rule i of c1..c4) → stars placed. */
 const KMINUS1_STALL_TABLE: ReadonlyMap<number, number> = new Map([

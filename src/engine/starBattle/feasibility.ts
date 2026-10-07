@@ -108,13 +108,13 @@
  * for the session, and deduplicated against concurrent calls. Typical
  * cost: small sides resolve in well under a second; the pathological
  * cell (n ≥ 13 contradiction) spends the wall budget and reports thin
- * evidence. {@link isStarTierFeasible} is the synchronous read the
- * surface wraps: it kicks the measurement on first contact (lazy
- * warming), returns the optimistic answer (`true`) until the probe
- * resolves, and thereafter `true` only for `available`. Wall-clock
- * stopping makes the SAMPLED COUNT machine-dependent (which units fit
- * the budget); every completed unit is seeded and deterministic, and the
- * classification is a pure function of the units' outcomes.
+ * evidence. The UI's picker consumes the report through
+ * {@link readStarBattleTierFeasibility} (status-rich copy) and the store's
+ * {@link measureStarBattleTierFeasibility} call (lazy warming, deduplicated
+ * by the cache). Wall-clock stopping makes the SAMPLED COUNT
+ * machine-dependent (which units fit the budget); every completed unit is
+ * seeded and deterministic, and the classification is a pure function of
+ * the units' outcomes.
  *
  * Determinism and state. All randomness comes from a seeded stream
  * derived per side (never `Math.random()`). The module-level cache is
@@ -131,8 +131,10 @@ import {
   TECHNIQUE_TIER_TARGET,
   TECHNIQUE_TIER_WALL_CLOCK_MS,
   TECHNIQUE_WALK_ATTEMPTS,
+  TECHNIQUE_WALK_INPUT_MENU,
   StarShapeBudgetExhaustedError,
   generateStarBattle,
+  techniqueTierWalkInput,
   type StarDifficulty,
 } from './construct'
 import { measureMinimumBasis } from './minimumBasis'
@@ -354,6 +356,11 @@ async function probeBaseMeter(
   let expertHits = 0
   let samples = 0
   const startedAt = performance.now()
+  // The probe mirrors generation exactly ({@link TECHNIQUE_WALK_INPUT_MENU}
+  // doc): each sampled walk derives its input from (walk index + a phase
+  // the stream seed fixes), so the measured availability describes the
+  // shipped per-generation rotation, not a fixed steady-only stream.
+  const phase = rng.derive('walk-input-phase').nextInt(TECHNIQUE_WALK_INPUT_MENU.challenging.length)
 
   for (let i = 0; i < options.maxWalksPerMeter; i += 1) {
     if (performance.now() - startedAt >= options.probeWallClockMsPerMeter) {
@@ -361,11 +368,15 @@ async function probeBaseMeter(
     }
     samples += 1
     try {
+      // The probe walks the SAME input stream generation uses
+      // ({@link techniqueTierWalkInput}): the measured availability must
+      // describe the shipped generator, not a fixed steady-only stream.
+      const walkInput = techniqueTierWalkInput('challenging', i, phase)
       const walked = walkStarBattleBoard({
         n,
         seed: rng.derive(`base-walk-${i}`).seed,
-        seedDifficulty: 'steady',
-        meter: 'base',
+        seedDifficulty: walkInput.seedDifficulty,
+        meter: walkInput.meter,
         shape: STAR_TIER_SHAPE_GATE,
         wallClockMs: TECHNIQUE_TIER_WALL_CLOCK_MS,
       })
@@ -414,6 +425,11 @@ async function probeConfinementMeter(
   let hits = 0
   let samples = 0
   const startedAt = performance.now()
+  // Same phase contract as {@link probeBaseMeter}: the probe mirrors the
+  // shipped input stream, not a fixed steady-only one. (The contradiction
+  // menu is a singleton today, so the phase is always 0 — kept so a future
+  // menu change flows through here automatically.)
+  const phase = rng.derive('walk-input-phase').nextInt(TECHNIQUE_WALK_INPUT_MENU.contradiction.length)
 
   for (let i = 0; i < options.maxWalksPerMeter; i += 1) {
     if (performance.now() - startedAt >= options.probeWallClockMsPerMeter) {
@@ -421,11 +437,14 @@ async function probeConfinementMeter(
     }
     samples += 1
     try {
+      // Same rotation contract as {@link probeBaseMeter}: the probe mirrors
+      // the shipped input stream, not a fixed steady-only one.
+      const walkInput = techniqueTierWalkInput('contradiction', i, phase)
       walkStarBattleBoard({
         n,
         seed: rng.derive(`conf-walk-${i}`).seed,
-        seedDifficulty: 'steady',
-        meter: 'confinement',
+        seedDifficulty: walkInput.seedDifficulty,
+        meter: walkInput.meter,
         shape: STAR_TIER_SHAPE_GATE,
         wallClockMs: TECHNIQUE_TIER_WALL_CLOCK_MS,
       })
@@ -561,35 +580,13 @@ export function readStarBattleTierFeasibility(n: number, tier: StarDifficulty): 
 }
 
 /**
- * The boolean the surface wraps (`tierFeasibility: (side, tier) =>
- * boolean`). Answers `true` unless measurement has shown the cell NOT
- * `available`. On first contact for a side this KICKS OFF the probe
- * (lazy warming, fire-and-forget, deduplicated by the cache) and returns
- * the optimistic `true` — today's behaviour — until the probe resolves;
- * thereafter the measured answer. A cell the probe left `unmeasured`
- * (wall budget expired first) also reads `true`: thin evidence must not
- * silently disable a control.
+ * The old synchronous boolean (`isStarTierFeasible`) was deleted with its
+ * wrapping prop (`672413b`): no production caller remains, and
+ * `src/App.tsx` may not import engine values (`src/ui/layerBoundary.test.ts`).
+ * The status-rich reads above are the only UI surface.
+ *
+ * Reset the session cache. Test-only hook; production never calls this.
  */
-export function isStarTierFeasible(n: number, tier: StarDifficulty): boolean {
-  assertStarBattleSide(n)
-  if (!STAR_DIFFICULTIES.includes(tier)) {
-    throw new TypeError(`difficulty must be one of ${STAR_DIFFICULTIES.join(', ')}; received ${String(tier)}`)
-  }
-  const entry = cache.get(n)
-  if (entry === undefined) {
-    void measureStarBattleTierFeasibility(n).catch(() => {
-      // The rejection path already cleared the cache; the boolean read
-      // stays optimistic. Nothing actionable for a render-path caller.
-    })
-    return true
-  }
-  if (entry.state === 'done' && entry.report !== null) {
-    return entry.report[tier].status === 'available'
-  }
-  return true
-}
-
-/** Reset the session cache. Test-only hook; production never calls this. */
 export function clearStarBattleTierFeasibilityCache(): void {
   cache.clear()
 }
