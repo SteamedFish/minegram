@@ -91,6 +91,21 @@ describe('star battle Worker protocol', () => {
     })
   })
 
+  it('forwards the fallback flag when the engine fell back, and omits it otherwise', () => {
+    // Absence is the wire spelling of "not a fallback": an older worker, or
+    // a board from the main construction, sends no field, and the store
+    // reads absence as false. Only an explicit true travels.
+    const fallbackResponses = runHandler(() => ({ ...BOARD, fallback: true }))
+    expect(fallbackResponses[0]).toMatchObject({ type: 'star-generation/succeeded', fallback: true })
+
+    const normalResponses = runHandler(() => BOARD)
+    expect(normalResponses[0]).toMatchObject({ type: 'star-generation/succeeded' })
+    expect(normalResponses[0]).not.toHaveProperty('fallback')
+
+    const explicitFalseResponses = runHandler(() => ({ ...BOARD, fallback: false }))
+    expect(explicitFalseResponses[0]).not.toHaveProperty('fallback')
+  })
+
   it('reports a throwing generator as a worker-exception failure, never a board', () => {
     const generate = (): StarGeneratedBoard => {
       throw new Error('no certified board exists')
@@ -457,6 +472,25 @@ describe('isStarBattleWorkerResponse', () => {
         difficulty: 'expert',
       }),
     ).toBe(false)
+  })
+
+  it('accepts a missing or boolean fallback flag, and rejects a forged one', () => {
+    const base = {
+      type: 'star-generation/succeeded',
+      requestId: 1,
+      generationId: 1,
+      puzzle: PUZZLE,
+      waves: 2,
+      difficulty: 'expert',
+    }
+    // Absent — an older worker — reads as not-fallback on the store side.
+    expect(isStarBattleWorkerResponse({ ...base })).toBe(true)
+    expect(isStarBattleWorkerResponse({ ...base, fallback: true })).toBe(true)
+    expect(isStarBattleWorkerResponse({ ...base, fallback: false })).toBe(true)
+    // A corrupt or forged field must never become a fallback claim.
+    expect(isStarBattleWorkerResponse({ ...base, fallback: 'yes' })).toBe(false)
+    expect(isStarBattleWorkerResponse({ ...base, fallback: 1 })).toBe(false)
+    expect(isStarBattleWorkerResponse({ ...base, fallback: null })).toBe(false)
   })
 
   it('rejects progress messages: the terminal guard narrows the store to succeeded', () => {

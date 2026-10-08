@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   StarBattleSurface,
   STAR_DIFFICULTIES,
+  getStarCopy,
   type StarBattleSurfaceProps,
   type StarMark,
 } from './StarBattleSurface'
@@ -56,6 +57,7 @@ function defaults(): StarBattleSurfaceProps {
     mistakes: 0,
     streak: 0,
     difficulty: 'challenging',
+    fallback: false,
     side: N,
     minSide: 4,
     maxSide: 15,
@@ -775,14 +777,13 @@ describe('StarBattleSurface — tier descriptions', () => {
   // ("exactly one confinement technique", starter/steady as offerable tiers)
   // fails these strings, not a reviewer noticing.
   const EN: Record<(typeof STAR_DIFFICULTIES)[number], string> = {
-    challenging:
-      'One idea beyond the rules finishes it — and not the free one: no single colour owns a whole row or column to hand you the line.',
+    challenging: 'The basic rules stall on their own; one idea beyond them finishes the board.',
     expert: 'Two ideas beyond the rules are needed; either one alone is not enough.',
     contradiction:
       'No set of ideas suffices on its own; the board yields only to a proof by contradiction.',
   }
   const ZH: Record<(typeof STAR_DIFFICULTIES)[number], string> = {
-    challenging: '需要规则之外的一个想法才能解开——但不是白送的那种：不会有颜色独占整行或整列，把答案直接交到你手上。',
+    challenging: '只靠基本规则解不开，需要规则之外的一个想法才能完成。',
     expert: '需要规则之外的两个想法，只有一个不够。',
     contradiction: '任何技巧组合单独都不够，只能靠反证法解开。',
   }
@@ -805,12 +806,20 @@ describe('StarBattleSurface — tier descriptions', () => {
     }
   })
 
-  it("challenging's one idea is never the whole-line freebie", () => {
-    render({ difficulty: 'challenging' })
-    const challengingText =
-      container.querySelector('[data-testid="star-tier-description"]')?.textContent ?? ''
-    expect(challengingText).not.toMatch(/confinement|c1|c2/)
-    expect(challengingText).toContain('whole row or column')
+  it('no description promises a shape the generator does not gate', () => {
+    // The generator carries NO shape exclusions — hub regions, whole-line
+    // colours, dominant regions are all legal at every tier — so tier copy
+    // may only promise the technique count the grading enforces. This scans
+    // for the vocabulary of structural guarantees rather than pinning
+    // today's wording: a guarantee that reappears fails here, whatever
+    // sentence it hides in. (challenging's old whole-line clause is the
+    // regression this pins: it described a gate deleted with the walk
+    // generator.)
+    const SHAPE_CLAIM = /whole (row|column)|entire (row|column)|整行|整列|独占|白送|免费|freebie|confinement|\bc1\b|\bc2\b|hub/i
+    for (const tier of STAR_DIFFICULTIES) {
+      expect(EN[tier], `en ${tier} promises a shape`).not.toMatch(SHAPE_CLAIM)
+      expect(ZH[tier], `zh ${tier} promises a shape`).not.toMatch(SHAPE_CLAIM)
+    }
   })
 
   it('no description implies the technique rotates board to board', () => {
@@ -847,6 +856,43 @@ describe('StarBattleSurface — tier descriptions', () => {
       EN.challenging,
     )
     expect(container.querySelector('[data-testid="star-tier-note"]')?.textContent).toContain('2')
+  })
+})
+
+describe('StarBattleSurface — fallback board note', () => {
+  it('a board from the main construction shows no note', () => {
+    render({ fallback: false })
+    expect(container.querySelector('[data-testid="star-fallback-note"]')).toBeNull()
+  })
+
+  it('a fallback board states it once, inside the board card, in English', () => {
+    render({ fallback: true })
+    const note = container.querySelector('[data-testid="star-fallback-note"]')
+    expect(note).not.toBeNull()
+    expect(note?.textContent).toBe(getStarCopy('en').fallbackNote)
+    expect(note?.getAttribute('role')).toBe('note')
+    // The caption lives in the board card, above the grid — not in the
+    // toolbar, not a banner — so it never competes with the board itself.
+    expect(note?.closest('[data-testid="star-gridwrap"]')).not.toBeNull()
+    const grid = container.querySelector('[data-testid="star-grid"]')
+    expect(grid).not.toBeNull()
+    expect(
+      note !== null &&
+        grid !== null &&
+        (note.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+    ).toBe(true)
+  })
+
+  it('the fallback note is localised', () => {
+    render({ locale: 'zh', fallback: true })
+    expect(container.querySelector('[data-testid="star-fallback-note"]')?.textContent).toBe(
+      getStarCopy('zh').fallbackNote,
+    )
+  })
+
+  it('the fallback note never renders without a board', () => {
+    render({ puzzle: null, status: 'generating', fallback: true })
+    expect(container.querySelector('[data-testid="star-fallback-note"]')).toBeNull()
   })
 })
 

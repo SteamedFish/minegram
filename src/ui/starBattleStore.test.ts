@@ -294,6 +294,52 @@ describe('star battle store: generation', () => {
     expect(harness.snapshot().puzzle).toBe(PUZZLE_A)
     expect(harness.snapshot().lives).toBe(5)
     expect(harness.snapshot().maxLives).toBe(5)
+    // The succeed helper sends no fallback field: an older worker's plain
+    // board must read as not-fallback, never as a missing-claim ambiguity.
+    expect(harness.snapshot().fallback).toBe(false)
+  })
+
+  it('a fallback board carries fallback to the snapshot, and the next board clears it', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('star-fixture-a')
+    const first = lastRequest(harness.workers[0]!)
+    harness.workers[0]!.respond({
+      type: 'star-generation/succeeded',
+      requestId: first.requestId,
+      generationId: first.generationId,
+      puzzle: PUZZLE_A,
+      waves: 2,
+      difficulty: first.difficulty,
+      fallback: true,
+    })
+    expect(harness.snapshot().status).toBe('playing')
+    expect(harness.snapshot().fallback).toBe(true)
+
+    // The next launch starts clean; a non-fallback answer clears the flag
+    // with the same commit that installs the new board.
+    harness.store.actions.nextRound()
+    succeed(harness.workers[1]!, PUZZLE_B)
+    expect(harness.snapshot().puzzle).toBe(PUZZLE_B)
+    expect(harness.snapshot().fallback).toBe(false)
+  })
+
+  it('back to the picker clears the fallback flag with the board', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('star-fixture-a')
+    const first = lastRequest(harness.workers[0]!)
+    harness.workers[0]!.respond({
+      type: 'star-generation/succeeded',
+      requestId: first.requestId,
+      generationId: first.generationId,
+      puzzle: PUZZLE_A,
+      waves: 2,
+      difficulty: first.difficulty,
+      fallback: true,
+    })
+    expect(harness.snapshot().fallback).toBe(true)
+
+    harness.store.actions.backToPicker()
+    expect(harness.snapshot().fallback).toBe(false)
   })
 
   it('a difficulty change persists the tier and re-generates with the same seed', () => {

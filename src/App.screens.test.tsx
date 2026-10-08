@@ -44,6 +44,7 @@ function starSnapshot(overrides: Partial<StarBattleSnapshot> = {}): StarBattleSn
     mistakes: 0,
     streak: 0,
     difficulty: 'challenging',
+    fallback: false,
     side: DEFAULT_STAR_SIDE,
     failure: null,
     progress: null,

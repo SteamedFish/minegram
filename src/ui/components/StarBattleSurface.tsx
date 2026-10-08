@@ -168,6 +168,14 @@ export interface StarBattleSurfaceProps {
    */
   readonly progress?: StarGenerationProgress | null
   /**
+   * True when the live board came from the budget-expiry fallback
+   * construction: a certified board, printed differently. The surface says
+   * so with one quiet caption inside the board card — no badge in the
+   * toolbar, no banner — because the fact matters once per board and never
+   * changes how the round is played.
+   */
+  readonly fallback: boolean
+  /**
    * The measured per-tier availability at a given side; absent = every tier
    * is available, the behaviour before the signal existed. `unavailable` is
    * an unselectable pill with the honest note, `unreliable` is selectable
@@ -219,7 +227,11 @@ interface StarCopy {
    * The statements are tier contracts, not board promises: within a tier
    * the SHAPES vary, the solving idea does not (measured: three generator
    * mechanisms all landed on one technique per tier), so no description
-   * may imply the technique itself rotates board to board.
+   * may imply the technique itself rotates board to board. They may also
+   * promise nothing about SHAPE: the shipped generator carries no shape
+   * gates at all (hub, whole-line, dominant region — all legal), so a
+   * structural guarantee has no place here, only the technique count the
+   * grading actually enforces.
    */
   readonly difficultyDescriptions: Record<StarDifficulty, string>
   readonly size: {
@@ -320,6 +332,14 @@ interface StarCopy {
     readonly won: string
     readonly lost: string
   }
+  /**
+   * The quiet caption shown above a board that came from the budget-expiry
+   * fallback construction. It states why the layout looks different — the
+   * time budget ran out and the reserve construction printed the board —
+   * and that the board is fully valid. Not an error, not a warning, not a
+   * grade: a measured fact, said once, in the board card's own fine print.
+   */
+  readonly fallbackNote: string
 }
 
 const en: StarCopy = {
@@ -336,8 +356,12 @@ const en: StarCopy = {
     contradiction: 'Contradiction',
   },
   difficultyDescriptions: {
-    challenging:
-      'One idea beyond the rules finishes it — and not the free one: no single colour owns a whole row or column to hand you the line.',
+    // k = 1: the four basic rules stall, and exactly one technique beyond
+    // them finishes the board. No shape promise: the generator carries no
+    // shape gates, so whole-line colours and hubs are legal at any tier —
+    // the earlier "no colour owns a whole row or column" clause described a
+    // deleted gate and was false as a guarantee.
+    challenging: 'The basic rules stall on their own; one idea beyond them finishes the board.',
     expert: 'Two ideas beyond the rules are needed; either one alone is not enough.',
     contradiction: 'No set of ideas suffices on its own; the board yields only to a proof by contradiction.',
   },
@@ -416,6 +440,8 @@ const en: StarCopy = {
     won: 'Board complete',
     lost: 'Out of lives',
   },
+  fallbackNote:
+    'Printed by the reserve layout — generation used its whole time budget. The board is fully valid, with exactly one solution.',
 }
 
 const zhCN: StarCopy = {
@@ -435,7 +461,9 @@ const zhCN: StarCopy = {
     contradiction: '反证',
   },
   difficultyDescriptions: {
-    challenging: '需要规则之外的一个想法才能解开——但不是白送的那种：不会有颜色独占整行或整列，把答案直接交到你手上。',
+    // k = 1，与英文同约束：只承诺技巧数，不承诺形状。生成器没有任何形
+    // 状门槛，「不会有颜色独占整行或整列」描述的是已删除的门，已不成立。
+    challenging: '只靠基本规则解不开，需要规则之外的一个想法才能完成。',
     expert: '需要规则之外的两个想法，只有一个不够。',
     contradiction: '任何技巧组合单独都不够，只能靠反证法解开。',
   },
@@ -513,6 +541,8 @@ const zhCN: StarCopy = {
     won: '棋盘完成',
     lost: '生命耗尽',
   },
+  fallbackNote:
+    '这盘棋由备用布局生成——生成时间用满了预算。它完全合法，答案仍然唯一。',
 }
 
 export function getStarCopy(locale: 'en' | 'zh'): StarCopy {
@@ -1376,6 +1406,18 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
         </div>
       ) : (
         <div className="mg-star-gridwrap" data-testid="star-gridwrap">
+          {/* The fallback caption lives INSIDE the board card, above the
+              grid: it says why this board's layout differs, in the card's
+              own fine print. It is conditional content, but it can never
+              shift the grid's geometry — the card's inline size, which the
+              cell glyph measure reads (cqi), is set by the card's parent,
+              and the grid template is n × n regardless — and it appears in
+              the same commit as the board it describes. */}
+          {props.fallback ? (
+            <p className="mg-star-fallback-note" data-testid="star-fallback-note" role="note">
+              {copy.fallbackNote}
+            </p>
+          ) : null}
           <div
             className="mg-star-grid"
             ref={gridRef}

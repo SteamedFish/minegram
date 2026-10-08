@@ -66,6 +66,14 @@ export interface StarBattleSucceededMessage {
   readonly puzzle: StarBattlePuzzle
   readonly waves: number
   readonly difficulty: StarDifficulty
+  /**
+   * True when the board came from the budget-expiry fallback (the retired
+   * strips-and-sea construction) instead of the spanning-tree stream.
+   * Absent means "not a fallback" — an older worker, or a generator that
+   * never fell back, omits the field, and the store must read absence as
+   * false, never as a claim. Only ever `true` is sent.
+   */
+  readonly fallback?: boolean
 }
 
 export interface StarBattleFailedMessage {
@@ -280,6 +288,9 @@ export function mapStarGenerationResult(
     puzzle: result.puzzle,
     waves: result.waves,
     difficulty: result.difficulty,
+    // Only the true claim travels; absence reads as not-fallback on the
+    // store side, so there is one spelling of "no" on the wire.
+    ...(result.fallback === true ? { fallback: true } : {}),
   }
 }
 
@@ -414,7 +425,12 @@ export function isStarBattleWorkerResponse(value: unknown): value is StarBattleW
     } catch {
       return false
     }
-    return typeof value.waves === 'number' && Number.isSafeInteger(value.waves) && value.waves > 0
+    if (typeof value.waves !== 'number' || !Number.isSafeInteger(value.waves) || value.waves <= 0) {
+      return false
+    }
+    // Optional: absent reads as not-fallback; present must be a real boolean
+    // so a corrupt or forged field can never become a fallback claim.
+    return value.fallback === undefined || typeof value.fallback === 'boolean'
   }
   if (value.type === 'star-generation/failed') {
     return (

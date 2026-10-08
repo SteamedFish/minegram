@@ -147,6 +147,14 @@ export interface StarBattleSnapshot {
   readonly side: number
   readonly failure: GameFailureDiagnostics | null
   /**
+   * True while the live board came from the budget-expiry fallback (the
+   * retired strips-and-sea construction) rather than the spanning-tree
+   * stream. The board is fully certified — this exists so the surface can
+   * say quietly WHY the layout looks different, not to grade it. Cleared on
+   * every new launch; absent on the wire reads as false.
+   */
+  readonly fallback: boolean
+  /**
    * Per-tier availability at the current `side`, measured by the engine's
    * feasibility probe. Every cell starts `unmeasured` and a NEW snapshot is
    * published when the probe for the live side resolves — the measurement
@@ -462,6 +470,8 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
     options.difficulty ?? readPersistedDifficulty(storageKey)
   let failure: GameFailureDiagnostics | null = null
   let progress: StarBattleProgress | null = null
+  /** True when the live board came from the budget-expiry fallback construction. */
+  let boardFallback = false
   let version = 0
   let interlude: TimerHandle | null = null
   let active: ActiveStarRequest | null = null
@@ -499,6 +509,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       difficulty,
       side,
       failure,
+      fallback: boardFallback,
       tierAvailability: availabilityRecord(side),
       progress,
       version,
@@ -725,6 +736,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
     authoredSeed = seed
     failure = null
     progress = null
+    boardFallback = false
     const request: StarBattleRequestMessage = {
       type: 'star-generation/request',
       requestId,
@@ -847,6 +859,9 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       publish()
       return
     }
+    // The wire field is optional: only an explicit `true` is a fallback
+    // claim — absence from an older worker reads as not-fallback.
+    boardFallback = data.fallback === true
     // The round starts at the maximum lives captured when the request LAUNCHED:
     // a `setMaxLives` while this round was printing applies next time, exactly
     // as `setSide`'s persisted side applies to the next launch.
@@ -1081,6 +1096,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
         internalTeardown = false
       }
       failure = null
+      boardFallback = false
       state = createInitialStarBattleState({ maxLives })
       publish()
     },

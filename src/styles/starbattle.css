@@ -539,6 +539,20 @@
   touch-action: none;
 }
 
+/* A board from the budget-expiry fallback: one quiet caption above the
+   grid, in the card's own voice — the same small secondary ink as the
+   rules' fine print. It says why the layout differs and that the board is
+   fully valid: not an error, not a warning, not a grade. It sits inside
+   the gridwrap, which sizes cells off the card's inline size (cqi), so
+   the caption never touches grid geometry. */
+.mg-star-fallback-note {
+  margin: 0 0 var(--sp-2);
+  color: var(--ink-3);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  text-align: center;
+}
+
 .mg-star-row {
   display: grid;
   grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
