@@ -1,743 +1,499 @@
 /**
- * Star Battle constructive generator — connected-region construction.
+ * Star Battle puzzle construction — the spanning-tree generator.
  *
- * Player requirement (2026-10-07): 「同一颜色的格子组成的色块全部连续，
- * 不分裂」 — every colour's cells must form ONE 4-connected region. The
- * previous chain painting failed this on every measured board (0/40 fully
- * connected at every tier), because a horizontal strip with a hole at the
- * star column is two components whenever the star is interior. The
- * construction below was proved and machine-validated by the oracle lane;
- * the tests here pin its invariants instead of re-deriving it.
+ * THE CONSTRUCTION (four measurement lanes, all agreeing — this module is
+ * the critical path and the numbers below are the spec):
  *
- * === The construction (n >= 6) ===
+ *  1. Plant a uniformly random admissible star permutation (the intended
+ *     answer) — `admissibleStarPermutation` in `sample.ts`.
+ *  2. Grow a randomised DFS spanning tree over the grid's 4-neighbour
+ *     graph and cut n − 1 uniformly chosen tree edges, splitting the board
+ *     into exactly n connected components (`sample.ts`).
+ *  3. Reject the layout unless every component contains exactly one planted
+ *     star (the mine-balance filter). Measured acceptance: 1.11% at n = 6,
+ *     0.062% at n = 8, 0.012% at n = 10 — weak, but sampling is cheap.
+ *  4. Run counterexample-guided recolouring repair (`repair.ts`) until the
+ *     exact solution count is 1. Among balanced boards, uniqueness is 85%
+ *     at n = 4 and 0% from n = 6 up, so repair — not sampling — is the
+ *     only mechanism that produces a unique board at played sizes.
+ *  5. THE GATE IS EXACT UNIQUENESS: `countStarSolutions(colours, n, 2) === 1`.
+ *     The propagation certificate gate accepts ZERO boards at n = 8, 10 and
+ *     12 (measured) and is retired as an admission requirement — it is now
+ *     a difficulty signal inside the grade. A budget-exhausted count is a
+ *     rejection, never an acceptance (the project generation contract).
  *
- * Proof order σ is the identity: the star of region r is planted at
- * (r, T[r]) and painted colour r, where T is an admissible column
- * permutation (|T[r] - T[r+1]| ≥ 2) with {T[0], T[1]} = {0, n-1}.
- * Such a T exists for every n ≥ 6 and none for n = 4 or 5 (proven by
- * enumeration); it is drawn by rejection sampling from the seeded RNG.
+ * THE MEASURED STREAM (probe, this machine, 2026-10; the numbers the
+ * budgets and tier bands below are derived from; the four
+ * pre-implementation measurement lanes' figures reproduce where the
+ * mechanics match — balance rates and catalogue-solve rates agree within
+ * sample noise — and the one place they did NOT is recorded in repair.ts:
+ * the guided move set is the FULL planted-blank recolour space, not the
+ * counterexample-sourced subset):
  *
- * A strip set S ⊆ {1..n-2} is chosen per difficulty, and the board is
- * painted:
+ *     metric                  n = 6          n = 8          n = 10
+ *     mine-balance rate       1.07%          0.070%         0.0033%
+ *     repair conversion       100%           98%            ~80%
+ *     repair rounds p50       4              76             ~530
+ *     cost/accepted p50       3.6 ms         91 ms          ~5 s
+ *     cost/accepted p95       17 ms          0.36 s         ~33 s
+ *     base-solve share        8.3%           10%            0%
+ *     catalogue-depth0 share  92%            72%            61%
+ *     depth-1 cs solvable     100%           100%           100%
+ *     largest region          ≤ 51%          ≤ 60%          ≤ 50%
  *
- *     colour(r, T[r]) = r                                        (star)
- *     for s in S, row k = s - 1:
- *         for c in [min(T[k], T[s]) .. max(T[k], T[s])], c != T[k]:
- *             colour(k, c) = s                                   (strip)
- *     every unpainted cell: colour = n - 1                       (sea)
+ * (The pre-implementation lanes measured the same shape: balance
+ * 1.11%/0.062%/0.012%, base-solve 15.4%/13.3%/0%, depth-0 89/73/50%,
+ * depth-1 100% everywhere, largest region 22–51%. Their cost-per-accepted
+ * — 1.32 s / 8.0 s / 60 s — does not reproduce: their repair used the
+ * counterexample-sourced move set under a different scoring budget, and
+ * this implementation is 100–600× cheaper per accepted board at every
+ * size with the same grade distribution. Cheaper with the same
+ * distribution is not a defect.)
  *
- * Why uniqueness is FREE (this is the load-bearing property; do not trade
- * it away). A strip decoy (k, c) -> region s satisfies the validity rule
- * s ≥ min(pos[k], pos[s']) + 1 = min(k, s') + 1 for s' = rowOfColumn[c],
- * which is always true. A sea cell (r, c) -> n-1 satisfies
- * n-1 ≥ min(r, s') + 1 because c != T[r] forces s' ≠ r and two distinct
- * rows cannot both be n-1. Every colouring here obeys the validity rule
- * (any decoy may independently take any k in
- * [min(pos[r], pos[s]) + 1, n - 1] and uniqueness is invariant under that
- * choice — see the previous module doc for the induction), so compliance
- * under that rule is what certifies uniqueness by propagation. The
- * certificate is NOT weakened by the connectedness requirement.
+ * NEVER FAIL: generation carries a wall-clock budget (per-size defaults in
+ * {@link DEFAULT_GENERATION_BUDGET_MS}, overridable through
+ * {@link StarGenerationOptions.timeBudgetMs}). When the budget expires
+ * before an accepted board exists, generation falls back to the retired
+ * strips-and-sea painting (`paintFallbackConstructionBoard` below) — kept
+ * for exactly this purpose — certified by connectivity, the propagation
+ * certificate AND the exact counter at every size. The fallback is reported
+ * honestly on the board (`fallback: true`); it is a contract-preserving
+ * escape hatch, never the primary path.
  *
- * Why connectivity holds. Strip s is an interval containing column T[s],
- * so the star at (s, T[s]) attaches to it vertically at (s-1, T[s]) — one
- * component per stripped region. The sea is connected because every strip
- * row k ≥ 1 has both flanks nonempty under {T[0], T[1]} = {0, n-1} (left
- * flanks share column 0, right flanks share column n-1) and singleton rows
- * contribute full-rows-minus-star whose star holes are pairwise
- * non-adjacent by admissibility. The one trap the proof had to rule out —
- * region 2's strip disconnects when region 1 is a singleton and
- * T[2] ∈ {1, n-2} — is NOT trusted to the analysis: after painting, the
- * generator counts 4-connected components per region and REJECTS any board
- * that is not fully connected, then resamples. The structural check is the
- * safety net, required, not optional.
+ * DIFFICULTY TIERS are keyed on the catalogue depth (`measureMinimumBasis`
+ * k: how many confinement IDEAS a depth-0 solve needs, −1 = none suffice):
  *
- * === Difficulty tiers (redefined 2026-10-07, measured bands below) ===
+ *  - challenging— k = 1 (exactly one confinement idea finishes it)
+ *  - expert     — k = 2
+ *  - contradiction — k = −1 AND the depth-1 case-split certificate solves
+ *    it (only contradiction works; measured csDepth-1 solvability is 100%
+ *    at every played size, csTrials ≤ 55)
  *
- * Five tiers, two construction tiers solved by the base rules alone and
- * three technique tiers the base rules cannot touch:
+ * THE GAME SHIPS EXACTLY THESE THREE TIERS. The k = 0 (base-solvable)
+ * tiers `starter` and `steady` were measured to death and retired (player
+ * decision, 2026-10): the k = 0 pool is 8%/10%/0% of accepted boards at
+ * n = 6/8/10 — zero at n = 9–10, so both tiers were impossible at the
+ * largest sizes — and within the n = 8 pool only ~10% (3/30 measured)
+ * sat inside starter's shallow wave band, making starter fallback-dominated
+ * there (5/5 default-budget generations fell back). The mechanism is
+ * structural, not a tuning miss: a shallow board has many alternative
+ * solutions, the spanning-tree construction produces high-entropy
+ * colourings with large competitor sets, and repairing to uniqueness
+ * cannot produce a shallow board — uniqueness and shallowness are in
+ * tension inside this construction. Where a class is unreachable at a
+ * size that is a MEASURED FACT recorded in the feasibility module and the
+ * tests — the band is never widened to pretend otherwise, and the picker
+ * learns it through `feasibility.ts` rather than a generation that
+ * silently always falls back. The per-(side, tier) fallback rates and
+ * wall-clock percentiles re-derived after the retirement (30 generations
+ * per cell) live in the feasibility module doc; the challenging band at
+ * n = 6/8/10 is pinned in construct.test.ts. Boards with k = 0, k = 3, or
+ * k = −1 boards the case-split cannot solve belong to no tier and are
+ * rejected back to the stream.
  *
- * - starter:     S = ∅ — regions 0..n-2 are singletons, region n-1 is the
- *   absorber sea. Base rules solve it; collapses in 3 waves at every side.
- *   (Unchanged from the original three-tier scheme.)
- * - steady:      S = {1..n-2} — every possible strip; the deepest
- *   construction the theorem certifies. Base rules solve it. This IS the
- *   old 'challenging' behaviour and wave bands, moved down one step.
- * - challenging: base rules place ZERO stars, the minimum confinement basis
- *   ({@link measureMinimumBasis}) is exactly 1, AND that one idea is not the
- *   whole-line freebie — {@link techniqueTierAcceptsBasis} requires
- *   `rules ∩ {c1, c2} = ∅`, which is exact rather than a reporting artefact
- *   because a colour owning an entire line resolves that line for free, so the
- *   freebie would otherwise define this tier. Boards come from
- *   {@link walkStarBattleBoard} with rejection through the same predicate.
+ * DELETED WITH THE OLD CONSTRUCTION (precedent: drift.ts, commit f735a0f —
+ * a measured-but-unused module's record belongs in a surviving module doc
+ * and a commit message, never in a dormant file):
  *
- *   That class exists but DECAYS WITH SIDE, so this tier is a small-side one:
- *   per-walk acceptance is structurally all at n=4 (40/48), 18.8% at n=5, 4.2%
- *   at n=8, 0.8% at n=10 and 0/72 at n=15 — `unavailable` at n=6 and n>=9,
- *   including the default n=10, and `unreliable` at n=7-8. The matrix is NOT
- *   monotonic in side and must not be smoothed. `feasibility.ts` reports it and
- *   the picker words it honestly; nothing here or in the UI may promise this
- *   tier at a size the probe calls unavailable.
- * - expert:      base rules place ZERO stars, and the minimum confinement
- *   basis is exactly 2: no single technique suffices, some pair of ideas
- *   does. Rejection on k = 2 over the same walk stream.
- * - contradiction: the FULL depth-0 confinement catalogue (base + c1..c4)
- *   places ZERO stars — no pure-deduction subset can start the board
- *   (k = -1) — and the csDepth:1 certificate still solves it. Boards come
- *   from the walk with its easiness meter switched to 'confinement', so
- *   the descent stops only when every confinement technique together
- *   places nothing; the k = -1 target is then verified by the explicit
- *   16-subset enumeration inside {@link measureMinimumBasis}, never
- *   inferred from the certificate (the acceptance trap).
+ *  - `walk.ts` + `walk.test.ts` — the variety/attractor-ladder descent and
+ *    its input menus. Its only callers were this file's technique-tier
+ *    rejection loop and `feasibility.ts`'s probe, both replaced by the
+ *    sampler stream. The witness-concentration finding it encoded (no
+ *    sampler can vary the core technique of "base stalls AND one idea
+ *    finishes it"; only a contract change can) is exactly why the contract
+ *    changed — to the measured tier classes above.
+ *  - `signature.ts` + `signature.test.ts` — walk-endpoint signatures. Only
+ *    this file consumed them, as report-only data; the new generator ships
+ *    no signatures. This file inherits its drift.ts deletion record (see
+ *    below).
+ *  - `analyze.ts` + `analyze.test.ts` — the original commit's board
+ *    analyser, a strict duplicate of `propagate.ts`'s successor. Imported
+ *    by nothing except its own test since ddd9cc7; deleted per the repo's
+ *    rule against unreachable code.
+ *  - The `starter` and `steady` tiers + `STAR_STARTER_MAX_WAVES` +
+ *    `construct.test.ts`'s wave-split pins: the whole k = 0 band. Existed
+ *    only to serve base-solvable boards; measured impossible at n = 9–10
+ *    and fallback-dominated at n = 8 (see the tier section above for the
+ *    numbers and the mechanism), and the player ruled the game ships three
+ *    tiers. The tier predicate's `baseSolved`/`baseWaves` grade fields
+ *    died with them — `measureMinimumBasis` already reports k = 0 for
+ *    base-solvable boards, so no tier predicate ever needed a separate
+ *    base run.
+ *  - The hub-free shaping descent (`shapeSteadyColours`,
+ *    `resolveShapedSteadyColours`, `STAR_TIER_SHAPE_GATE`,
+ *    `StarShapeBudgetExhaustedError`, `StarTechniqueTierBudgetExhaustedError`)
+ *    and the structural shape gate in `structure.ts`
+ *    (`StarShapeGate`, `starShapeDefect`, `starShapeSatisfied`, the 40%
+ *    share cap, `measureStarStructuralCore`): all existed to rescue the
+ *    strips-and-sea shape (the sea hub, measured 91–94% largest region on
+ *    starter boards). The spanning-tree construction generates the
+ *    interesting shape naturally — measured largest region 22–51% at
+ *    n = 6–10 — and the player's ruling 「只要是合法的满足规则的棋局都要有概率被
+ *    我们构建出来才行」 retires structural gates outright: difficulty
+ *    measurement may reject, shape may not.
+ *  - `drift.ts` was deleted earlier (commit f735a0f, MCMC rejection drift,
+ *    measured useless); its record lived in signature.ts's module doc and
+ *    now lives here.
  *
- * Construction wave counts (frozen-state semantics, 2026-10-07, oracle
- * lane):
- *
- *     n     starter   steady
- *     8     3         11–15
- *     10    3         15–19
- *     12    3         17–23
- *     15    3         25–29
- *
- * (steady inherits the old challenging column). Technique tiers report the
- * FULL-CATALOGUE wave count of the accepted board, not a base count — the
- * base subset places nothing on them by definition.
- *
- * Measured in the walk stream (2026-10-07, seeds documented in
- * minimumBasis tests and construct tests), under the contracts then
- * shipped: k = 1 acceptance was ~75–92% and k = 2 ~8% at n = 15 (~12
- * walks median, worst observed 18). THE CHALLENGING NUMBERS MOVED with
- * the 2026-10-07 re-tier (see {@link techniqueTierAcceptsBasis}): the
- * tier no longer accepts the {c1} witness, so its per-walk acceptance is
- * the non-freebie k = 1 rate recorded below, and the tier is
- * correspondingly rarer — the honest availability lives in
- * {@link ./feasibility.ts}, never in a claim here. k = -1 boards (no
- * confinement subset solves; see minimumBasis.ts) DO occur in the
- * stream — measured at n = 8, 10 — and are rejected by both k-targeted
- * technique tiers; the 'contradiction' tier targets exactly them. At n =
- * 4 no k = 2 board was observed in 40 walks, so expert at n = 4 honestly
- * exhausts its budget and throws {@link StarTechniqueTierBudgetExhaustedError}
- * instead of returning an off-target board.
- *
- * Walk wall-clock (measured, load-bearing for the budgets below): median
- * ~55 ms at n = 10, ~562 ms at n = 15 (max observed 1,586 ms) — tens of
- * milliseconds at small n only. A single technique-tier generation is
- * therefore ~12 walks ≈ 7 s median for expert at n = 15. Budgets:
- * {@link TECHNIQUE_WALK_ATTEMPTS} walks or
- * {@link TECHNIQUE_TIER_WALL_CLOCK_MS} wall-clock, whichever first;
- * exceeding either throws the typed error. Wall clock gates only when the
- * search gives up, never which board is accepted, so determinism holds.
- *
- * k alone is not the whole difficulty axis (third human reference board,
- * n = 10, rated 非常有趣: also minBasis = 1, witness c2, but the witness
- * solve takes 13 waves where generated k = 1 boards take ~4–6). The
- * measurement tests therefore report WAVES AT THE MINIMAL BASIS alongside
- * acceptance and wall-clock, per tier and side; a future tuning pass that
- * wants "deep k = 1" boards has the signal ready.
- *
- * KNOWN LIMITATION 1 is RESOLVED by the redefinition: the old n = 6–8
- * steady/challenging strip-set coincidence disappeared because steady now
- * takes the full strip set and challenging no longer reads a strip set at
- * all.
- *
- * === The n = 4, 5 fallback ===
- *
- * No admissible T with {T[0], T[1]} = {0, n-1} exists there (only 2
- * admissible permutations exist at n = 4, 14 at n = 5). A measured
- * rejection-sampling fallback over uniformly-random compliant assignments
- * was tried first and is nearly always disconnected (7/2000 connected at
- * n = 4, 0/2000 at n = 5) — it cannot fill the attempt budget, so the
- * fallback paints a STRUCTURED compliant assignment instead: region k is
- * a domino {star (k, T[k]), one adjacent decoy} whose decoy sits in a
- * column owned by an EARLIER star (parent p < k, region k ≥ min(p, k) + 1
- * = p + 1 ≤ k — compliant) or directly above the star (parent k - 1,
- * blanked by m_{k-1}'s row exclusion — also compliant). Every region is
- * a connected domino by construction; the sea is checked by the same
- * structural flood fill and rejected boards resample. starter paints no
- * decoys (every region a singleton, 3 waves).
- *
- * Measured over every admissible T at n = 4 and 2000 random samples at
- * n = 5: uniqueness 100% (exact counter agrees on every board), sea
- * connectivity 100% at n = 4 (deep shape) / ≈ 69% at n = 5, waves {3, 5}
- * at n = 4 and {5, 7} at n = 5. The exact counter stays in the acceptance
- * path for n ≤ 5 as belt and braces.
- *
- * KNOWN LIMITATION 2 (pre-existing, record do not fix): at n = 4 only
- * wave counts {3, 5} exist, so steady's floor max(6, n + 2) is
- * mathematically unreachable; the global floor min(5, n + 1) still passes.
- * (The limitation moved with the bands from challenging to steady.)
- *
- * === The hub-free shaping stage (2026-10-07) ===
- *
- * Player requirement (measured, see structure.ts module doc): the human's
- * favourite boards have NO hub region (a region adjacent to every other)
- * and a largest region of 25–40%; our strips+sea boards have the sea as a
- * hub at every size and tier, with the largest region at 39–94%. The sea
- * hub is a CONSTRUCTION fact, not a rules fact, so it is designed away:
- *
- *  - steady (n >= 6): after the painted winner is chosen, a SHAPING descent
- *    repaints non-solution cells (connectivity-safe single recolours to a
- *    neighbour's colour) while the production base solver still fully
- *    solves the board and its wave count stays no shallower than the
- *    painted winner and no deeper than the band ceiling. Accepted
- *    mutations may not increase the scalarised shape defect (hub count +
- *    largest-share excess over 0.4; sideways drift allowed); the descent
- *    stops at defect 0 — no hub, largest region <= 40%. Measured
- *    (2026-10-07, production streams, 20 seeds per side): 0/220 give-ups
- *    at n = 6..15, worst share exactly 0.40, wall-clock in the
- *    milliseconds (pre-implementation probe: every n = 5..15 x 3 seeds
- *    reached defect 0 in <= ~1,800 attempts and <= 14 ms); the budgets
- *    below give an order of magnitude of headroom. Shaped boards leave the
- *    validity-rule basin BY DESIGN (that is what makes them structurally
- *    different); their uniqueness certificate is the propagation solve
- *    itself, re-run with the exact counter for n <= 5, and the output
- *    passes BOTH connectivity nets (this file's flood fill and
- *    structure.ts's union-find).
- *  - steady at n = 4 and n = 5: NOT shaped. n = 4 measured 0/3 within
- *    budget pre-implementation (too little room for four non-trivial
- *    regions); n = 5 plateaus on a measurable share of seeds (3/20
- *    production-stream give-ups, best defect stuck at hub=1) — and a
- *    construction tier that throws is a never-fails contract break, while
- *    returning a hub board on give-up is forbidden by the generation
- *    contract, so the small sides keep the painted board. Recorded, not
- *    "fixed".
- *  - starter: NOT shaped. Its contract is the 3-wave collapse with S = ∅,
- *    and a hub-free <= 40% board needs non-trivial regions that raise the
- *    waves — measured incompatible at n = 15 (0/3 within budget, best
- *    defect 0.004–0.093 against a target of 0). The starter painting is
- *    deliberate (project rules: the singleton-in-a-sea read IS that tier),
- *    so it keeps its sea hub. Technique tiers get the shape gate through
- *    the walk instead (see below), so every tier except starter and the
- *    two smallest steady sides now certifies hub-free.
- *  - technique tiers ('challenging', 'expert', 'contradiction'): the walk
- *    request carries `{@link StarShapeGate}` ({ noHub, maxLargestRegionShare:
- *    0.4 }); the walk descends to meter 0 AND defect 0 before returning
- *    (walk.ts module doc — measured level-0 tail median ~35 accepted
- *    mutations at n = 10, ~69 at n = 15). Acceptance here re-verifies the
- *    gate with this module's own instruments as gate (e).
- *
- * Give-up semantics (generation contract, CHANGED 2026-10-07 per the
- * player's ruling 「偶尔小概率出现而不是一直出现，没关系，只要合法，不用刻意排除」):
- * a shaping search that exhausts its attempt or wall-clock budget used to
- * throw {@link StarShapeBudgetExhaustedError} and fail the whole
- * generation — a generation failure being a WORSE outcome than a legal
- * but boring board, which is exactly backwards from the ruling. The
- * caller now CATCHES the error, ships the painted (unshaped) board, and
- * records the miss as {@link StarGeneratedBoard.shapeAudit} — an audit
- * field, not a rejection. The shaping itself stays: it is cheap and it
- * is what delivers structural variety (hubs went 6/6 → 0/6 on it). Wall
- * clock gates only when the search gives up, never which board is
- * accepted, so determinism holds either way.
- *
- * Acceptance: a board is accepted only if it is fully connected AND
- * {@link propagateStarBoard} solves it (all n stars placed). For n ≤ 5
- * the exact counter must additionally agree the solution is unique. The
- * theorem guarantees propagation for every validity-rule-compliant
- * colouring, so generation can NEVER fail for a supported side; a failed
- * certificate or counter on an accepted-shape board is an internal
- * invariant violation and throws, never a player-facing failure.
+ * DETERMINISM: every random draw comes from the seeded RNG in a fixed
+ * order (`rng.derive('candidate-<i>')` per sampled layout), so same
+ * (n, seed, difficulty) ⇒ byte-identical board — with ONE documented
+ * exception: when the wall-clock budget expires, WHICH candidate index the
+ * stream reached is timing-dependent, so a fallback board is not
+ * seed-reproducible. Wall clock gates only when the search gives up, never
+ * which board is accepted.
  */
+
 import {
   assertStarBattlePuzzle,
   assertStarBattleSide,
   type StarBattlePuzzle,
 } from '../../domain/starBattle'
 import { createSeededRandom, type SeededRandom } from '../rng'
-import { solveStarCatalogue } from './catalogue'
 import { countStarSolutions } from './count'
-import { measureMinimumBasis, type StarConfinementRule, type StarMinimumBasis } from './minimumBasis'
 import { propagateStarBoard } from './propagate'
-import { measureStarBoardSignature, type StarBoardSignature } from './signature'
-import {
-  STAR_SHAPE_MAX_LARGEST_REGION_SHARE,
-  measureStarBoardStructure,
-  regionStaysConnectedWithout,
-  starShapeDefect,
-  starShapeSatisfied,
-  type StarShapeGate,
-} from './structure'
-import { StarWalkBudgetExhaustedError, walkStarBattleBoard } from './walk'
+import { solveStarCatalogue } from './catalogue'
+import { measureMinimumBasis } from './minimumBasis'
+import { measureStarBoardStructure } from './structure'
+import { admissibleStarPermutation, sampleStarBattleLayout } from './sample'
+import { repairStarBattleLayout } from './repair'
 
-/**
- * The five difficulty tiers. 'starter' and 'steady' are CONSTRUCTION
- * tiers: the painted board itself obeys the validity rule and the base
- * rules solve it — 'starter' is the shallow 3-wave collapse, 'steady'
- * the deep (13–22 wave) long-but-routine band; steady is an honest
- * depth tier, not a technique tier. 'challenging', 'expert' and
- * 'contradiction' are TECHNIQUE tiers: the board is found by descent
- * ({@link walkStarBattleBoard}) and the base rules place nothing on it;
- * what separates them is the minimum confinement basis
- * ({@link measureMinimumBasis}) under the FULL tier contracts
- * ({@link techniqueTierAcceptsBasis}): 'challenging' is k = 1 whose
- * witness is NOT line confinement (the {c1}/{c2} whole-line freebie —
- * measured to be the entire old class), 'expert' is k = 2, and
- * 'contradiction' is k = -1 (no pure-deduction subset solves; the board
- * requires contradiction).
- */
-export type StarDifficulty =
-  | 'starter'
-  | 'steady'
-  | 'challenging'
-  | 'expert'
-  | 'contradiction'
+export { admissibleStarPermutation }
+
+/** The difficulty tiers, in progression order. */
+export type StarDifficulty = 'challenging' | 'expert' | 'contradiction'
 
 /** All tiers in progression order. */
-export const STAR_DIFFICULTIES: readonly StarDifficulty[] = [
-  'starter',
-  'steady',
-  'challenging',
-  'expert',
-  'contradiction',
-]
-
-/** The construction tiers: solved by the base rules alone, painted directly. */
-export type StarConstructionDifficulty = 'starter' | 'steady'
-
-/**
- * The technique tiers: descended, then rejection-sampled on the basis k.
- * Exported for {@link ./feasibility.ts}, which measures per-(side, tier)
- * generatability against exactly these targets and budgets.
- */
-export type StarTechniqueDifficulty = 'challenging' | 'expert' | 'contradiction'
-
-/** True for the technique tiers ('challenging' | 'expert' | 'contradiction'). */
-function isTechniqueTier(difficulty: StarDifficulty): difficulty is StarTechniqueDifficulty {
-  return (
-    difficulty === 'challenging' ||
-    difficulty === 'expert' ||
-    difficulty === 'contradiction'
-  )
-}
+export const STAR_DIFFICULTIES: readonly StarDifficulty[] = ['challenging', 'expert', 'contradiction']
 
 export interface StarGenerationRequest {
   readonly n: number
   readonly seed: number
   readonly difficulty: StarDifficulty
-  /**
-   * Construction tiers only: false yields the PRE-SHAPING painted board.
-   * The variety walk seeds its descent from that painting — the historical
-   * difficulty stream (acceptance rates, k distribution) was measured on
-   * painted seeds, and the walk's own shape gate shapes the ENDPOINT, so
-   * seeding from a shaped board would re-roll those measurements for no
-   * gain. The product path (generateStarBattle callers) never disables
-   * shaping. Ignored for starter (never shaped) and technique tiers.
-   * Default true.
-   */
-  readonly shaping?: boolean
 }
 
 export interface StarGeneratedBoard {
   readonly puzzle: StarBattlePuzzle
   /**
-   * The measured wave count of the accepted board — the depth metric. For
-   * the construction tiers this is the BASE solver's wave count; for the
-   * technique tiers the base solver places nothing, so it is the full-
-   * catalogue (base + confinement + case-splitting) wave count.
+   * The measured wave count of the accepted board — the depth metric. It
+   * is the minimum-basis witness run's waves for k ≥ 1 (challenging/
+   * expert) and the depth-1 case-split run's waves for k = −1
+   * (contradiction).
    */
   readonly waves: number
   readonly difficulty: StarDifficulty
   /**
-   * Case-split passes and assumption trials the accepting certificate
-   * used. ABSENT for the construction tiers (their acceptance is the base
-   * propagation certificate — no case-splitting runs). Reported, with the
-   * full measured distribution, for the technique tiers; the
-   * 'contradiction' tier's boards are exactly the k = -1 class, so these
-   * two numbers are the honest cost meter of "requires contradiction".
+   * Case-split passes and assumption trials the contradiction certificate
+   * used. Absent on every other tier (no case-splitting runs there).
    */
   readonly csPasses?: number
   readonly csTrials?: number
   /**
-   * The measured board signature (signature.ts), computed on the ACCEPTED
-   * board after every gate passed. Present for the technique tiers, absent
-   * for the construction tiers (whose boards are painted, not walked).
-   * Measurement only: the signature never feeds back into the descent —
-   * the attractor-ladder finding in signature.ts is why an acceptance
-   * predicate on it would be dead code.
+   * True when this board came from the budget-expiry fallback (the retired
+   * strips-and-sea painting) rather than the spanning-tree stream. The
+   * fallback satisfies the full generation contract — connectivity, an
+   * independent uniqueness proof, valid planted solution — but its shape
+   * is the old construction's, and honesty about that is cheaper than
+   * hiding it.
    */
-  readonly signature?: StarBoardSignature
+  readonly fallback?: boolean
+}
+
+/**
+ * The phases the generation stream moves through. `sampling` covers the
+ * mine-balance filter, `repairing` the guided recolouring rounds, and
+ * `grading` the catalogue-depth measurement and tier match.
+ */
+export type StarGenerationPhase = 'sampling' | 'repairing' | 'grading'
+
+/**
+ * A progress snapshot. `candidates` is a TRUTHFUL count of sampled layouts
+ * actually examined (balance-rejected, repair-abandoned and
+ * grade-rejected layouts all count — the surface shows "candidates
+ * tried"). No percentage and no invented denominator is ever reported.
+ */
+export interface StarGenerationProgress {
+  readonly candidates: number
+  readonly accepted: number
+  readonly phase: StarGenerationPhase
+}
+
+export interface StarGenerationOptions {
   /**
-   * Construction tiers only: the hub-free shape gate's audit on the
-   * SHIPPED board. `gateMet: true` — the shaping descent reached defect 0
-   * (no hub, largest region ≤ 40%). `gateMet: false` — either shaping was
-   * never attempted by design (starter; steady at n = 4, 5) or the
-   * descent exhausted its budget and generation FELL BACK to the painted
-   * board (player ruling, 2026-10-07: 「偶尔小概率出现…没关系，只要合法，不用刻意
-   * 排除」 — a legal-but-unshaped board ships with the gate honestly
-   * reported, never a generation failure). Technique tiers carry no
-   * `shapeAudit`: their shape gate is acceptance gate (e), re-verified on
-   * every accepted board.
+   * Optional progress listener. Called on every phase change and on every
+   * examined candidate. A listener that THROWS is swallowed (and
+   * generation continues): progress reporting is a courtesy to the
+   * surface, never a way to corrupt or abort a generation — a broken
+   * listener degrades the progress display, not the puzzle.
    */
-  readonly shapeAudit?: { readonly gateMet: boolean }
+  readonly onProgress?: (progress: StarGenerationProgress) => void
+  /**
+   * Wall-clock budget for the whole generation call, in milliseconds. On
+   * expiry the budget-preserving fallback board is returned. Defaults to
+   * {@link DEFAULT_GENERATION_BUDGET_MS} for the requested side.
+   */
+  readonly timeBudgetMs?: number
 }
 
 /**
- * Attempts per construction-tier generation call. Steady searches T-space
- * for the maximum measured wave count (it inherited the old challenging
- * contract); starter only needs enough samples to land inside its band.
- * Every accepted board is valid and unique regardless, so the budget
- * trades quality of fit against wall-clock, never against correctness.
- * Technique tiers budget WALKS instead; see {@link TECHNIQUE_WALK_ATTEMPTS}.
+ * Per-side default generation budgets, chosen from the measured cost per
+ * accepted board (probe, this machine, 2026-10 — the module doc's stream
+ * table): p50/p95 ≈ 3.6 ms / 17 ms at n = 6, ≈ 91 ms / 0.36 s at n = 8,
+ * ≈ 5 s / 33 s at n = 10. The player has approved a 16 s default
+ * experience and knows n = 10 is slower: n ≤ 8 stay inside ~15 s (hundreds
+ * to thousands of × the p50 — the fallback is a tail event, not the mode)
+ * and n ≥ 9 inside ~90 s (≈ 3× the n = 10 p95), so the worst case is
+ * bounded and generation NEVER exceeds the approved envelope.
  */
-const ATTEMPTS: Readonly<Record<StarConstructionDifficulty, number>> = {
-  starter: 8,
-  steady: 48,
-}
-
-/**
- * Technique-tier budgets: the maximum number of descent walks per
- * generation call, and the maximum wall-clock for the whole rejection
- * loop. Measured against the walk stream (module doc): k = 2 acceptance is
- * ~8% at n = 15, so 48 walks keep the give-up probability under ~2% while
- * the 30 s wall clock bounds the worst case at large sides. Exceeding
- * either throws {@link StarTechniqueTierBudgetExhaustedError}; a search
- * that ran out of budget NEVER returns an off-target board.
- *
- * Exported for {@link ./feasibility.ts}: the per-generation success model
- * `1 - (1 - p)^walkAttempts` must track the shipped budget, never a copy.
- */
-export const TECHNIQUE_WALK_ATTEMPTS = 48
-export const TECHNIQUE_TIER_WALL_CLOCK_MS = 30_000
-
-/**
- * The minimum-basis k every technique tier targets: 'challenging' boards
- * need exactly one confinement technique idea, 'expert' boards need exactly
- * two, 'contradiction' boards need none to suffice (k = -1: only
- * case-splitting solves them). Exported for {@link ./feasibility.ts}: the
- * feasibility probe rejection-samples the walk stream on exactly these
- * targets, so a redefinition of a tier retunes the probe automatically.
- *
- * The k target is NOT the whole contract for 'challenging' — see
- * {@link techniqueTierAcceptsBasis}: the tier additionally constrains the
- * WITNESS identity. k alone is why every one-idea board shipped as the
- * {c1} freebie (measured class-modal share 1.000 at n = 10 and n = 15,
- * twice, by two independent samplers).
- */
-export const TECHNIQUE_TIER_TARGET: Readonly<Record<StarTechniqueDifficulty, number>> = {
-  challenging: 1,
-  expert: 2,
-  contradiction: -1,
-}
-
-/**
- * Whether a measured minimum basis satisfies the tier's FULL contract.
- * For 'expert' and 'contradiction' this is the k target alone; for
- * 'challenging' it additionally requires the witness to NOT be line
- * confinement (neither `c1` nor `c2` — one idea under two labels,
- * minimumBasis.ts).
- *
- * WHY the witness constraint exists (measured, 2026-10-07, two
- * independent samplers agreeing): under the old "k = 1 and base stalls"
- * contract, challenging's (k, witness) class-modal share measured 1.000
- * ({c1}) at n = 10 and n = 15 under seed-tier rotation (`fcab9d1`) AND
- * under MCMC rejection drift (`f735a0f`). The concentration is a property
- * of the conditional puzzle-class space — "base-stall boards solvable by
- * exactly one idea" are almost always whole-line freebie boards, because
- * at the base-stall bottom only line confinement revives propagation —
- * not a generator artifact a sampler can diversify away. Three mechanisms
- * failed to move it (rotation, drift, both together; checkpoint legs from
- * {c1}, {c3} and sea starts each leave their basin within one leg). The
- * contract therefore changed: 'challenging' is k = 1 whose solving idea
- * is genuinely different — box confinement (c3) or shadow (c4). Under
- * the canonical witness choice (first solving subset of minimal idea
- * count, minimumBasis.ts) `rules ∩ {c1, c2} = ∅` is exact: had any
- * single line-confinement subset solved, canonical order would have
- * reported IT as the witness.
- *
- * Consequence, measured and recorded in this module's doc: the tier is
- * rarer than the old k = 1 contract (the freebie was the generic
- * one-idea class). The feasibility probe reports the honest per-(side,
- * tier) availability; a side where no non-freebie k = 1 board was found
- * within the probe budget reads `unavailable` there.
- */
-export function techniqueTierAcceptsBasis(
-  difficulty: StarTechniqueDifficulty,
-  basis: Pick<StarMinimumBasis, 'k' | 'rules'>,
-): boolean {
-  if (basis.k !== TECHNIQUE_TIER_TARGET[difficulty]) {
-    return false
-  }
-  if (difficulty !== 'challenging') {
-    return true
-  }
-  return !basis.rules.includes('c1') && !basis.rules.includes('c2')
-}
-
-/**
- * The shape gate every tier except starter certifies: no hub region and
- * the largest region capped at 40% — the measured structural signature of
- * the boards the human enjoys (structure.ts module doc). Exported for
- * {@link ./feasibility.ts}: the probe walks with the gate generation
- * actually uses, so a change to the shipped gate (or its retirement, per
- * the 2026-10-07 ruling that shape is not a gate) retargets the probe
- * through this single export.
- */
-export const STAR_TIER_SHAPE_GATE: StarShapeGate = Object.freeze({
-  noHub: true,
-  maxLargestRegionShare: STAR_SHAPE_MAX_LARGEST_REGION_SHARE,
-})
-
-/**
- * One walk's inputs in the technique-tier rejection loop: which
- * construction tier seeds the descent, and which easiness meter the descent
- * minimises (walk.ts).
- */
-export interface StarTechniqueWalkInput {
-  readonly seedDifficulty: StarConstructionDifficulty
-  readonly meter: 'base' | 'confinement'
-}
-
-/**
- * The per-tier menu of walk inputs, rotated deterministically by walk
- * index. WHY (measured, 2026-10-07 — the attractor-ladder finding recorded
- * in signature.ts): the descent under one fixed input is an attractor
- * ladder — at the base-stall bottom only c1 revives propagation, so every
- * steady-seeded walk ends at witness {c1} and the tier ships one puzzle
- * forever. No acceptance predicate can fix that (rejecting the attractor
- * rejects 100% of reachable endpoints); the diversity has to enter at the
- * INPUTS, and this menu is where it enters.
- *
- * The menu is the (seedDifficulty × meter) product RESTRICTED to pairs that
- * can produce the tier's target: a 'confinement'-meter walk's endpoint is
- * ALWAYS k = -1 (the full depth-0 catalogue placed nothing), so for
- * 'challenging'/'expert' the meter stays 'base' — a confinement entry could
- * never hit target 1 or 2 and would be guaranteed-reject waste halving the
- * effective walk budget. For 'contradiction' the meter stays 'confinement':
- * it is the tier's own meter, and a 'base' entry would both rarely hit k =
- * -1 and dilute the feasibility probe's per-walk success signal the UI's
- * picker reads. The rotated dimension that carries the measured diversity
- * is the SEED: starter-seeded walks under the production gate reach witness
- * {c3}, {c1}, {c1,c3} and {c1,c4} at k = 1 (the reference-game class)
- * where steady-seeded walks reach only {c1}. Different inputs terminate at
- * provably different fixed points; the rotation visits them in turn.
- *
- * Exported for {@link ./feasibility.ts}: the probe must walk the SAME input
- * stream generation uses, or the measured availability no longer describes
- * the shipped generator. Determinism: the input is a pure function of
- * (difficulty, walk index, phase), and the phase derives from the request
- * seed — same (n, seed, tier) ⇒ same input sequence ⇒ same board.
- *
- * WHY THE PHASE (measured, 2026-10-07): rotating by walk index ALONE is a
- * no-op for tiers whose first walk usually succeeds — the rejection loop
- * stops at the first accepted walk, so walks 1..47 never run and the
- * rotation never engages (measured: challenging BEFORE/AFTER byte-identical
- * over 8 generations). The diversity therefore has to phase by GENERATION:
- * each request seed deterministically picks which menu entry walk 0 starts
- * from, and the walk index rotates from there. That is the product-scale
- * version of what the study measured walk-by-walk: starter-SEEDED walks
- * reach witnesses {c3}, {c1}, {c1,c3}, {c1,c4} at k = 1 where steady-seeded
- * walks reach only {c1}; phasing by seed makes a tier's GENERATIONS sample
- * those basins in turn.
- *
- * WHY CONTRADICTION IS A SINGLETON MENU: a k = -1 board's witness is EMPTY
- * BY DEFINITION, so puzzle-class diversity is structurally impossible for
- * the tier — every accepted board is the class (-1, ∅) no matter the seed.
- * Rotating starter in anyway was measured to only burn budget (the walk
- * wall clock) for zero class gain: 8 generations went 80 s → 126 s with a
- * give-up appearing. Per the brief, contradiction's cost profile is left
- * exactly as shipped.
- */
-export const TECHNIQUE_WALK_INPUT_MENU: Readonly<
-  Record<StarTechniqueDifficulty, readonly StarTechniqueWalkInput[]>
-> = Object.freeze({
-  challenging: Object.freeze([
-    Object.freeze({ seedDifficulty: 'steady', meter: 'base' }),
-    Object.freeze({ seedDifficulty: 'starter', meter: 'base' }),
-  ]),
-  expert: Object.freeze([
-    Object.freeze({ seedDifficulty: 'steady', meter: 'base' }),
-    Object.freeze({ seedDifficulty: 'starter', meter: 'base' }),
-  ]),
-  contradiction: Object.freeze([
-    Object.freeze({ seedDifficulty: 'steady', meter: 'confinement' }),
-  ]),
-})
-
-/**
- * The walk input a given tier uses at walk index `walk`, rotated from
- * `phase` (the per-generation entry the request seed picks). Pure and
- * deterministic; negative totals are normalised so the function is total.
- * With the default phase 0 this is the plain round-robin — the rotation
- * tests pin both.
- */
-export function techniqueTierWalkInput(
-  difficulty: StarTechniqueDifficulty,
-  walk: number,
-  phase: number = 0,
-): StarTechniqueWalkInput {
-  const menu = TECHNIQUE_WALK_INPUT_MENU[difficulty]
-  const index = (((walk + phase) % menu.length) + menu.length) % menu.length
-  return menu[index]
-}
-
-/**
- * Shaping budgets (steady, n >= 6): the maximum recolour attempts and
- * wall-clock for the hub-free descent. Measured need is <= ~1,800 attempts
- * and <= 14 ms at n = 15 over the probe seeds (module doc), so these give
- * an order of magnitude of headroom; exceeding either throws
- * {@link StarShapeBudgetExhaustedError}. Wall clock gates only when the
- * search gives up, never which board is accepted, so determinism holds.
- */
-const SHAPE_MAX_ATTEMPTS = 20000
-const SHAPE_WALL_CLOCK_MS = 5000
-
-/**
- * Loud, typed failure when a hub-free shaping search exhausts its attempt
- * or wall-clock budget before reaching defect 0. Never carries a board:
- * a search that ran out of budget has nothing to certify.
- */
-export class StarShapeBudgetExhaustedError extends Error {
-  readonly n: number
-  readonly seed: number
-  readonly attempts: number
-  readonly elapsedMs: number
-  readonly reason: 'attempts' | 'wall-clock'
-  /** Lowest shape defect observed (0 = no hub and share cap met). */
-  readonly bestDefect: number
-
-  constructor(fields: {
-    readonly n: number
-    readonly seed: number
-    readonly attempts: number
-    readonly elapsedMs: number
-    readonly reason: 'attempts' | 'wall-clock'
-    readonly bestDefect: number
-  }) {
-    super(
-      `star battle hub-free shaping exhausted its ${fields.reason} budget ` +
-        `(n=${fields.n}, seed=${fields.seed}, attempts=${fields.attempts}, ` +
-        `bestDefect=${fields.bestDefect.toFixed(4)}, ${fields.elapsedMs.toFixed(1)}ms) ` +
-        `without reaching a hub-free board`,
-    )
-    this.name = 'StarShapeBudgetExhaustedError'
-    this.n = fields.n
-    this.seed = fields.seed
-    this.attempts = fields.attempts
-    this.elapsedMs = fields.elapsedMs
-    this.reason = fields.reason
-    this.bestDefect = fields.bestDefect
-  }
-}
-
-/**
- * Loud, typed failure when a technique-tier generation exhausts its walk
- * or wall-clock budget before finding a board whose minimum basis hits the
- * tier's target. Never carries a board: partial progress is not a
- * difficulty certificate.
- */
-export class StarTechniqueTierBudgetExhaustedError extends Error {
-  readonly n: number
-  readonly seed: number
-  readonly difficulty: StarTechniqueDifficulty
-  readonly targetK: number
-  readonly walks: number
-  /** Minimum basis of the last rejected walk, when one completed. */
-  readonly lastK: number | null
-  /** Witness subset of the last rejected walk, when one completed. */
-  readonly lastWitness: readonly StarConfinementRule[] | null
-  readonly elapsedMs: number
-  readonly reason: 'walk-attempts' | 'wall-clock'
-
-  constructor(fields: {
-    readonly n: number
-    readonly seed: number
-    readonly difficulty: StarTechniqueDifficulty
-    readonly targetK: number
-    readonly walks: number
-    readonly lastK: number | null
-    readonly lastWitness: readonly StarConfinementRule[] | null
-    readonly elapsedMs: number
-    readonly reason: 'walk-attempts' | 'wall-clock'
-  }) {
-    super(
-      `star battle ${fields.difficulty} generation exhausted its ${fields.reason} budget ` +
-        `(n=${fields.n}, seed=${fields.seed}, walks=${fields.walks}, ` +
-        `targetK=${fields.targetK}, lastK=${String(fields.lastK)}, ` +
-        `lastWitness={${fields.lastWitness?.join(',') ?? ''}}, ` +
-        `${fields.elapsedMs.toFixed(1)}ms) without reaching a board of that difficulty`,
-    )
-    this.name = 'StarTechniqueTierBudgetExhaustedError'
-    this.n = fields.n
-    this.seed = fields.seed
-    this.difficulty = fields.difficulty
-    this.targetK = fields.targetK
-    this.walks = fields.walks
-    this.lastK = fields.lastK
-    this.lastWitness = fields.lastWitness
-    this.elapsedMs = fields.elapsedMs
-    this.reason = fields.reason
-  }
-}
-
-/**
- * Target bands on the measured base-solver wave count, as functions of n.
- * Construction tiers only: a board inside its tier's band scores 0;
- * outside, the distance to the nearest edge. The best-scoring attempt
- * wins, so an expired budget still returns the closest-measured board
- * rather than failing. Technique tiers have no wave band — they select on
- * the minimum basis instead — and never reach this function.
- */
-function waveBand(n: number, difficulty: StarConstructionDifficulty): readonly [number, number] {
-  switch (difficulty) {
-    case 'starter':
-      return [3, 5]
-    case 'steady':
-      // The old 'challenging' bands, moved down one step.
-      return [Math.max(6, n + 2), 2 * n + 4]
-  }
-}
-
-function bandDistance(waves: number, band: readonly [number, number]): number {
-  if (waves < band[0]) {
-    return band[0] - waves
-  }
-  if (waves > band[1]) {
-    return waves - band[1]
-  }
-  return 0
-}
-
-/**
- * A uniformly random admissible column permutation (|T[r] - T[r+1]| ≥ 2
- * for every adjacent pair), drawn by rejection from the seeded RNG. The
- * side is validated first: below n = 4 no admissible permutation exists
- * and rejection would loop forever, so the assert is load-bearing, not
- * ceremonial.
- */
-export function admissibleStarPermutation(n: number, rng: SeededRandom): readonly number[] {
+export function defaultStarGenerationBudgetMs(n: number): number {
   assertStarBattleSide(n)
-  for (;;) {
-    const columns = Array.from({ length: n }, (_, index) => index)
-    for (let index = n - 1; index > 0; index -= 1) {
-      const pick = rng.nextInt(index + 1)
-      const swap = columns[index]
-      columns[index] = columns[pick]
-      columns[pick] = swap
-    }
-    let admissible = true
-    for (let row = 0; row + 1 < n; row += 1) {
-      if (Math.abs(columns[row] - columns[row + 1]) < 2) {
-        admissible = false
-        break
-      }
-    }
-    if (admissible) {
-      return columns
-    }
+  return n >= 9 ? 90_000 : 15_000
+}
+
+function nowMs(): number {
+  return Date.now()
+}
+
+/**
+ * The measured grade of one unique repaired board. Built by
+ * {@link gradeForTier}: the expensive instruments (the 16-subset minimum
+ * basis, the depth-1 case-split) run only when the requested tier can
+ * still match.
+ */
+interface StarGrade {
+  readonly k: number
+  readonly basisWaves: number
+  readonly contradiction?: {
+    readonly solved: boolean
+    readonly waves: number
+    readonly csPasses: number
+    readonly csTrials: number
   }
 }
 
 /**
- * The strip set S ⊆ {1..n-2} for a side and construction tier: which
- * regions (other than the absorber sea) grow a horizontal strip into the
- * row above their star. starter paints nothing; steady paints everything
- * (the old challenging painting, moved down one step).
+ * The grade facts the tier predicate reads. Deliberately minimal — no tier
+ * accepts a k = 0 (base-solvable) board since the starter/steady
+ * retirement, so `measureMinimumBasis`'s k is the whole input, plus the
+ * contradiction certificate's solved flag. Both generation and the
+ * feasibility probe's partial grade satisfy it.
  */
-function stripSet(n: number, difficulty: StarConstructionDifficulty): ReadonlySet<number> {
+export interface StarTierGrade {
+  readonly k: number
+  readonly contradiction?: { readonly solved: boolean }
+}
+
+/**
+ * The tier acceptance predicate on a measured grade — the whole tier
+ * contract in one place, shared by generation (rejection sampling) and
+ * feasibility (per-candidate acceptance measurement), so the picker can
+ * never disagree with the generator.
+ */
+export function starTierAcceptsGrade(difficulty: StarDifficulty, grade: StarTierGrade): boolean {
   switch (difficulty) {
-    case 'starter':
-      return new Set()
-    case 'steady':
-      return new Set(Array.from({ length: n - 2 }, (_, index) => index + 1))
+    case 'challenging':
+      return grade.k === 1
+    case 'expert':
+      return grade.k === 2
+    case 'contradiction':
+      return grade.k === -1 && grade.contradiction?.solved === true
   }
+}
+
+/**
+ * The wave count a grade reports on its board: the witness run's waves —
+ * basis witness waves for k ≥ 1, case-split waves for k = −1. Always a
+ * positive integer on an accepted grade.
+ */
+function gradeWaves(grade: StarGrade): number {
+  if (grade.k === -1) {
+    return grade.contradiction?.waves ?? grade.basisWaves
+  }
+  return grade.basisWaves
+}
+
+/**
+ * Measure (lazily) the grade facts the requested tier needs, and accept or
+ * reject the board against {@link starTierAcceptsGrade}. Returns the
+ * accepted board data, or `null` when the candidate is rejected back to
+ * the stream.
+ */
+function gradeForTier(
+  colours: Uint8Array,
+  n: number,
+  difficulty: StarDifficulty,
+): { readonly waves: number; readonly csPasses?: number; readonly csTrials?: number } | null {
+  // The minimum basis is the contract. (For a base-solved board this
+  // returns k = 0 without the subset enumeration, and every shipped tier
+  // rejects k = 0, so the common reject path stays cheap.)
+  const basis = measureMinimumBasis(colours, n)
+  let contradiction: StarGrade['contradiction']
+  if (difficulty === 'contradiction' && basis.k === -1) {
+    const certified = solveStarCatalogue(colours, n, { csDepth: 1 })
+    contradiction = {
+      solved: certified.solved,
+      waves: certified.waves,
+      csPasses: certified.csPasses,
+      csTrials: certified.csTrials,
+    }
+  }
+  const grade: StarGrade = {
+    k: basis.k,
+    basisWaves: basis.waves,
+    contradiction,
+  }
+  if (!starTierAcceptsGrade(difficulty, grade)) {
+    return null
+  }
+  const result: { waves: number; csPasses?: number; csTrials?: number } = { waves: gradeWaves(grade) }
+  if (grade.contradiction !== undefined) {
+    result.csPasses = grade.contradiction.csPasses
+    result.csTrials = grade.contradiction.csTrials
+  }
+  return result
+}
+
+/**
+ * Generates a Star Battle puzzle for the requested side, seed and
+ * difficulty.
+ *
+ * The primary path is the spanning-tree stream (module doc): sample a
+ * mine-balanced layout, repair it to exact uniqueness, grade it against
+ * the requested tier, and rejection-sample until one matches — all inside
+ * the wall-clock budget (per-side default, or `options.timeBudgetMs`).
+ * When the budget expires, the strips-and-sea fallback board is returned
+ * (`fallback: true`) instead of failing: generation NEVER fails.
+ *
+ * Progress: `options.onProgress` receives a snapshot on every phase change
+ * and every examined candidate; a throwing listener is swallowed.
+ *
+ * Determinism: same (n, seed, difficulty) ⇒ byte-identical board whenever
+ * no fallback runs; a fallback board depends on how many candidates the
+ * wall clock allowed before expiry and is not seed-reproducible.
+ */
+export function generateStarBattle(
+  request: StarGenerationRequest,
+  options?: StarGenerationOptions,
+): StarGeneratedBoard {
+  const { n, difficulty } = request
+  assertStarBattleSide(n)
+  if (!STAR_DIFFICULTIES.includes(difficulty)) {
+    throw new TypeError(
+      `difficulty must be one of ${STAR_DIFFICULTIES.join(', ')}; received ${String(difficulty)}`,
+    )
+  }
+  if (typeof request.seed !== 'number' || !Number.isSafeInteger(request.seed)) {
+    throw new TypeError(`seed must be a safe integer; received ${String(request.seed)}`)
+  }
+  if (options?.timeBudgetMs !== undefined) {
+    if (!Number.isSafeInteger(options.timeBudgetMs) || options.timeBudgetMs < 0) {
+      throw new RangeError(`timeBudgetMs must be a nonnegative integer; received ${String(options.timeBudgetMs)}`)
+    }
+  }
+
+  const rng = createSeededRandom(request.seed)
+  const budgetMs = options?.timeBudgetMs ?? defaultStarGenerationBudgetMs(n)
+  const deadline = nowMs() + budgetMs
+  const emit = (progress: StarGenerationProgress): void => {
+    try {
+      options?.onProgress?.(progress)
+    } catch {
+      // A throwing listener must never corrupt generation (documented on
+      // StarGenerationOptions.onProgress): swallowed by contract.
+    }
+  }
+  const state = { candidates: 0, accepted: 0, phase: 'sampling' as StarGenerationPhase }
+  const emitPhase = (phase: StarGenerationPhase): void => {
+    if (state.phase !== phase) {
+      state.phase = phase
+      emit({ ...state })
+    }
+  }
+
+  for (;;) {
+    if (nowMs() >= deadline) {
+      // Budget expired: the fallback board honours the full contract.
+      // Report the sampling state one last time so the surface's counter
+      // matches what actually happened.
+      emit({ ...state })
+      return paintFallbackConstructionBoard({ n, seed: request.seed, difficulty, rng })
+    }
+
+    const candidateRng = rng.derive(`candidate-${state.candidates}`)
+    emitPhase('sampling')
+    const layout = sampleStarBattleLayout(n, candidateRng)
+    state.candidates += 1
+    emit({ ...state })
+    if (layout === null) {
+      continue
+    }
+
+    emitPhase('repairing')
+    const repaired = repairStarBattleLayout({
+      n,
+      colours: layout.colours,
+      solution: layout.solution,
+      rng: candidateRng,
+      wallClockMs: Math.max(0, deadline - nowMs()),
+    })
+    if (repaired === null) {
+      continue
+    }
+
+    // The acceptance gate, verbatim from the generation contract: exact
+    // uniqueness, and a budget-exhausted (or here: any non-1) count is a
+    // rejection. Repair's terminal round already proved count = 1 exactly;
+    // this is the independent re-proof on the final colouring.
+    if (countStarSolutions(repaired.colours, n, 2) !== 1) {
+      continue
+    }
+
+    emitPhase('grading')
+    const accepted = gradeForTier(repaired.colours, n, difficulty)
+    if (accepted === null) {
+      continue
+    }
+    state.accepted += 1
+
+    const puzzle: StarBattlePuzzle = {
+      n,
+      seed: request.seed,
+      colours: repaired.colours,
+      solution: layout.solution,
+    }
+    // Shape, colour grid and planted solution re-validated before the
+    // board leaves the engine (n, byte length, colour range, permutation,
+    // admissibility, pairwise-distinct star colours).
+    assertStarBattlePuzzle(puzzle)
+    emit({ ...state })
+
+    const result: { waves: number; difficulty: StarDifficulty; csPasses?: number; csTrials?: number } = {
+      waves: accepted.waves,
+      difficulty,
+    }
+    if (accepted.csPasses !== undefined) {
+      result.csPasses = accepted.csPasses
+    }
+    if (accepted.csTrials !== undefined) {
+      result.csTrials = accepted.csTrials
+    }
+    return Object.freeze({ puzzle, ...result })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The strips-and-sea fallback (budget expiry only).
+// ---------------------------------------------------------------------------
+
+/**
+ * The strip set S ⊆ {1..n-2} for the fallback painting: which regions
+ * (other than the absorber sea) grow a horizontal strip into the row above
+ * their star. The fallback always paints the full strip set — the most
+ * constrained, most reliably certified painting; it is an escape hatch,
+ * not a difficulty instrument.
+ */
+function fallbackStripSet(n: number): ReadonlySet<number> {
+  return new Set(Array.from({ length: Math.max(0, n - 2) }, (_, index) => index + 1))
 }
 
 /**
@@ -781,12 +537,12 @@ function absorbingStarPermutation(n: number, rng: SeededRandom): readonly number
 }
 
 /**
- * Paints the connected construction for n ≥ 6: star cells take colour r;
- * region s in the strip set paints the interval between T[s-1] and T[s]
- * in row s-1 (minus the star column); everything else is the absorber
- * sea n-1. Every decoy obeys the validity rule (module doc), so the
- * propagation certificate applies. Consumes no RNG — attempts differ only
- * by the sampled T.
+ * Paints the connected strips-and-sea construction for n ≥ 6: star cells
+ * take colour r; region s paints the interval between T[s-1] and T[s] in
+ * row s-1 (minus the star column); everything else is the absorber sea
+ * n-1. Every decoy obeys the validity rule (the old module doc's
+ * construction proof), so the propagation certificate applies. Consumes no
+ * RNG — attempts differ only by the sampled T.
  */
 function paintConnectedColours(
   n: number,
@@ -811,29 +567,23 @@ function paintConnectedColours(
 }
 
 /**
- * Paints the structured n = 4, 5 fallback (module doc): the sea plus star
- * cells, and region k a domino whose decoy is blanked by an earlier star —
- * either directly above the star (parent k - 1, blanked by m_{k-1}'s row
- * exclusion) or horizontally adjacent in a column owned by a star in an
- * earlier row (parent p < k, blanked by m_p's column exclusion). Both
- * shapes satisfy the validity rule with room to spare, so the propagation
- * certificate applies. starter paints no decoys: every non-sea region is
- * a singleton and the board collapses in 3 waves. The parent choice is
- * driven by the seeded RNG; a region with no free decoy cell stays a
- * singleton, which is always legal.
+ * Paints the structured n = 4, 5 fallback: the sea plus star cells, and
+ * region k a domino whose decoy is blanked by an earlier star — either
+ * directly above the star (parent k - 1, blanked by the previous star's
+ * row exclusion) or horizontally adjacent in a column owned by a star in
+ * an earlier row (parent p < k, blanked by that star's column exclusion).
+ * Both shapes satisfy the validity rule with room to spare, so the
+ * propagation certificate applies. The parent choice is driven by the
+ * seeded RNG.
  */
-function paintFallbackColours(
+function paintSmallSideColours(
   n: number,
   permutation: readonly number[],
   rng: SeededRandom,
-  difficulty: StarConstructionDifficulty,
 ): Uint8Array {
   const colours = new Uint8Array(n * n).fill(n - 1)
   for (let row = 0; row < n; row += 1) {
     colours[row * n + permutation[row]] = row
-  }
-  if (difficulty === 'starter') {
-    return colours
   }
   const rowOfColumn = new Int16Array(n)
   for (let row = 0; row < n; row += 1) {
@@ -842,13 +592,8 @@ function paintFallbackColours(
   const taken = new Set<number>()
   for (let region = 1; region <= n - 2; region += 1) {
     const options: number[] = []
-    // Decoy directly above the star: blanked by the previous star's row
-    // exclusion; valid because region >= min(region - 1, region) + 1.
     const above = (region - 1) * n + permutation[region]
     options.push(above)
-    // Decoys left and right of the star: compliant iff the neighbouring
-    // column's star sits in an earlier row (parent < region), and then
-    // blanked by that star's column exclusion.
     for (const delta of [-1, 1]) {
       const column = permutation[region] + delta
       if (column >= 0 && column < n && rowOfColumn[column] < region) {
@@ -912,573 +657,77 @@ function regionsConnected(colours: Uint8Array, n: number): boolean {
 }
 
 /**
- * The hub-free shaping descent for the steady tier (module doc): repaint
- * non-solution cells by connectivity-safe single recolours while the
- * production base solver still fully solves the board and its wave count
- * stays no shallower than the painted winner and no deeper than the band
- * ceiling. Accepted mutations may not increase the scalarised shape defect
- * ({@link starShapeDefect} on {@link STAR_TIER_SHAPE_GATE}); sideways drift
- * at equal defect keeps the search moving. Stops at defect 0 — no hub
- * region, largest region <= 40%.
- *
- * The proposal stream is the caller-provided seeded RNG; every accepted
- * mutation is certified by {@link propagateStarBoard} (a complete sound-rule
- * solve is a uniqueness certificate), so the returned board needs no
- * further uniqueness work beyond the caller's final net (exact counter for
- * n <= 5, which the caller runs).
- *
- * Throws {@link StarShapeBudgetExhaustedError} on budget exhaustion; never
- * returns a board with defect > 0.
+ * The NEVER-FAIL fallback: the retired strips-and-sea painting, kept for
+ * exactly this purpose (module doc). Attempts are drawn from a seeded
+ * stream derived from the request seed; an attempt ships only when BOTH
+ * connectivity nets (this file's flood fill and structure.ts's
+ * union-find), the propagation certificate AND the exact counter all
+ * agree. The strip construction is theorem-backed — validity-rule
+ * compliance makes the propagation certificate a uniqueness proof — so
+ * the loop terminates on the first attempts in practice; the iteration
+ * cap exists so a bug fails loudly as an internal invariant violation
+ * instead of looping forever.
  */
-function shapeSteadyColours(request: {
-  readonly n: number
-  readonly colours: Uint8Array
-  readonly solution: readonly number[]
-  readonly seedWaves: number
-  readonly rng: SeededRandom
-  /**
-   * Budget overrides — the production caller always ships the module
-   * defaults ({@link SHAPE_MAX_ATTEMPTS} / {@link SHAPE_WALL_CLOCK_MS});
-   * the parameters exist so the fallback wrapper
-   * ({@link resolveShapedSteadyColours}) can be pinned with a forced
-   * give-up, which natural seeds never produce (measured 0/3000).
-   */
-  readonly maxAttempts?: number
-  readonly wallClockMs?: number
-}): { readonly colours: Uint8Array; readonly waves: number } {
-  const { n, colours: painted, solution, seedWaves, rng } = request
-  const maxAttempts = request.maxAttempts ?? SHAPE_MAX_ATTEMPTS
-  const wallClockMs = request.wallClockMs ?? SHAPE_WALL_CLOCK_MS
-  const band = waveBand(n, 'steady')
-  // Depth gate: never shallower than the painted winner (the tier's wave
-  // depth IS its difficulty contract — a shaped board must not be a shall
-  // substitute), never deeper than the band ceiling, except that the
-  // winner itself always remains legal even when the painting sat outside
-  // the band (the n = 4, 5 fallback under LIMITATION 2).
-  const lower = seedWaves
-  const upper = Math.max(band[1], seedWaves)
-  const solutionCells = new Set<number>()
-  for (let row = 0; row < n; row += 1) {
-    solutionCells.add(row * n + solution[row])
-  }
-  const colours = painted.slice()
-  let defect = Number.POSITIVE_INFINITY
-  let waves = seedWaves
-  let bestDefect = Number.POSITIVE_INFINITY
-  const startedAt = performance.now()
-
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (performance.now() - startedAt >= wallClockMs) {
-      throw new StarShapeBudgetExhaustedError({
-        n,
-        seed: rng.seed,
-        attempts: attempt,
-        elapsedMs: performance.now() - startedAt,
-        reason: 'wall-clock',
-        bestDefect,
-      })
-    }
-
-    // --- propose: repaint a non-solution cell to a neighbour's colour ----
-    const index = rng.nextInt(n * n)
-    if (solutionCells.has(index)) {
-      continue
-    }
-    const from = colours[index]
-    const row = (index / n) | 0
-    const column = index % n
-    const neighbourColours: number[] = []
-    const neighbourIndexes = [
-      row > 0 ? index - n : -1,
-      row + 1 < n ? index + n : -1,
-      column > 0 ? index - 1 : -1,
-      column + 1 < n ? index + 1 : -1,
-    ]
-    for (const neighbour of neighbourIndexes) {
-      if (
-        neighbour >= 0 &&
-        colours[neighbour] !== from &&
-        !neighbourColours.includes(colours[neighbour])
-      ) {
-        neighbourColours.push(colours[neighbour])
-      }
-    }
-    if (neighbourColours.length === 0) {
-      continue
-    }
-    const to = neighbourColours[rng.nextInt(neighbourColours.length)]
-
-    // --- gate (a): the vacated region must stay one connected component ---
-    if (!regionStaysConnectedWithout(colours, n, index, from)) {
-      continue
-    }
-    colours[index] = to
-
-    // --- gate (b): the base solver still fully solves, inside the band ----
-    const result = propagateStarBoard(colours, n)
-    if (!result.solved || result.waves < lower || result.waves > upper) {
-      colours[index] = from
-      continue
-    }
-
-    // --- gate (c): the shape defect may not increase ----------------------
-    const candidateDefect = starShapeDefect(measureStarBoardStructure(colours, n), STAR_TIER_SHAPE_GATE)
-    if (candidateDefect > defect) {
-      colours[index] = from
-      continue
-    }
-    defect = candidateDefect
-    waves = result.waves
-    if (candidateDefect < bestDefect) {
-      bestDefect = candidateDefect
-    }
-    if (defect === 0) {
-      return { colours, waves }
-    }
-  }
-
-  throw new StarShapeBudgetExhaustedError({
-    n,
-    seed: rng.seed,
-    attempts: maxAttempts,
-    elapsedMs: performance.now() - startedAt,
-    reason: 'attempts',
-    bestDefect,
-  })
-}
-
-/**
- * The shaping give-up wrapper (player ruling, 2026-10-07 — a shaping
- * failure is never a generation failure): run the hub-free shaping
- * descent and, when it exhausts its budget, FALL BACK to the painted
- * board with `gateMet: false` instead of throwing. The painted board is
- * legal by construction (it already passed the painting gates); the
- * only thing it lacks is the structural variety the gate exists for.
- * `gateMet: true` means the descent reached defect 0 and the shaped
- * board must still pass the caller's certification nets. Exported for
- * the tests: natural seeds never give up (measured 0/3000 at n = 6..10),
- * so the wrapper's budget overrides exist to force a give-up
- * deterministically. The production caller passes no overrides.
- */
-export function resolveShapedSteadyColours(request: {
-  readonly n: number
-  readonly colours: Uint8Array
-  readonly solution: readonly number[]
-  readonly seedWaves: number
-  readonly rng: SeededRandom
-  readonly maxAttempts?: number
-  readonly wallClockMs?: number
-}): { readonly colours: Uint8Array; readonly waves: number; readonly gateMet: boolean } {
-  try {
-    const shaped = shapeSteadyColours(request)
-    return { colours: shaped.colours, waves: shaped.waves, gateMet: true }
-  } catch (error) {
-    if (!(error instanceof StarShapeBudgetExhaustedError)) {
-      throw error
-    }
-    // Budget exhausted: keep the painted board, honestly unaudited.
-    return { colours: request.colours, waves: request.seedWaves, gateMet: false }
-  }
-}
-
-/**
- * Generates a Star Battle puzzle for the requested side, seed and
- * difficulty.
- *
- * Construction tiers ('starter', 'steady') paint the connected strips-and-
- * sea construction directly; acceptance requires full connectivity and a
- * {@link propagateStarBoard} solve (plus the exact counter for the n = 4,
- * 5 fallback), and throws only on invalid input or an internal invariant
- * violation (the certificate failing on a construction the theorem says
- * cannot fail).
- *
- * Technique tiers ('challenging', 'expert', 'contradiction') descend to
- * boards the base rules cannot place a single star on and reject-sample on
- * the minimum confinement basis (1, 2, or -1); see
- * {@link generateTechniqueTierBoard} for the acceptance gates and the
- * typed budget failure.
- *
- * Determinism: the same (n, seed, difficulty) always yields byte-identical
- * `colours` and `solution`. Every random draw comes from the seeded RNG in
- * a fixed order; wall-clock checks gate only when a search gives up, never
- * which board is accepted.
- */
-export function generateStarBattle(request: StarGenerationRequest): StarGeneratedBoard {
-  const { n, difficulty } = request
-  assertStarBattleSide(n)
-  if (!STAR_DIFFICULTIES.includes(difficulty)) {
-    throw new TypeError(
-      `difficulty must be one of ${STAR_DIFFICULTIES.join(', ')}; received ${String(difficulty)}`,
-    )
-  }
-  if (isTechniqueTier(difficulty)) {
-    return generateTechniqueTierBoard({ n, seed: request.seed, difficulty })
-  }
-  return generateConstructionBoard({
-    n,
-    seed: request.seed,
-    difficulty,
-    shaping: request.shaping ?? true,
-  })
-}
-
-/**
- * The construction-tier generator: paints the strips-and-sea construction
- * (or the n = 4, 5 domino fallback) and selects the attempt that best
- * fits the tier's wave band. The steady winner at n >= 6 then passes
- * through the hub-free shaping descent (module doc; starter and n = 4
- * steady keep the painted board, recorded there). See the module doc for
- * the construction proof and the measured bands.
- */
-function generateConstructionBoard(request: {
+function paintFallbackConstructionBoard(request: {
   readonly n: number
   readonly seed: number
-  readonly difficulty: StarConstructionDifficulty
-  readonly shaping: boolean
+  readonly difficulty: StarDifficulty
+  readonly rng: SeededRandom
 }): StarGeneratedBoard {
-  const { n, seed, difficulty: constructionDifficulty } = request
-  const rng = createSeededRandom(seed)
-  const band = waveBand(n, constructionDifficulty)
-  const attempts = ATTEMPTS[constructionDifficulty]
-  const strips = stripSet(n, constructionDifficulty)
-
-  let bestColours: Uint8Array | null = null
-  let bestSolution: readonly number[] | null = null
-  let bestWaves = 0
-  let bestScore = Number.POSITIVE_INFINITY
-
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+  const { n, difficulty } = request
+  const strips = fallbackStripSet(n)
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const attemptRng = request.rng.derive(`fallback-paint-${attempt}`)
     let permutation: readonly number[]
     let colours: Uint8Array
     if (n >= 6) {
-      permutation = absorbingStarPermutation(n, rng)
+      permutation = absorbingStarPermutation(n, attemptRng)
       colours = paintConnectedColours(n, permutation, strips)
     } else {
-      // n = 4, 5: no absorbing permutation exists; fall back to the
-      // structured domino painting (module doc), filtered by connectivity
-      // and the exact counter.
-      permutation = admissibleStarPermutation(n, rng)
-      colours = paintFallbackColours(n, permutation, rng, constructionDifficulty)
+      permutation = admissibleStarPermutation(n, attemptRng)
+      colours = paintSmallSideColours(n, permutation, attemptRng)
     }
 
-    // Structural safety net: every colour one 4-connected component.
     if (!regionsConnected(colours, n)) {
       continue
     }
-
-    const result = propagateStarBoard(colours, n)
-    if (!result.solved) {
+    const structure = measureStarBoardStructure(colours, n)
+    if (!structure.connected) {
+      throw new Error(
+        `star battle fallback invariant violated: union-find disagrees with the flood fill (n=${n}, seed=${request.seed})`,
+      )
+    }
+    const certified = propagateStarBoard(colours, n)
+    if (!certified.solved) {
       // The theorem says every validity-rule-compliant colouring solves.
       // Reaching this line is a bug in this module, not a hard puzzle.
       throw new Error(
-        `star battle generation invariant violated: constructed board failed the propagation certificate (n=${n}, seed=${rng.seed}, attempt=${attempt})`,
+        `star battle fallback invariant violated: painted board failed the propagation certificate (n=${n}, seed=${request.seed}, attempt=${attempt})`,
       )
     }
-    if (n <= 5 && countStarSolutions(colours, n, 2) !== 1) {
-      // The n = 4, 5 fallback accepts only boards the exact counter agrees
-      // are unique; a disagreeing board is an attempt, never an output.
-      continue
-    }
-
-    const score = bandDistance(result.waves, band)
-    // Deterministic tie-break inside an equal band distance: the shallowest
-    // measured board wins for starter, the deepest for steady (its
-    // "best measured" contract, inherited from the old challenging tier).
-    const prefer =
-      score < bestScore ||
-      (score === bestScore &&
-        bestColours !== null &&
-        ((constructionDifficulty === 'steady' && result.waves > bestWaves) ||
-          (constructionDifficulty === 'starter' && result.waves < bestWaves)))
-    if (prefer) {
-      bestColours = colours
-      bestSolution = permutation
-      bestWaves = result.waves
-      bestScore = score
-    }
-  }
-
-  if (bestColours === null || bestSolution === null) {
-    // attempts ≥ 1 for every tier, so this is unreachable; it exists so
-    // the compiler knows the best* locals are populated below.
-    throw new Error('star battle generation made no attempts')
-  }
-
-  // The hub-free shaping stage (module doc): steady at n >= 6 leaves the
-  // validity-rule basin by design, so the shaped board is certified HERE —
-  // both connectivity nets (this file's flood fill AND structure.ts's
-  // union-find), the propagation solve (the uniqueness certificate, whose
-  // wave count is what the board reports), and the exact counter for n <= 5.
-  // The shaped board must be no SHALLOWER than the painted winner it
-  // replaces (lower = seedWaves) and no deeper than the band ceiling (or
-  // the winner itself, when the painting already exceeded it). A shaping
-  // give-up falls back to the painted board with `gateMet: false` (the
-  // player ruling — see {@link resolveShapedSteadyColours}); only the
-  // shaped board pays for certification.
-  let outputColours = bestColours
-  let outputWaves = bestWaves
-  let shapeGateMet = false
-  if (request.shaping && constructionDifficulty === 'steady' && n >= 6) {
-    const shaped = resolveShapedSteadyColours({
-      n,
-      colours: bestColours,
-      solution: bestSolution,
-      seedWaves: bestWaves,
-      rng: rng.derive('steady-shape'),
-    })
-    outputColours = shaped.colours
-    outputWaves = shaped.waves
-    shapeGateMet = shaped.gateMet
-    if (shaped.gateMet) {
-      if (!regionsConnected(outputColours, n)) {
-        throw new Error(
-          `star battle shaping invariant violated: shaped board is not fully connected ` +
-            `(n=${n}, seed=${rng.seed})`,
-        )
-      }
-      const structure = measureStarBoardStructure(outputColours, n)
-      if (!structure.connected) {
-        throw new Error(
-          `star battle shaping invariant violated: union-find disagrees with the flood fill ` +
-            `(n=${n}, seed=${rng.seed})`,
-        )
-      }
-      const certified = propagateStarBoard(outputColours, n)
-      if (!certified.solved) {
-        throw new Error(
-          `star battle shaping invariant violated: shaped board failed the propagation certificate ` +
-            `(n=${n}, seed=${rng.seed})`,
-        )
-      }
-      outputWaves = certified.waves
-      if (n <= 5 && countStarSolutions(outputColours, n, 2) !== 1) {
-        throw new Error(
-          `star battle shaping invariant violated: shaped board failed the exact counter ` +
-            `(n=${n}, seed=${rng.seed})`,
-        )
-      }
-    }
-  }
-
-  const puzzle: StarBattlePuzzle = {
-    n,
-    seed: rng.seed,
-    colours: outputColours,
-    solution: bestSolution,
-  }
-  // Shape, colour grid and planted solution re-validated before the board
-  // leaves the engine: n, byte length, colour range, permutation,
-  // admissibility and pairwise-distinct star colours. Shaping never
-  // touches solution cells, so the planted permutation survives intact.
-  assertStarBattlePuzzle(puzzle)
-
-  return Object.freeze({
-    puzzle,
-    waves: outputWaves,
-    difficulty: constructionDifficulty,
-    shapeAudit: Object.freeze({ gateMet: shapeGateMet }),
-  })
-}
-
-/**
- * The technique-tier generator ('challenging', 'expert', 'contradiction'):
- * rejection sampling over {@link walkStarBattleBoard} on the minimum
- * confinement basis. Each walk already descends to a board its easiness
- * meter cannot start ('base' for challenging/expert, 'confinement' for
- * contradiction); this loop keeps walking (seeded, derived stream) until
- * one lands on the tier's target k. A walk that exhausts ITS own budget
- * is a rejected sample, not a failure — only this loop's budget is the
- * tier's contract.
- *
- * Acceptance re-verifies every gate with this module's own instruments,
- * independent of the walk's internal checks:
- * - connectivity — {@link regionsConnected}, this file's flood fill, NOT
- *   the walk's `regionStaysConnectedWithout`;
- * - base stalls — {@link propagateStarBoard} (the production base solver)
- *   places zero stars;
- * - uniqueness — the full catalogue with case-splitting depth 1 solves
- *   (a complete sound-rule solve is a uniqueness certificate), plus the
- *   exact counter for n ≤ 5, matching the fallback's belt-and-braces;
- * - difficulty — {@link measureMinimumBasis} returns exactly the tier's
- *   target k;
- * - shape — {@link measureStarBoardStructure} certifies the tier's
- *   {@link STAR_TIER_SHAPE_GATE} (no hub, largest region <= 40%) by the
- *   union-find scan, independent of the walk's internal gate.
- *
- * Budget: {@link TECHNIQUE_WALK_ATTEMPTS} walks or
- * {@link TECHNIQUE_TIER_WALL_CLOCK_MS} wall-clock. Exceeding either throws
- * {@link StarTechniqueTierBudgetExhaustedError}; a search that ran out of
- * budget NEVER returns a board that misses its target.
- *
- * Determinism: the walk seeds derive in a fixed order from the request
- * seed, so same (n, seed, difficulty) ⇒ byte-identical board; wall clock
- * gates only when the search gives up, never which walk is accepted.
- */
-function generateTechniqueTierBoard(request: {
-  readonly n: number
-  readonly seed: number
-  readonly difficulty: StarTechniqueDifficulty
-}): StarGeneratedBoard {
-  const { n, seed, difficulty } = request
-  const targetK = TECHNIQUE_TIER_TARGET[difficulty]
-  const rng = createSeededRandom(seed)
-  const startedAt = performance.now()
-  let lastK: number | null = null
-  let lastWitness: readonly StarConfinementRule[] | null = null
-
-  // The per-generation phase: which menu entry walk 0 descends from is a
-  // deterministic function of the request seed, so a tier's GENERATIONS
-  // sample the input basins in turn (see {@link TECHNIQUE_WALK_INPUT_MENU}
-  // — rotating by walk index alone never engages when walk 0 accepts).
-  const phase = rng.derive('walk-input-phase').nextInt(TECHNIQUE_WALK_INPUT_MENU[difficulty].length)
-
-  for (let walk = 0; walk < TECHNIQUE_WALK_ATTEMPTS; walk += 1) {
-    if (performance.now() - startedAt >= TECHNIQUE_TIER_WALL_CLOCK_MS) {
-      throw new StarTechniqueTierBudgetExhaustedError({
-        n,
-        seed: rng.seed,
-        difficulty,
-        targetK,
-        walks: walk,
-        lastK,
-        lastWitness,
-        elapsedMs: performance.now() - startedAt,
-        reason: 'wall-clock',
-      })
-    }
-
-    let walked: ReturnType<typeof walkStarBattleBoard>
-    // The walk's inputs rotate through the tier's menu (see
-    // {@link TECHNIQUE_WALK_INPUT_MENU}): the same gates accept, but each
-    // walk descends from a different input's basin, which is the only
-    // measured lever that moves the endpoint signature. Seeding from a
-    // technique tier would recurse back into this loop, so the menu only
-    // names construction tiers.
-    const walkInput = techniqueTierWalkInput(difficulty, walk, phase)
-    try {
-      walked = walkStarBattleBoard({
-        n,
-        seed: rng.derive(`technique-walk-${walk}`).seed,
-        seedDifficulty: walkInput.seedDifficulty,
-        // The contradiction tier descends on the confinement meter: stop
-        // only when EVERY pure-deduction technique together places
-        // nothing. The k = -1 target is then verified explicitly below.
-        meter: walkInput.meter,
-        // The shape gate: the walk stops only at meter 0 AND defect 0
-        // (walk.ts module doc), so a hub board never reaches this loop.
-        shape: STAR_TIER_SHAPE_GATE,
-        // Wall clock: the tier's own budget, checked between walks, is the
-        // only timing gate the acceptance path may see. The walk's default
-        // 5 s budget would let a slow walk give up mid-search under CPU
-        // contention and this loop would then accept a DIFFERENT walk —
-        // a timing-dependent board. A walk that completes always produces
-        // its seeded board; a walk that cannot fit the tier budget ends in
-        // the typed error (no board), never an off-seed one.
-        wallClockMs: TECHNIQUE_TIER_WALL_CLOCK_MS,
-      })
-    } catch (error) {
-      if (error instanceof StarWalkBudgetExhaustedError) {
-        // An individual walk that ran out of budget is a rejected sample.
-        continue
-      }
-      throw error
-    }
-
-    // Gate (a): every colour one 4-connected component, by this module's
-    // own flood fill rather than the walk's internal gate.
-    if (!regionsConnected(walked.colours, n)) {
-      continue
-    }
-
-    // Gate (b): the base (production) solver places nothing on the board.
-    const base = propagateStarBoard(walked.colours, n)
-    if (base.solved || base.stars.length !== 0) {
-      // The walk's stop condition is basePlaced === 0; reaching this line
-      // is an internal invariant violation, reported loudly.
-      throw new Error(
-        `star battle technique-tier invariant violated: accepted walk board is base-solvable ` +
-          `(n=${n}, seed=${rng.seed}, walk=${walk}, placed=${base.stars.length})`,
-      )
-    }
-
-    // Gate (c): uniqueness certified by the full catalogue + case-splitting
-    // (a complete sound-rule solve is a uniqueness certificate), with the
-    // exact counter agreeing for the small sides, as in the fallback.
-    const certified = solveStarCatalogue(walked.colours, n, { csDepth: 1 })
-    if (!certified.solved) {
-      throw new Error(
-        `star battle technique-tier invariant violated: accepted walk board failed the catalogue certificate ` +
-          `(n=${n}, seed=${rng.seed}, walk=${walk})`,
-      )
-    }
-    if (n <= 5 && countStarSolutions(walked.colours, n, 2) !== 1) {
-      continue
-    }
-
-    // Gate (d): the difficulty target — the tier's FULL contract via
-    // {@link techniqueTierAcceptsBasis} (for 'challenging' that is k = 1
-    // AND a non-line-confinement witness, not k alone). THE ACCEPTANCE
-    // TRAP, enforced structurally: `measureMinimumBasis` enumerates ALL
-    // 16 confinement subsets explicitly and verifies their solving family
-    // is upward-closed (throwing on violation) — k is never inferred from
-    // the full-catalogue certificate above, which with a non-monotone
-    // engine would prove nothing about subset solves. For 'contradiction'
-    // the walk's meter guarantees the deepest subset stalls; the
-    // enumeration here is the explicit, independent check.
-    const basis = measureMinimumBasis(walked.colours, n)
-    lastK = basis.k
-    lastWitness = basis.rules
-    if (!techniqueTierAcceptsBasis(difficulty, basis)) {
-      continue
-    }
-
-    // Gate (e): the shape gate, re-verified with this module's own
-    // instruments — the union-find adjacency scan of structure.ts, not the
-    // walk's bookkeeping. The walk stops only at defect 0, so reaching the
-    // continue below means the walk's internal gate disagrees with this
-    // measurement; a rejected sample is the safe answer (mirrors gate (a)).
-    const structure = measureStarBoardStructure(walked.colours, n)
-    if (!starShapeSatisfied(structure, STAR_TIER_SHAPE_GATE) || !structure.connected) {
+    // The generation contract's primary gate, verbatim: the exact counter
+    // must prove exactly one solution. For these paintings it always
+    // agrees with the certificate; running it at every size (not just
+    // n ≤ 5) is the belt to the certificate's braces.
+    if (countStarSolutions(colours, n, 2) !== 1) {
       continue
     }
 
     const puzzle: StarBattlePuzzle = {
       n,
-      seed: rng.seed,
-      colours: walked.colours,
-      solution: walked.solution,
+      seed: request.seed,
+      colours,
+      solution: permutation,
     }
     assertStarBattlePuzzle(puzzle)
-    // The board signature (signature.ts), measured on the ACCEPTED endpoint
-    // AFTER every gate passed, reusing the acceptance-time basis so the
-    // 16-subset enumeration does not run twice. It travels with the board
-    // as reportable data; it is never an acceptance input — the descent is
-    // an attractor ladder, and a signature gate would reject 100% of
-    // reachable endpoints (signature.ts module doc).
-    const signature = measureStarBoardSignature(walked.colours, n, basis)
-    // `waves` here is the full-catalogue wave count of the accepted board —
-    // the base subset places nothing on a technique tier by definition.
-    // `csPasses`/`csTrials` travel with the board: the measured cost of
-    // the certificate, reported for the difficulty grader.
     return Object.freeze({
       puzzle,
       waves: certified.waves,
       difficulty,
-      csPasses: certified.csPasses,
-      csTrials: certified.csTrials,
-      signature,
+      fallback: true,
     })
   }
-
-  throw new StarTechniqueTierBudgetExhaustedError({
-    n,
-    seed: rng.seed,
-    difficulty,
-    targetK,
-    walks: TECHNIQUE_WALK_ATTEMPTS,
-    lastK,
-    lastWitness,
-    elapsedMs: performance.now() - startedAt,
-    reason: 'walk-attempts',
-  })
+  throw new Error(
+    `star battle fallback made no certified board (n=${n}, seed=${request.seed}); the strip construction is theorem-backed, so this is an internal invariant violation`,
+  )
 }

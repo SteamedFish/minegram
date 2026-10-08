@@ -8,10 +8,13 @@ import {
 import {
   STAR_DIFFICULTY_TIERS,
   createStarBattleMessageHandler,
+  isStarBattleProgressMessage,
   isStarBattleWorkerResponse,
   isStarDifficulty,
   type StarBattleRequestMessage,
-  type StarBattleWorkerResponse,
+  type StarBattleWorkerMessage,
+  type StarGenerationOptions,
+  type StarGenerationProgress,
 } from './starBattleWorker'
 
 // ======================================================================================
@@ -38,7 +41,7 @@ const PUZZLE: StarBattlePuzzle = Object.freeze({
 const BOARD: StarGeneratedBoard = Object.freeze({
   puzzle: PUZZLE,
   waves: 3,
-  difficulty: 'starter',
+  difficulty: 'challenging',
 })
 
 const REQUEST: StarBattleRequestMessage = Object.freeze({
@@ -47,14 +50,14 @@ const REQUEST: StarBattleRequestMessage = Object.freeze({
   generationId: 4,
   n: 4,
   seed: 42,
-  difficulty: 'starter',
+  difficulty: 'challenging',
 })
 
 function runHandler(
   generate: (request: StarGenerationRequest) => StarGeneratedBoard,
   message: unknown = REQUEST,
-): readonly StarBattleWorkerResponse[] {
-  const responses: StarBattleWorkerResponse[] = []
+): readonly StarBattleWorkerMessage[] {
+  const responses: StarBattleWorkerMessage[] = []
   const handle = createStarBattleMessageHandler(generate, (response) => {
     responses.push(response)
   })
@@ -76,7 +79,7 @@ describe('star battle Worker protocol', () => {
 
     const responses = runHandler(generate)
 
-    expect(received).toEqual({ n: 4, seed: 42, difficulty: 'starter' })
+    expect(received).toEqual({ n: 4, seed: 42, difficulty: 'challenging' })
     expect(responses).toHaveLength(1)
     expect(responses[0]).toEqual({
       type: 'star-generation/succeeded',
@@ -84,7 +87,7 @@ describe('star battle Worker protocol', () => {
       generationId: 4,
       puzzle: PUZZLE,
       waves: 3,
-      difficulty: 'starter',
+      difficulty: 'challenging',
     })
   })
 
@@ -163,7 +166,7 @@ describe('star battle Worker protocol', () => {
 
   it('treats a cancellation for an unknown identity as a no-op', () => {
     const generate = (): StarGeneratedBoard => BOARD
-    const responses: StarBattleWorkerResponse[] = []
+    const responses: StarBattleWorkerMessage[] = []
     const handle = createStarBattleMessageHandler(generate, (response) => {
       responses.push(response)
     })
@@ -179,7 +182,7 @@ describe('star battle Worker protocol', () => {
     // A synchronous generator finishes inside the first handle call, so the
     // only reachable superseded path is a generator that re-enters the handler
     // (a pathological engine). The abort guard must still drop that answer.
-    const responses: StarBattleWorkerResponse[] = []
+    const responses: StarBattleWorkerMessage[] = []
     let handle: (message: unknown) => void = () => {}
     const reentrant = (_request: StarGenerationRequest): StarGeneratedBoard => {
       handle({ type: 'star-generation/cancel', requestId: 17, generationId: 4 })
@@ -196,6 +199,223 @@ describe('star battle Worker protocol', () => {
 })
 
 // ======================================================================================
+// Progress
+// ======================================================================================
+
+describe('star battle Worker progress', () => {
+  function runProgressHandler(
+    generate: (
+      request: StarGenerationRequest,
+      options?: StarGenerationOptions,
+    ) => StarGeneratedBoard,
+    message: unknown = REQUEST,
+  ): readonly StarBattleWorkerMessage[] {
+    const responses: StarBattleWorkerMessage[] = []
+    const handle = createStarBattleMessageHandler(generate, (response) => {
+      responses.push(response)
+    })
+    handle(message)
+    return responses
+  }
+
+  it('posts each tick the engine reports, with the request identity attached', () => {
+    const generate = (
+      _request: StarGenerationRequest,
+      options?: StarGenerationOptions,
+    ): StarGeneratedBoard => {
+      options?.onProgress?.({ candidates: 3, accepted: 0, phase: 'sampling' })
+      options?.onProgress?.({ candidates: 12, accepted: 1, phase: 'grading' })
+      return BOARD
+    }
+
+    const responses = runProgressHandler(generate)
+
+    expect(responses).toHaveLength(3)
+    expect(responses[0]).toEqual({
+      type: 'star-generation/progress',
+      requestId: 17,
+      generationId: 4,
+      candidates: 3,
+      accepted: 0,
+      phase: 'sampling',
+    })
+    expect(responses[1]).toEqual({
+      type: 'star-generation/progress',
+      requestId: 17,
+      generationId: 4,
+      candidates: 12,
+      accepted: 1,
+      phase: 'grading',
+    })
+    expect(responses[2]).toMatchObject({ type: 'star-generation/succeeded' })
+  })
+
+  it('never posts a progress tick for a cancelled generation', () => {
+    const responses: StarBattleWorkerMessage[] = []
+    let handle: (message: unknown) => void = () => {}
+    const generate = (
+      _request: StarGenerationRequest,
+      options?: StarGenerationOptions,
+    ): StarGeneratedBoard => {
+      handle({ type: 'star-generation/cancel', requestId: 17, generationId: 4 })
+      options?.onProgress?.({ candidates: 1, accepted: 0, phase: 'sampling' })
+      return BOARD
+    }
+    handle = createStarBattleMessageHandler(generate, (response) => {
+      responses.push(response)
+    })
+
+    handle(REQUEST)
+
+    expect(responses).toHaveLength(0)
+  })
+
+  it('drops a progress tick once a new request has superseded the generation', () => {
+    const responses: StarBattleWorkerMessage[] = []
+    let handle: (message: unknown) => void = () => {}
+    const generate = (
+      request: StarGenerationRequest,
+      options?: StarGenerationOptions,
+    ): StarGeneratedBoard => {
+      if (request.seed === 42) {
+        handle({ ...REQUEST, requestId: 18, generationId: 5, seed: 7 })
+        options?.onProgress?.({ candidates: 1, accepted: 0, phase: 'sampling' })
+      }
+      return BOARD
+    }
+    handle = createStarBattleMessageHandler(generate, (response) => {
+      responses.push(response)
+    })
+
+    handle(REQUEST)
+
+    expect(responses).toHaveLength(1)
+    expect(responses[0]).toMatchObject({
+      type: 'star-generation/succeeded',
+      requestId: 18,
+      generationId: 5,
+    })
+  })
+
+  it('stops posting progress after the generation has succeeded', () => {
+    const responses: StarBattleWorkerMessage[] = []
+    let stash: ((progress: StarGenerationProgress) => void) | undefined
+    const generate = (
+      _request: StarGenerationRequest,
+      options?: StarGenerationOptions,
+    ): StarGeneratedBoard => {
+      stash = options?.onProgress
+      return BOARD
+    }
+    const handle = createStarBattleMessageHandler(generate, (response) => {
+      responses.push(response)
+    })
+
+    handle(REQUEST)
+    expect(responses).toHaveLength(1)
+    expect(responses[0]).toMatchObject({ type: 'star-generation/succeeded' })
+
+    // A pathological engine that fires a stashed callback after the answer
+    // must not leak a tick: the generation has settled, so nothing posts.
+    stash?.({ candidates: 4, accepted: 0, phase: 'repairing' })
+    expect(responses).toHaveLength(1)
+  })
+
+  it('stops posting progress after the generation has failed', () => {
+    const responses: StarBattleWorkerMessage[] = []
+    let stash: ((progress: StarGenerationProgress) => void) | undefined
+    const generate = (
+      _request: StarGenerationRequest,
+      options?: StarGenerationOptions,
+    ): StarGeneratedBoard => {
+      stash = options?.onProgress
+      throw new Error('no certified board exists')
+    }
+    const handle = createStarBattleMessageHandler(generate, (response) => {
+      responses.push(response)
+    })
+
+    handle(REQUEST)
+    expect(responses).toHaveLength(1)
+    expect(responses[0]).toMatchObject({ type: 'star-generation/failed' })
+
+    stash?.({ candidates: 4, accepted: 0, phase: 'repairing' })
+    expect(responses).toHaveLength(1)
+  })
+
+  it('drops an invalid tick from a lying engine instead of posting it or failing', () => {
+    const generate = (
+      _request: StarGenerationRequest,
+      options?: StarGenerationOptions,
+    ): StarGeneratedBoard => {
+      options?.onProgress?.({ candidates: -1, accepted: 0, phase: 'sampling' })
+      options?.onProgress?.({ candidates: 1.5, accepted: 0, phase: 'sampling' })
+      // A lying engine reporting a phase outside the wire protocol.
+      const lying = { candidates: 2, accepted: 0, phase: 'weaving' } as unknown as StarGenerationProgress
+      options?.onProgress?.(lying)
+      return BOARD
+    }
+
+    const responses = runProgressHandler(generate)
+
+    // The malformed ticks are advisory: dropped, never posted, and the
+    // healthy generation still answers with its board.
+    expect(responses).toHaveLength(1)
+    expect(responses[0]).toMatchObject({ type: 'star-generation/succeeded' })
+  })
+})
+
+// ======================================================================================
+// Progress guard
+// ======================================================================================
+
+describe('isStarBattleProgressMessage', () => {
+  const TICK: Record<string, unknown> = {
+    type: 'star-generation/progress',
+    requestId: 1,
+    generationId: 1,
+    candidates: 3,
+    accepted: 0,
+    phase: 'sampling',
+  }
+
+  it('accepts a well-formed progress message', () => {
+    expect(isStarBattleProgressMessage(TICK)).toBe(true)
+  })
+
+  it('rejects a tick whose candidate count is negative, fractional, or non-numeric', () => {
+    expect(isStarBattleProgressMessage({ ...TICK, candidates: -1 })).toBe(false)
+    expect(isStarBattleProgressMessage({ ...TICK, candidates: 1.5 })).toBe(false)
+    expect(isStarBattleProgressMessage({ ...TICK, candidates: '3' })).toBe(false)
+    expect(isStarBattleProgressMessage({ ...TICK, candidates: Number.NaN })).toBe(false)
+    expect(isStarBattleProgressMessage({ ...TICK, candidates: Number.POSITIVE_INFINITY })).toBe(
+      false,
+    )
+  })
+
+  it('rejects a tick whose accepted count is negative or non-numeric', () => {
+    expect(isStarBattleProgressMessage({ ...TICK, accepted: -1 })).toBe(false)
+    expect(isStarBattleProgressMessage({ ...TICK, accepted: 0.5 })).toBe(false)
+    expect(isStarBattleProgressMessage({ ...TICK, accepted: '1' })).toBe(false)
+  })
+
+  it('rejects a tick with an unknown phase', () => {
+    expect(isStarBattleProgressMessage({ ...TICK, phase: 'weaving' })).toBe(false)
+    expect(isStarBattleProgressMessage({ ...TICK, phase: null })).toBe(false)
+  })
+
+  it('rejects a tick with a missing or non-positive identity', () => {
+    expect(isStarBattleProgressMessage({ ...TICK, requestId: 0 })).toBe(false)
+    expect(isStarBattleProgressMessage({ ...TICK, generationId: -1 })).toBe(false)
+    expect(isStarBattleProgressMessage({ candidates: 3, accepted: 0, phase: 'sampling' })).toBe(
+      false,
+    )
+  })
+})
+
+
+
+// ======================================================================================
 // Response guard
 // ======================================================================================
 
@@ -208,7 +428,7 @@ describe('isStarBattleWorkerResponse', () => {
         generationId: 1,
         puzzle: PUZZLE,
         waves: 2,
-        difficulty: 'steady',
+        difficulty: 'expert',
       }),
     ).toBe(true)
   })
@@ -221,7 +441,7 @@ describe('isStarBattleWorkerResponse', () => {
         generationId: 1,
         puzzle: { ...PUZZLE, solution: [0, 0, 0, 0] },
         waves: 2,
-        difficulty: 'steady',
+        difficulty: 'expert',
       }),
     ).toBe(false)
   })
@@ -234,7 +454,23 @@ describe('isStarBattleWorkerResponse', () => {
         generationId: 1,
         puzzle: PUZZLE,
         waves: 0,
-        difficulty: 'steady',
+        difficulty: 'expert',
+      }),
+    ).toBe(false)
+  })
+
+  it('rejects progress messages: the terminal guard narrows the store to succeeded', () => {
+    // The store reads succeeded-only fields off this guard's narrowed result,
+    // so progress — however well-formed — must fail it and be handled by
+    // isStarBattleProgressMessage instead.
+    expect(
+      isStarBattleWorkerResponse({
+        type: 'star-generation/progress',
+        requestId: 1,
+        generationId: 1,
+        candidates: 3,
+        accepted: 0,
+        phase: 'sampling',
       }),
     ).toBe(false)
   })
@@ -279,8 +515,6 @@ describe('difficulty tiers', () => {
     // matches and the test above passes. This pins what the ids actually are, which is the
     // part a reader needs to trust.
     expect([...STAR_DIFFICULTIES]).toEqual([
-      'starter',
-      'steady',
       'challenging',
       'expert',
       'contradiction',
@@ -288,8 +522,12 @@ describe('difficulty tiers', () => {
   })
 
   it('guards the tier boundary, failing closed on anything else', () => {
-    expect(isStarDifficulty('starter')).toBe(true)
     expect(isStarDifficulty('challenging')).toBe(true)
+    // `starter` and `steady` were retired when the engine dropped to three tiers. A guard that
+    // still accepted them would let the worker advertise a tier the generator cannot produce,
+    // which is exactly the failure the store's persisted-preference path has to survive too.
+    expect(isStarDifficulty('starter')).toBe(false)
+    expect(isStarDifficulty('steady')).toBe(false)
     expect(isStarDifficulty('impossible')).toBe(false)
     expect(isStarDifficulty(null)).toBe(false)
     expect(isStarDifficulty(3)).toBe(false)

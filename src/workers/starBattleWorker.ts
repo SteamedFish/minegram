@@ -12,6 +12,13 @@
  * STAR_DIFFICULTY_TIERS} so the tier list has one runtime home on the UI side
  * of the seam; the engine export remains the source of truth for what gets
  * GENERATED.
+ *
+ * While a board is printing, the handler forwards the engine's progress
+ * callbacks as `star-generation/progress` messages — the store already
+ * consumes them. A tick is advisory: it is validated as strictly as the
+ * terminal responses, but a bad tick is dropped, never a failure, and a tick
+ * for a superseded or cancelled generation is dropped too, because a late bar
+ * for a board that is never coming is worse than no bar.
  */
 import {
   assertStarBattlePuzzle,
@@ -23,6 +30,9 @@ import {
   STAR_DIFFICULTIES,
   type StarDifficulty,
   type StarGeneratedBoard,
+  type StarGenerationOptions,
+  type StarGenerationPhase,
+  type StarGenerationProgress,
   type StarGenerationRequest,
 } from '../engine/starBattle/construct'
 
@@ -65,13 +75,56 @@ export interface StarBattleFailedMessage {
   readonly failure: GameFailureDiagnostics
 }
 
+/**
+ * The mid-generation message the Worker posts while a board is printing.
+ * `candidates` counts the candidate colourings tried so far, `accepted` is
+ * 0 or 1 (a board is certified at most once), and `phase` names the stage
+ * the generator is in. There is deliberately no total: the generator cannot
+ * know how many candidates a board needs, so the count of what has actually
+ * happened is the whole truth the UI can show.
+ */
+export interface StarBattleProgressMessage {
+  readonly type: 'star-generation/progress'
+  readonly requestId: number
+  readonly generationId: number
+  readonly candidates: number
+  readonly accepted: number
+  readonly phase: StarGenerationPhase
+}
+
 export type StarBattleWorkerResponse = StarBattleSucceededMessage | StarBattleFailedMessage
+
+/**
+ * Everything the Worker posts in response to a request: the terminal pair
+ * plus mid-generation progress. `StarBattleWorkerResponse` stays terminal-
+ * only because the store narrows on `isStarBattleWorkerResponse` and then
+ * reads succeeded-only fields; progress rides its own message type and its
+ * own guard, and the store validates it before the terminal path.
+ */
+export type StarBattleWorkerMessage = StarBattleWorkerResponse | StarBattleProgressMessage
+
+/**
+ * `StarGenerationPhase`, `StarGenerationProgress` and `StarGenerationOptions`
+ * are the ENGINE's exports, re-exported here unchanged rather than copied.
+ *
+ * This seam originally carried structural duplicates, written before the engine
+ * exported them, and they compiled only because a fewer-parameter function is
+ * assignable to a two-parameter type. That agreement holds until one side moves
+ * and the mismatch surfaces somewhere unrelated, so the types now have exactly
+ * one definition and this module is the UI's import site for them.
+ */
+export type {
+  StarGenerationPhase,
+  StarGenerationProgress,
+  StarGenerationOptions,
+}
 
 export type StarBattlePuzzleGenerator = (
   request: StarGenerationRequest,
+  options?: StarGenerationOptions,
 ) => StarGeneratedBoard
 
-export type StarBattlePostMessage = (message: StarBattleWorkerResponse) => void
+export type StarBattlePostMessage = (message: StarBattleWorkerMessage) => void
 
 // --------------------------------------------------------------------------------------
 // Difficulty tiers — the engine's list, re-exported as the UI-side runtime home
@@ -103,6 +156,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isPositiveSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+const STAR_GENERATION_PHASES: readonly StarGenerationPhase[] = ['sampling', 'repairing', 'grading']
+
+/** The payload half of the progress protocol: counts and phase, no identity. */
+function isStarGenerationProgress(value: unknown): value is StarGenerationProgress {
+  return (
+    isRecord(value) &&
+    isNonNegativeSafeInteger(value.candidates) &&
+    isNonNegativeSafeInteger(value.accepted) &&
+    typeof value.phase === 'string' &&
+    (STAR_GENERATION_PHASES as readonly string[]).includes(value.phase)
+  )
 }
 
 function hasIdentity(
@@ -219,7 +289,8 @@ export function mapStarGenerationResult(
  * instance, or Error crosses the request boundary. `generateStarBattle` is
  * synchronous, so a cancellation cannot interleave with a running generation —
  * the abort check after the call exists so the protocol stays honest for a
- * future async generator, and so a superseded generation never posts.
+ * future async generator, and so a superseded generation never posts its
+ * answer or a progress tick.
  */
 export function createStarBattleMessageHandler(
   generate: StarBattlePuzzleGenerator,
@@ -258,11 +329,46 @@ export function createStarBattleMessageHandler(
 
     let response: StarBattleWorkerResponse | null = null
     try {
-      const result = generate({
-        n: request.n,
-        seed: request.seed,
-        difficulty: request.difficulty,
-      })
+      const result = generate(
+        {
+          n: request.n,
+          seed: request.seed,
+          difficulty: request.difficulty,
+        },
+        {
+          onProgress: (progress) => {
+            // A tick from a superseded or cancelled generation must never
+            // post: the client already moved on, and a live bar for a board
+            // that is never coming is worse than none. The same identity
+            // check guards the terminal path below — and, because `active`
+            // is cleared when this generation settles, it also silences a
+            // callback a pathological engine stashed and fires after the
+            // answer posted.
+            if (active !== current || signal.aborted) {
+              return
+            }
+            // Progress is advisory, so an engine tick that fails the protocol
+            // guard is dropped, never posted and never a failure — the
+            // asymmetric counterpart to the terminal path, where a malformed
+            // result must fail the generation.
+            if (!isStarGenerationProgress(progress)) {
+              return
+            }
+            try {
+              postMessage({
+                type: 'star-generation/progress',
+                requestId: request.requestId,
+                generationId: request.generationId,
+                candidates: progress.candidates,
+                accepted: progress.accepted,
+                phase: progress.phase,
+              })
+            } catch {
+              // The Worker may be terminating mid-generation.
+            }
+          },
+        },
+      )
       if (active === current && !signal.aborted) {
         response = mapStarGenerationResult(request, result)
       }
@@ -287,6 +393,15 @@ export function createStarBattleMessageHandler(
       // The Worker may be terminating while the synchronous call returns.
     }
   }
+}
+
+export function isStarBattleProgressMessage(value: unknown): value is StarBattleProgressMessage {
+  return (
+    isRecord(value) &&
+    value.type === 'star-generation/progress' &&
+    hasIdentity(value) &&
+    isStarGenerationProgress(value)
+  )
 }
 
 export function isStarBattleWorkerResponse(value: unknown): value is StarBattleWorkerResponse {
@@ -317,7 +432,7 @@ export function isStarBattleWorkerResponse(value: unknown): value is StarBattleW
 // --------------------------------------------------------------------------------------
 
 interface WorkerScope {
-  postMessage(message: StarBattleWorkerResponse): void
+  postMessage(message: StarBattleWorkerMessage): void
   addEventListener(
     type: 'message',
     listener: (event: MessageEvent<unknown>) => void,

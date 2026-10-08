@@ -287,7 +287,7 @@ describe('star battle store: generation', () => {
     const request = lastRequest(harness.workers[0]!)
     expect(request.n).toBe(SIDE)
     expect(request.seed).toBe(normalizeRandomSeed('star-fixture-a'))
-    expect(request.difficulty).toBe('starter')
+    expect(request.difficulty).toBe('challenging')
 
     succeed(harness.workers[0]!, PUZZLE_A)
     expect(harness.snapshot().status).toBe('playing')
@@ -321,7 +321,7 @@ describe('star battle store: generation', () => {
     succeed(harness.workers[0]!, PUZZLE_A)
     expect(harness.snapshot().status).toBe('playing')
 
-    harness.store.actions.setDifficulty('steady')
+    harness.store.actions.setDifficulty('expert')
     succeed(harness.workers[1]!, PUZZLE_B)
 
     expect(harness.snapshot().status).toBe('playing')
@@ -332,10 +332,10 @@ describe('star battle store: generation', () => {
   it('ignores a difficulty change that arrives while a round is printing', () => {
     const harness = createHarness()
     harness.store.actions.startNewRound('star-fixture-a')
-    harness.store.actions.setDifficulty('steady')
+    harness.store.actions.setDifficulty('expert')
 
     expect(harness.workers).toHaveLength(1)
-    expect(harness.snapshot().difficulty).toBe('steady')
+    expect(harness.snapshot().difficulty).toBe('expert')
   })
 
   it('drops a stale generation result whose identity matches no in-flight request', () => {
@@ -353,7 +353,7 @@ describe('star battle store: generation', () => {
       generationId: request.generationId + 999,
       puzzle: PUZZLE_B,
       waves: 2,
-      difficulty: 'starter',
+      difficulty: 'challenging',
     })
     expect(harness.snapshot().status).toBe('generating')
     expect(harness.snapshot().puzzle).toBeNull()
@@ -369,7 +369,7 @@ describe('star battle store: generation', () => {
       generationId: request.generationId,
       puzzle: PUZZLE_B,
       waves: 2,
-      difficulty: 'starter',
+      difficulty: 'challenging',
     })
     expect(harness.snapshot().version).toBe(version)
     expect(harness.snapshot().puzzle).toBe(PUZZLE_A)
@@ -1049,7 +1049,7 @@ describe('star battle store: win interlude', () => {
     expect(harness.workers).toHaveLength(2)
     const request = lastRequest(harness.workers[1]!)
     expect(request.seed).toBe(deriveRandomSeed(firstSeed, STAR_NEXT_ROUND_SEED_LABEL))
-    expect(request.difficulty).toBe('starter')
+    expect(request.difficulty).toBe('challenging')
     expect(harness.timers.pending()).toBe(0)
 
     succeed(harness.workers[1]!, PUZZLE_B)
@@ -1160,9 +1160,32 @@ describe('star battle store: lifecycle', () => {
   })
 
   it('a store with an explicit initial difficulty prefers it over the persisted one', () => {
-    window.localStorage.setItem('minegram.star-battle.difficulty', 'challenging')
-    const harness = createHarness({ difficulty: 'steady' })
-    expect(harness.snapshot().difficulty).toBe('steady')
+    window.localStorage.setItem('minegram.star-battle.difficulty', 'expert')
+    const harness = createHarness({ difficulty: 'contradiction' })
+    expect(harness.snapshot().difficulty).toBe('contradiction')
+  })
+
+  it('a fresh player with no persisted preference gets the default tier, challenging', () => {
+    const harness = createHarness()
+    expect(harness.snapshot().difficulty).toBe('challenging')
+    expect(window.localStorage.getItem('minegram.star-battle.difficulty')).toBeNull()
+  })
+
+  it('a persisted retired tier id is rejected and falls back to the default', () => {
+    for (const retired of ['starter', 'steady'] as const) {
+      window.localStorage.setItem('minegram.star-battle.difficulty', retired)
+      const harness = createHarness()
+      // Reject-and-fallback, never a dead id on the snapshot: the retired
+      // tiers left with the spanning-tree construction, and a returning
+      // player who stored one lands on the shallowest surviving tier.
+      expect(harness.snapshot().difficulty).toBe('challenging')
+    }
+  })
+
+  it('a persisted surviving tier id is honoured', () => {
+    window.localStorage.setItem('minegram.star-battle.difficulty', 'contradiction')
+    const harness = createHarness()
+    expect(harness.snapshot().difficulty).toBe('contradiction')
   })
 })
 
@@ -1207,7 +1230,7 @@ function feasibilityEntry(
 }
 
 /**
- * A full five-tier report: every tier `available` unless overridden. Tests
+ * A full three-tier report: every tier `available` unless overridden. Tests
  * assert status transitions and their consequences — never wall-clock sample
  * counts, which the probe's own documentation says vary with machine load.
  */
@@ -1215,8 +1238,6 @@ function feasibilityReport(
   overrides: Partial<Record<StarDifficulty, StarTierFeasibility>> = {},
 ): StarTierFeasibilityReport {
   return Object.freeze({
-    starter: overrides.starter ?? feasibilityEntry('available', 8, 8),
-    steady: overrides.steady ?? feasibilityEntry('available', 8, 8),
     challenging: overrides.challenging ?? feasibilityEntry('available', 48, 48),
     expert: overrides.expert ?? feasibilityEntry('available', 48, 48),
     contradiction: overrides.contradiction ?? feasibilityEntry('available', 48, 48),
@@ -1281,7 +1302,7 @@ describe('star battle store: tier availability', () => {
     gates.get(SIDE)!.resolve(feasibilityReport({ contradiction: UNAVAILABLE(48) }))
     await flushProbe()
     expect(publishes).toBe(settled)
-    expect(harness.snapshot().difficulty).toBe('starter')
+    expect(harness.snapshot().difficulty).toBe('challenging')
   })
 
   it('recovers a dead selection parked on a failure: retargets to the nearest working tier and prints it', async () => {
@@ -1334,27 +1355,28 @@ describe('star battle store: tier availability', () => {
   it('never yanks a playing round: the retarget applies to the next launch', async () => {
     const gate = createDeferred<StarTierFeasibilityReport>()
     const harness = createHarness({
-      difficulty: 'starter',
+      difficulty: 'challenging',
       feasibilityProbe: () => gate.promise,
     })
     harness.store.actions.startNewRound('star-fixture-a')
     succeed(harness.workers[0]!, PUZZLE_A)
 
-    gate.resolve(feasibilityReport({ starter: UNAVAILABLE(8) }))
+    gate.resolve(feasibilityReport({ challenging: UNAVAILABLE(48) }))
     await flushProbe()
 
     // The live board is untouched…
     expect(harness.snapshot().status).toBe('playing')
     expect(harness.snapshot().puzzle).toBe(PUZZLE_A)
     expect(harness.workers).toHaveLength(1)
-    // …but the dead preference moved on for the next launch.
-    expect(harness.snapshot().difficulty).toBe('steady')
+    // …but the dead preference moved on for the next launch: challenging is
+    // the shallowest tier, so the search for a working tier goes upward.
+    expect(harness.snapshot().difficulty).toBe('expert')
   })
 
   it('prefers the nearest working tier on either side when everything below is dead', async () => {
     const gate = createDeferred<StarTierFeasibilityReport>()
     const harness = createHarness({
-      difficulty: 'starter',
+      difficulty: 'contradiction',
       feasibilityProbe: () => gate.promise,
     })
     harness.store.actions.startNewRound('star-fixture-a')
@@ -1362,14 +1384,15 @@ describe('star battle store: tier availability', () => {
 
     gate.resolve(
       feasibilityReport({
-        starter: UNAVAILABLE(8),
-        steady: UNAVAILABLE(8),
-        challenging: UNAVAILABLE(48),
+        contradiction: UNAVAILABLE(48),
+        expert: UNAVAILABLE(48),
       }),
     )
     await flushProbe()
 
-    expect(harness.snapshot().difficulty).toBe('expert')
+    // Everything above is dead too: the search walks downward past the dead
+    // expert and lands on the shallowest tier that prints.
+    expect(harness.snapshot().difficulty).toBe('challenging')
   })
 
   it('measurement never blocks or delays the first board', async () => {

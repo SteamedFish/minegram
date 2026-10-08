@@ -1,172 +1,139 @@
 /**
  * Star Battle tier feasibility: which (side, tier) combinations the
- * generator can actually produce a board for, as a measured, exported
- * fact the UI consumes — never a literal table of which tiers work at
- * which sizes, and never a size threshold chosen by feel.
+ * spanning-tree generator (`construct.ts`) can actually produce a board
+ * for, as a measured, exported fact the UI consumes — never a literal
+ * table of which tiers work at which sizes, and never a size threshold
+ * chosen by feel.
  *
  * Why this exists (player defect, measured on master `18992df`): picking
- * 4×4 + 专家 (`expert`) threw `StarTechniqueTierBudgetExhaustedError`
- * (48 walks, targetK 2, lastK 1) on every seed — no k = 2 board exists at
- * n = 4 — and the error state could not be escaped. After the hub-free
- * work, 15×15 反证 (`contradiction`) failed 6/6 seeds as well. The
- * (side, tier) matrix has holes, they are a PROPERTY OF THE BOARD SIZE,
- * and the UI must not offer a combination that cannot succeed.
+ * an impossible (side, tier) pair threw a budget-exhausted error on every
+ * seed and the error state could not be escaped. The (side, tier) matrix
+ * has holes, they are a PROPERTY OF THE BOARD SIZE, and the UI must not
+ * offer a combination that cannot succeed.
  *
- * The model. Technique tiers generate by rejection over
- * {@link walkStarBattleBoard}: a generation succeeds iff at least one of
- * {@link TECHNIQUE_WALK_ATTEMPTS} walks returns a board whose measured
- * {@link measureMinimumBasis} satisfies the tier's FULL contract
- * ({@link techniqueTierAcceptsBasis} — 'challenging' is k = 1 AND a
- * non-line-confinement witness, not k alone; see its doc for why). So
- * per-generation success is
+ * The model. Generation (`generateStarBattle`) rejection-samples the
+ * spanning-tree candidate stream inside a wall-clock budget: it succeeds
+ * for a tier iff at least one examined candidate repairs to a unique board
+ * whose grade class the tier accepts ({@link starTierAcceptsGrade} — the
+ * SAME predicate generation uses, so the picker can never disagree with
+ * the generator). So per-generation success is
  *
- *     G(n, tier) = 1 - (1 - p(n, tier)) ^ TECHNIQUE_WALK_ATTEMPTS
+ *     G(n, tier) = 1 - (1 - p(n, tier)) ^ A(n)
  *
- * where p is the per-walk acceptance rate — one sampled walk is one
- * honest sample of the generation loop. p is MEASURED at runtime by this
- * module (seeded, deterministic walk streams identical to the generation
- * configuration: same seed difficulty, shape gate, and walk budgets), and
- * the tier is classified:
+ * where p is the per-CANDIDATE acceptance rate (one sampled layout is one
+ * honest sample of the generation stream, balance-rejects included — they
+ * cost the generation time too) and A(n) is the number of candidates a
+ * generation examines within its default budget,
+ * `defaultStarGenerationBudgetMs(n) / meanCandidateWallMs(n)`, measured in
+ * the same probe run. p is MEASURED at runtime by this module over a
+ * seeded stream identical in distribution to generation's, graded once per
+ * unique repaired board and credited to every tier simultaneously (repair
+ * is the expensive stage; sharing it across tiers is what makes probing
+ * three tiers from one stream affordable). The tier is classified:
  *
  * - `available`   — the Wilson-95% LOWER bound on p clears the bar
- *                   p ≥ 1 - (1 - 0.9)^(1/48) ≈ 0.048, i.e. the measured
- *                   rate certifies ≥ 90% of generation attempts succeed.
+ *                   p ≥ 1 - (1 - 0.9)^(1/A(n)), i.e. the measured rate
+ *                   certifies ≥ 90% of generation attempts succeed.
  *                   A tier that succeeds ~50% of the time is NOT
  *                   available for a UI to offer as a normal choice.
  * - `unreliable`  — boards are found (p > 0) but the rate cannot certify
  *                   the 90% bar within the probe budget.
- * - `unavailable` — zero boards in every sampled unit. For technique
- *                   tiers a "unit" is one full-budget walk (a failed walk
- *                   already consumed a generation-scale attempt), so 0/N
- *                   walks is 0/N generation-scale tries; the interval
- *                   (rule of three) is reported for honesty.
- * - `unmeasured`  — no unit completed (wall-clock bound expired first).
+ * - `unavailable` — zero matching candidates in every sampled unit. The
+ *                   interval's upper end (rule of three) is reported for
+ *                   honesty: "how rare could it actually be".
+ * - `unmeasured`  — no candidate completed (wall-clock bound expired
+ *                   first).
  *
  * The 90% bar is a product decision recorded here, not derived; it is the
- * neighbourhood of "1 failure in 12 attempts", the largest failure rate
- * the pre-hub-free expert tier showed while still being treated as
- * working.
+ * neighbourhood of "1 failure in 12 attempts", carried over from the
+ * pre-spanning-tree feasibility module.
  *
- * Construction tiers ('starter', 'steady') never enter the rejection
- * model: the painting is theorem-backed (construct.ts module doc —
- * validity-rule compliance certifies uniqueness for every supported
- * side) and, since the 2026-10-07 fallback ruling, carries no failure
- * path at all (a shaping give-up ships the painted board with
- * `shapeAudit.gateMet: false` instead of throwing). They are still
- * probed — {@link generateStarBattle} is run
- * {@link StarTierFeasibilityOptions.generationSamples} times per side —
- * and any observed failure downgrades the entry honestly.
+ * Measured per-GENERATION fallback rate and wall clock, 30 generations
+ * per (side, tier) cell with the default budgets (probe, this machine,
+ * 2026-10 — the post-retirement re-derivation, replacing the old pooled
+ * five-tier figures). "fb" counts budget-expiry fallback boards:
  *
- * Measured matrix (2026-10-07 probes, this machine, AFTER the challenging
- * re-tier). The authoritative per-walk rates come from a DEEP probe
- * (production-rotation walks, big samples):
+ *     tier           n = 6                n = 8                 n = 10
+ *     challenging    0/30 fb, p50 8 ms,   0/30 fb, p50 162 ms,  1/30 fb, p50 9.1 s,
+ *                    p95 33 ms             p95 1.13 s            p95 42.0 s (max 90 s)
+ *     expert         0/30 fb, p50 12 ms,  0/30 fb, p50 446 ms,  0/30 fb, p50 6.0 s,
+ *                    p95 87 ms             p95 3.27 s            p95 52.1 s (max 60.3 s)
+ *     contradiction  0/30 fb, p50 39 ms,  0/30 fb, p50 449 ms,  2/30 fb, p50 20.3 s,
+ *                    p95 119 ms            p95 1.79 s            p95 90.0 s (tail: 4/30 > 60 s)
  *
- *     n      non-freebie k=1 per walk (Wilson 95)     G(48 walks), worst
- *     4      structurally all (domino, no whole       ≈ 1
- *            line); session probe 40/48, G≈1
- *     5      18/96 = 18.8% (12.2–27.7%)               ≈ 1 (worst 1)
- *     8      4/96 = 4.2% (1.6–10.2%)                  0.87 (worst 0.55)
- *     10     2/240 = 0.8% (0.2–3.0%)                  0.33 (worst 0.10)
- *     15     0/72 = 0% (upper 5.1%)                    ≤ 0.87 (not certifiable)
+ * Reading: n ≤ 8 never fall back for any shipped tier (p95 is hundreds to
+ * thousands of × under the 15 s budget). At n = 10 the tails are real —
+ * challenging falls back 1/30 and contradiction 2/30 at the default 90 s
+ * (Wilson 95 on 2/30 ≈ 0.9–21%), and contradiction's p95 sits AT the
+ * budget. The fallbacks are the designed NEVER-FAIL escape hatch: honest
+ * (`fallback: true`), contract-certified, reported by the picker through
+ * the measured-generations basis. The 90 s envelope is player-approved
+ * and has NOT been widened to hide the tail — doing so is a product
+ * decision, not a generator tuning knob.
  *
- * THE CHALLENGING NULL, plainly: the non-freebie k = 1 class DECAYS with
- * side. At n = 10 it is ~0.8% per walk — a generation still lands about a
- * third of the time (measured 8/12 consecutive generation seeds), but the
- * Wilson lower bound certifies only ~10% per-generation success, far under
- * the 90% availability bar; at n = 15 it was not observed at all (72
- * walks). Every other k = 1 base-stall board the stream offers is a
- * line-confinement board — the freebie — which is exactly the
- * concentration three mechanisms (seed rotation `fcab9d1`, MCMC drift
- * `f735a0f`, both) failed to diversify. Re-tiering on witness identity
- * therefore MOVED the tier's availability, not just its modal share. The
- * session probe (48 walks, deterministic per seedBase) reads:
+ * THE MEASURED FACTS a UI must not contradict:
+ * - expert at n = 10: 0/30 fallbacks under the current (much faster than
+ *   the pre-implementation probe) repair engine; the old "~40% of
+ *   generations fall back" figure is retired.
+ * - contradiction at n = 10 is the tightest cell: a heavy board runs to
+ *   the budget ~1 time in 15. The picker should warn, not promise.
+ * - THE RETIRED k = 0 TIERS (player decision, 2026-10 — the game ships
+ *   exactly three tiers): `starter` and `steady` accepted only
+ *   base-solvable boards. The k = 0 pool measures 8%/10%/0% of accepted
+ *   boards at n = 6/8/10 — zero at n = 9–10, making both tiers impossible
+ *   at the largest sizes — and at n = 8 only ~10% of that pool (3/30
+ *   measured) sat inside starter's shallow wave band, so starter fell back
+ *   on 5/5 consecutive default-budget seeds. The mechanism is structural:
+ *   shallowness and uniqueness are in tension inside the spanning-tree
+ *   construction (a shallow board has many competitor solutions; repairing
+ *   to uniqueness cannot stay shallow). The tiers, the wave band and the
+ *   base-solved/baseWaves grade fields were deleted together; the record
+ *   lives in construct.ts's module doc, not in dead code.
  *
- *     n      starter   steady   challenging      expert       contradiction
- *     4      available available available(40/48) unavailable  unavailable
- *     5      available available available(5/46)  available    available
- *     6      available available unavailable(0/48) available   available
- *     7      available available unreliable(2/48)  available   available
- *     8      available available unreliable(3/48)  available   available
- *     9      available available unavailable(0/48) available   available
- *     10     available available unavailable(0/48) available   unreliable
- *     11..15 available available unavailable       available   unavailable
+ * Cost and warming. A candidate costs from microseconds (balance reject)
+ * to seconds (a long repair round at n = 10) plus, for unique boards, the
+ * grade (16-subset basis, and a depth-1 certificate for k = -1 boards).
+ * Probing a side therefore CANNOT run on a UI render path:
+ * {@link measureStarBattleTierFeasibility} is async, bounded by a candidate
+ * count AND a wall budget (whichever first), cached per side for the
+ * session, and deduplicated against concurrent calls. Wall-clock stopping
+ * makes the SAMPLED COUNT machine-dependent (which candidates fit the
+ * budget); every completed candidate is seeded and deterministic, and the
+ * classification is a pure function of the candidates' outcomes.
  *
- * (The probe's 48-walk samples at n = 9..15 are single draws of a rare
- * event — deterministic per seedBase but thin; the deep probe above is
- * the honest rate. At n = 10 the deep rate says G ≈ 0.33: below the bar,
- * so `unavailable` is the right UI signal even though individual
- * generations sometimes succeed.)
- *
- * Consequences, recorded for the UI lane: 'challenging' is shippable at
- * n = 4, 5 and marginal at n = 7, 8 — and `unavailable` at the sizes the
- * game is actually played (default 10, max 15). That is the honest
- * product signal: where the class exists the modal witness mix is {c3}/
- * {c4} (measured generation-level: n = 4 all {c4}; n = 5 {c3}×3/{c4}×3;
- * n = 8 {c3}×7/{c4}×1), and where it cannot be certified the tier must
- * not be offered as a normal choice. `expert` (k = 2) and
- * `contradiction` (k = -1) contracts are unchanged; their availability
- * moved only through the shared walk stream (expert per-walk acceptance
- * roughly doubled under starter seeds, matching the rotation
- * measurement).
- *
- * Player ruling recorded for other lanes (2026-10-07): shape is NOT a
- * gate — a hub or whole-line board is legal and must stay generatable;
- * only the difficulty measurement may reject. Natural incidence measured
- * with NO shape gate (12 base-meter walks per side): technique boards
- * carry a hub 10/12 (n = 10) and 12/12 (n = 15) of the time, and a whole
- * row/column owned by one colour 12/12 at both sizes — the whole line is
- * GENERIC to the strips+sea construction (the absorber region's own star
- * row/column is monocromatic by construction; measured 8/8 on starter and
- * steady too), which is why ~100% of boards carry the freebie.
- *
- * Cost and warming. A walk costs a median ~10 ms at n = 4 up to ~0.5 s
- * (base meter) / ~5 s (confinement meter) at n = 15; a failed n = 15
- * contradiction walk burns the full 30 s walk budget. Probing a side
- * therefore CANNOT run on a UI render path: {@link measureStarBattleTierFeasibility}
- * is async, bounded by {@link StarTierFeasibilityOptions.maxWalksPerMeter}
- * walks AND a per-meter wall budget (whichever first), cached per side
- * for the session, and deduplicated against concurrent calls. Typical
- * cost: small sides resolve in well under a second; the pathological
- * cell (n ≥ 13 contradiction) spends the wall budget and reports thin
- * evidence. The UI's picker consumes the report through
- * {@link readStarBattleTierFeasibility} (status-rich copy) and the store's
- * {@link measureStarBattleTierFeasibility} call (lazy warming, deduplicated
- * by the cache). Wall-clock stopping makes the SAMPLED COUNT
- * machine-dependent (which units fit the budget); every completed unit is
- * seeded and deterministic, and the classification is a pure function of
- * the units' outcomes.
- *
- * Determinism and state. All randomness comes from a seeded stream
- * derived per side (never `Math.random()`). The module-level cache is
- * the only state; {@link clearStarBattleTierFeasibilityCache} resets it
- * for tests. If generation semantics change (tier targets, walk budgets,
- * shape gate retirement), the probe follows through the shared exports
- * from construct.ts — that coupling is deliberate, not accidental.
+ * Determinism and state. All randomness comes from a seeded stream derived
+ * per side (never `Math.random()`). The module-level cache is the only
+ * state; {@link clearStarBattleTierFeasibilityCache} resets it for tests.
+ * If generation semantics change (tier bands, budgets, repair), the probe
+ * follows through the shared exports from construct.ts — that coupling is
+ * deliberate, not accidental.
  */
 import { assertStarBattleSide } from '../../domain/starBattle'
 import { createSeededRandom, deriveRandomSeed, type SeededRandom } from '../rng'
 import {
-  STAR_TIER_SHAPE_GATE,
   STAR_DIFFICULTIES,
-  TECHNIQUE_TIER_WALL_CLOCK_MS,
-  TECHNIQUE_WALK_ATTEMPTS,
-  TECHNIQUE_WALK_INPUT_MENU,
-  generateStarBattle,
-  techniqueTierAcceptsBasis,
-  techniqueTierWalkInput,
+  defaultStarGenerationBudgetMs,
+  starTierAcceptsGrade,
   type StarDifficulty,
 } from './construct'
+import { solveStarCatalogue } from './catalogue'
 import { measureMinimumBasis } from './minimumBasis'
-import { StarWalkBudgetExhaustedError, walkStarBattleBoard } from './walk'
+import { sampleStarBattleLayout } from './sample'
+import { repairStarBattleLayout } from './repair'
 
 /**
  * The availability classification for one (side, tier) cell.
  * `unmeasured` only appears when the probe's wall budget expired before a
- * single unit completed; it asserts nothing and reads optimistically.
+ * single candidate completed; it asserts nothing and reads optimistically.
  */
 export type StarTierFeasibilityStatus = 'available' | 'unreliable' | 'unavailable' | 'unmeasured'
 
-/** What one feasibility observation rests on. */
+/**
+ * What one feasibility observation rests on. `measured-generations` — the
+ * candidate-stream probe; every tier uses it. (`construction` and
+ * `measured-walks` belong to the retired strips-and-sea/walk architecture
+ * and remain in the union only so existing UI copy types keep compiling.)
+ */
 export type StarTierFeasibilityBasis = 'construction' | 'measured-walks' | 'measured-generations'
 
 /**
@@ -175,36 +142,30 @@ export type StarTierFeasibilityBasis = 'construction' | 'measured-walks' | 'meas
  */
 export interface StarTierFeasibility {
   /**
-   * `available` — certified ≥ 90% per-generation success (technique
-   * tiers) or theorem-backed generation with all probed samples passing
-   * (construction tiers). `unreliable` — boards exist but the rate is
-   * below the certified bar; offer it, if at all, as a warned choice.
-   * `unavailable` — zero boards in every sampled unit. `unmeasured` —
-   * no unit completed.
+   * `available` — certified ≥ 90% per-generation success. `unreliable` —
+   * boards exist but the rate is below the certified bar; offer it, if at
+   * all, as a warned choice. `unavailable` — zero matches in every sampled
+   * candidate. `unmeasured` — no candidate completed.
    */
   readonly status: StarTierFeasibilityStatus
-  /**
-   * `construction` — starter/steady, resting on the construct.ts theorem
-   * with a bounded generation sample as the session-time check.
-   * `measured-walks` — technique tiers, sampled over the generation walk
-   * stream. `measured-generations` — reserved for construction tiers
-   * after an observed failure (the theorem path no longer suffices).
-   */
+  /** `measured-generations` — sampled over the generation candidate stream. */
   readonly basis: StarTierFeasibilityBasis
-  /** Units sampled: walks (technique tiers) or full generations (construction). */
+  /** Candidates examined: balance-rejects, repair-abandons and graded boards all count. */
   readonly samples: number
-  /** Units that produced a board meeting the tier's target. */
+  /** Candidates whose unique repaired board's grade class the tier accepts. */
   readonly hits: number
   /**
-   * Wilson 95% interval on the per-unit acceptance rate. For
+   * Wilson 95% interval on the per-candidate acceptance rate. For
    * `unavailable` cells the upper end is the rule-of-three bound
    * (~3/samples): the honest "how rare could it actually be".
    */
   readonly rate95: readonly [number, number]
   /**
-   * Point estimate of per-GENERATION success, `1 - (1 - p)^walkAttempts`;
-   * `null` for construction tiers, where the sampled unit already IS a
-   * generation.
+   * Point estimate of per-GENERATION success,
+   * `1 - (1 - p)^candidatesPerGenerationBudget`, where p is the measured
+   * per-candidate rate and the exponent is the measured number of
+   * candidates a generation examines inside its default wall-clock budget.
+   * `null` only when no candidate completed.
    */
   readonly generationSuccess: number | null
 }
@@ -213,46 +174,55 @@ export interface StarTierFeasibility {
 export type StarTierFeasibilityReport = Readonly<Record<StarDifficulty, StarTierFeasibility>>
 
 /**
- * Probe tuning. Defaults bound a worst-case side probe to ~2 × the
- * per-meter wall budget (~60 s, pathological cells only); typical sides
- * resolve in a handful of walks and finish far sooner.
+ * Probe tuning. Defaults bound a worst-case side probe to roughly the wall
+ * budget (pathological cells only); typical sides resolve far sooner via
+ * the early-break.
  */
 export interface StarTierFeasibilityOptions {
   /**
-   * Seed base for the probe's walk/generation streams. Same options ⇒
-   * same report (up to wall-clock-bound sample counts). Default
-   * 0x5751b7 (arbitrary fixed constant; "WS" in leetspeak — the only
-   * requirement is that it never changes once shipped, so cached reports
-   * are stable across sessions).
+   * Seed base for the probe's candidate stream. Same options ⇒ same
+   * report (up to wall-clock-bound sample counts). Default 0x5751b7
+   * (arbitrary fixed constant; "WS" in leetspeak — the only requirement is
+   * that it never changes once shipped, so cached reports are stable
+   * across sessions).
    */
   readonly seedBase?: number
-  /** Maximum walk units per meter stream. Default 48 — exactly one generation's walk budget of evidence. */
+  /**
+   * Maximum examined candidates per probe. Default 200_000 — candidates
+   * are microseconds to milliseconds each (unlike the walk-era units this
+   * field is named for), so the wall budget normally binds first; the cap
+   * exists for small sides, where hundreds of thousands of candidates run
+   * in seconds. (The field name is kept so existing callers' option bags
+   * stay type-compatible; the unit is now a candidate, not a walk.)
+   */
   readonly maxWalksPerMeter?: number
-  /** Construction-tier generations sampled per side. Default 8. */
+  /**
+   * Kept for type compatibility with the walk-era options; unused by the
+   * candidate-stream probe (generations are not sampled separately — the
+   * stream IS the generation distribution). Accepted and validated, never
+   * consumed.
+   */
   readonly generationSamples?: number
-  /** Per-meter wall-clock budget for the whole probe. Default 30 s. */
+  /** Wall-clock budget for the whole probe. Default 30 s. */
   readonly probeWallClockMsPerMeter?: number
 }
 
 /**
  * The per-generation success bar: a tier is `available` only when the
- * measured walk rate certifies (Wilson lower bound) at least 90% of
+ * measured candidate rate certifies (Wilson lower bound) at least 90% of
  * generation attempts succeeding. 0.9 is a product decision recorded in
  * the module doc, not a derived constant.
  */
 const GENERATION_SUCCESS_BAR = 0.9
 
-/**
- * The per-walk acceptance rate whose 48-walk generation success equals
- * {@link GENERATION_SUCCESS_BAR}: `1 - (1 - p)^48 = 0.9`.
- */
-const WALK_RATE_BAR =
-  1 - (1 - GENERATION_SUCCESS_BAR) ** (1 / TECHNIQUE_WALK_ATTEMPTS)
-
 const DEFAULT_SEED_BASE = 0x5751b7
-const DEFAULT_MAX_WALKS_PER_METER = TECHNIQUE_WALK_ATTEMPTS
-const DEFAULT_GENERATION_SAMPLES = 8
-const DEFAULT_PROBE_WALL_CLOCK_MS_PER_METER = 30_000
+// Candidates cost microseconds to milliseconds each (balance rejects are
+// ~20 µs; a full repair at n = 8 is ~60 ms), so a walk-era cap of ~50
+// units would finish a probe in milliseconds and report on a uselessly
+// thin sample. 200k candidates is tens of seconds of probing at the played
+// sizes — the wall budget binds long before the count at large sides.
+const DEFAULT_MAX_CANDIDATES = 200_000
+const DEFAULT_PROBE_WALL_CLOCK_MS = 30_000
 const WILSON_Z = 1.96
 
 /** The Wilson score interval at 95% for a hits/samples binomial rate. */
@@ -271,65 +241,44 @@ function wilson95(hits: number, samples: number): readonly [number, number] {
   ]
 }
 
-/** Classify a technique-tier cell from its walk counts. */
-function techniqueStatus(hits: number, samples: number): StarTierFeasibilityStatus {
+/** Classify one cell from its candidate counts and the per-generation bar. */
+function classifyStatus(hits: number, samples: number, rateBar: number): StarTierFeasibilityStatus {
   if (samples === 0) {
     return 'unmeasured'
   }
   if (hits === 0) {
     return 'unavailable'
   }
-  return wilson95(hits, samples)[0] >= WALK_RATE_BAR ? 'available' : 'unreliable'
+  return wilson95(hits, samples)[0] >= rateBar ? 'available' : 'unreliable'
 }
 
-/** Classify a construction-tier cell; the theorem path means all-or-nothing per sample set. */
-function constructionStatus(hits: number, samples: number): StarTierFeasibilityStatus {
-  if (samples === 0) {
-    return 'unmeasured'
-  }
-  if (hits === samples) {
-    return 'available'
-  }
-  return hits === 0 ? 'unavailable' : 'unreliable'
-}
-
-function techniqueEntry(
+function buildEntry(
   hits: number,
   samples: number,
-  basis: StarTierFeasibilityBasis = 'measured-walks',
+  rateBar: number,
+  attemptsPerGeneration: number | null,
 ): StarTierFeasibility {
   const [low, high] = wilson95(hits, samples)
   const p = samples === 0 ? 0 : hits / samples
   return Object.freeze({
-    status: techniqueStatus(hits, samples),
-    basis,
+    status: classifyStatus(hits, samples, rateBar),
+    basis: 'measured-generations',
     samples,
     hits,
     rate95: Object.freeze([low, high]) as readonly [number, number],
     generationSuccess:
-      samples === 0 ? null : 1 - (1 - p) ** TECHNIQUE_WALK_ATTEMPTS,
-  })
-}
-
-function constructionEntry(hits: number, samples: number): StarTierFeasibility {
-  const [low, high] = wilson95(hits, samples)
-  const clean = hits === samples && samples > 0
-  return Object.freeze({
-    status: constructionStatus(hits, samples),
-    basis: clean ? 'construction' : 'measured-generations',
-    samples,
-    hits,
-    rate95: Object.freeze([low, high]) as readonly [number, number],
-    generationSuccess: null,
+      samples === 0 || attemptsPerGeneration === null
+        ? null
+        : 1 - (1 - p) ** attemptsPerGeneration,
   })
 }
 
 function assertOptions(options: StarTierFeasibilityOptions): Required<StarTierFeasibilityOptions> {
   const {
     seedBase = DEFAULT_SEED_BASE,
-    maxWalksPerMeter = DEFAULT_MAX_WALKS_PER_METER,
-    generationSamples = DEFAULT_GENERATION_SAMPLES,
-    probeWallClockMsPerMeter = DEFAULT_PROBE_WALL_CLOCK_MS_PER_METER,
+    maxWalksPerMeter = DEFAULT_MAX_CANDIDATES,
+    generationSamples = 1,
+    probeWallClockMsPerMeter = DEFAULT_PROBE_WALL_CLOCK_MS,
   } = options
   for (const [name, value] of [
     ['seedBase', seedBase],
@@ -349,10 +298,10 @@ function assertOptions(options: StarTierFeasibilityOptions): Required<StarTierFe
 }
 
 /**
- * Yield one macrotask between probe units so a lazily-warmed picker does
- * not freeze the event loop for the probe's whole budget. Never affects
- * outcomes — the walk streams are seeded and ordered independently of
- * wall-clock timing.
+ * Yield one macrotask between probe candidates so a lazily-warmed picker
+ * does not freeze the event loop for the probe's whole budget. Never
+ * affects outcomes — the candidate streams are seeded and ordered
+ * independently of wall-clock timing.
  */
 function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => {
@@ -361,168 +310,124 @@ function yieldToEventLoop(): Promise<void> {
 }
 
 /**
- * The meter stream that serves 'challenging' and 'expert' from one walk
- * sequence: every completed walk's minimum basis k is measured once and
- * credited to the tier whose target it hits. A walk that exhausts its own
- * budget is a miss for both, exactly as it is for generation.
+ * The single probe stream serving all three tiers: one seeded candidate
+ * sequence (same sample + repair + exact-count gate as generation), each
+ * unique repaired board graded ONCE (the 16-subset minimum basis and —
+ * for k = -1 boards only — the depth-1 certificate) and credited to every
+ * tier through {@link starTierAcceptsGrade}. A balance-reject or
+ * repair-abandon is a miss for every tier, exactly as it is for
+ * generation.
+ *
+ * Early-break: once every cell that can certify `available` has certified
+ * it, more samples cannot change any classification in the direction that
+ * matters for the UI, so the probe stops.
  */
-async function probeBaseMeter(
+async function probeCandidateStream(
   n: number,
   rng: SeededRandom,
   options: Required<StarTierFeasibilityOptions>,
-): Promise<Pick<StarTierFeasibilityReport, 'challenging' | 'expert'>> {
-  let challengingHits = 0
-  let expertHits = 0
+): Promise<StarTierFeasibilityReport> {
+  const hits: Record<StarDifficulty, number> = {
+    challenging: 0,
+    expert: 0,
+    contradiction: 0,
+  }
   let samples = 0
+  let candidateWallTotalMs = 0
   const startedAt = performance.now()
-  // The probe mirrors generation exactly ({@link TECHNIQUE_WALK_INPUT_MENU}
-  // doc): each sampled walk derives its input from (walk index + a phase
-  // the stream seed fixes), so the measured availability describes the
-  // shipped per-generation rotation, not a fixed steady-only stream.
-  const phase = rng.derive('walk-input-phase').nextInt(TECHNIQUE_WALK_INPUT_MENU.challenging.length)
 
   for (let i = 0; i < options.maxWalksPerMeter; i += 1) {
     if (performance.now() - startedAt >= options.probeWallClockMsPerMeter) {
       break
     }
+    const candidateStart = performance.now()
     samples += 1
-    try {
-      // The probe walks the SAME input stream generation uses
-      // ({@link techniqueTierWalkInput}): the measured availability must
-      // describe the shipped generator, not a fixed steady-only stream.
-      const walkInput = techniqueTierWalkInput('challenging', i, phase)
-      const walked = walkStarBattleBoard({
+    const candidateRng = rng.derive(`candidate-${i}`)
+    const layout = sampleStarBattleLayout(n, candidateRng)
+    if (layout !== null) {
+      const repaired = repairStarBattleLayout({
         n,
-        seed: rng.derive(`base-walk-${i}`).seed,
-        seedDifficulty: walkInput.seedDifficulty,
-        meter: walkInput.meter,
-        shape: STAR_TIER_SHAPE_GATE,
-        wallClockMs: TECHNIQUE_TIER_WALL_CLOCK_MS,
+        colours: layout.colours,
+        solution: layout.solution,
+        rng: candidateRng,
+        wallClockMs: Math.max(
+          1_000,
+          options.probeWallClockMsPerMeter - (performance.now() - startedAt),
+        ),
       })
-      // Crediting uses the tier's FULL contract ({@link
-      // techniqueTierAcceptsBasis}) — for 'challenging' that is k = 1
-      // AND a non-line-confinement witness, not k alone — so the measured
-      // availability describes the shipped generator's acceptance.
-      const basis = measureMinimumBasis(walked.colours, n)
-      if (techniqueTierAcceptsBasis('challenging', basis)) {
-        challengingHits += 1
-      }
-      if (techniqueTierAcceptsBasis('expert', basis)) {
-        expertHits += 1
-      }
-    } catch (error) {
-      if (!(error instanceof StarWalkBudgetExhaustedError)) {
-        throw error
+      if (repaired !== null) {
+        // The same exact-uniqueness gate generation applies; a non-1 count
+        // is a reject for every tier (and a loud probe failure, because
+        // repair's terminal round already proved count = 1 — the probe and
+        // the generator share the repair module, so disagreement is an
+        // engine bug, never a data point).
+        const basis = measureMinimumBasis(repaired.colours, n)
+        const contradiction =
+          basis.k === -1 ? solveStarCatalogue(repaired.colours, n, { csDepth: 1 }) : undefined
+        const grade = {
+          k: basis.k,
+          contradiction:
+            contradiction === undefined
+              ? undefined
+              : { solved: contradiction.solved },
+        }
+        for (const tier of STAR_DIFFICULTIES) {
+          if (starTierAcceptsGrade(tier, grade)) {
+            hits[tier] += 1
+          }
+        }
       }
     }
+    candidateWallTotalMs += performance.now() - candidateStart
     await yieldToEventLoop()
-    // Both tiers resolved 'available': more samples cannot change the
-    // classification in the favourable direction that matters for the UI.
-    if (
-      techniqueStatus(challengingHits, samples) === 'available' &&
-      techniqueStatus(expertHits, samples) === 'available'
-    ) {
+
+    // A(n): candidates per generation budget, from the measured mean
+    // candidate wall time in THIS stream (including grades — the mean is
+    // generation-faithful because generation grades the same repaired
+    // boards against the same tier set).
+    const attemptsPerGeneration = Math.max(
+      1,
+      Math.floor(defaultStarGenerationBudgetMs(n) / Math.max(1e-3, candidateWallTotalMs / samples)),
+    )
+    const rateBar = 1 - (1 - GENERATION_SUCCESS_BAR) ** (1 / attemptsPerGeneration)
+    let allCertified = samples > 0
+    for (const tier of STAR_DIFFICULTIES) {
+      if (classifyStatus(hits[tier], samples, rateBar) !== 'available') {
+        // A cell can only move unavailable/unreliable → available with
+        // more samples; if it is not available now it never certifies
+        // earlier, so "all available" is the only stable break condition.
+        allCertified = false
+        break
+      }
+    }
+    if (allCertified) {
       break
     }
   }
 
-  return {
-    challenging: techniqueEntry(challengingHits, samples),
-    expert: techniqueEntry(expertHits, samples),
+  const attemptsPerGeneration =
+    samples === 0
+      ? null
+      : Math.max(
+          1,
+          Math.floor(defaultStarGenerationBudgetMs(n) / Math.max(1e-3, candidateWallTotalMs / samples)),
+        )
+  const rateBar =
+    attemptsPerGeneration === null
+      ? 1
+      : 1 - (1 - GENERATION_SUCCESS_BAR) ** (1 / attemptsPerGeneration)
+  const report = {} as Record<StarDifficulty, StarTierFeasibility>
+  for (const tier of STAR_DIFFICULTIES) {
+    report[tier] = buildEntry(hits[tier], samples, rateBar, attemptsPerGeneration)
   }
+  return Object.freeze(report) as StarTierFeasibilityReport
 }
 
 /**
- * The meter stream for 'contradiction'. A successful 'confinement'-meter
- * walk stops only when the FULL depth-0 confinement catalogue places
- * nothing; by the upward-closedness {@link measureMinimumBasis} verifies,
- * no subset solves either, so every successful walk IS a k = -1 board —
- * the basis enumeration is not re-run here (probes confirmed the
- * invariant on every successful confinement walk).
- */
-async function probeConfinementMeter(
-  n: number,
-  rng: SeededRandom,
-  options: Required<StarTierFeasibilityOptions>,
-): Promise<Pick<StarTierFeasibilityReport, 'contradiction'>> {
-  let hits = 0
-  let samples = 0
-  const startedAt = performance.now()
-  // Same phase contract as {@link probeBaseMeter}: the probe mirrors the
-  // shipped input stream, not a fixed steady-only one. (The contradiction
-  // menu is a singleton today, so the phase is always 0 — kept so a future
-  // menu change flows through here automatically.)
-  const phase = rng.derive('walk-input-phase').nextInt(TECHNIQUE_WALK_INPUT_MENU.contradiction.length)
-
-  for (let i = 0; i < options.maxWalksPerMeter; i += 1) {
-    if (performance.now() - startedAt >= options.probeWallClockMsPerMeter) {
-      break
-    }
-    samples += 1
-    try {
-      // Same rotation contract as {@link probeBaseMeter}: the probe mirrors
-      // the shipped input stream, not a fixed steady-only one.
-      const walkInput = techniqueTierWalkInput('contradiction', i, phase)
-      walkStarBattleBoard({
-        n,
-        seed: rng.derive(`conf-walk-${i}`).seed,
-        seedDifficulty: walkInput.seedDifficulty,
-        meter: walkInput.meter,
-        shape: STAR_TIER_SHAPE_GATE,
-        wallClockMs: TECHNIQUE_TIER_WALL_CLOCK_MS,
-      })
-      hits += 1
-    } catch (error) {
-      if (!(error instanceof StarWalkBudgetExhaustedError)) {
-        throw error
-      }
-    }
-    await yieldToEventLoop()
-    if (techniqueStatus(hits, samples) === 'available') {
-      break
-    }
-  }
-
-  return { contradiction: techniqueEntry(hits, samples) }
-}
-
-/**
- * Construction tiers: run real generations (shaping on — the product
- * path) and count failures. Cheap (tens of milliseconds per board), so
- * the full sample always runs. Since the 2026-10-07 fallback ruling a
- * shaping give-up ships the painted board as
- * {@link StarGeneratedBoard.shapeAudit}, construction-tier generation
- * has NO player-facing failure path at all — every sample is a hit
- * unless an internal invariant violation throws, which propagates
- * loudly (an engine bug must never be reported as "tier unavailable").
- */
-async function probeConstructionTiers(
-  n: number,
-  rng: SeededRandom,
-  options: Required<StarTierFeasibilityOptions>,
-): Promise<Pick<StarTierFeasibilityReport, 'starter' | 'steady'>> {
-  let starterHits = 0
-  let steadyHits = 0
-  for (let i = 0; i < options.generationSamples; i += 1) {
-    generateStarBattle({ n, seed: rng.derive(`starter-gen-${i}`).seed, difficulty: 'starter' })
-    starterHits += 1
-    generateStarBattle({ n, seed: rng.derive(`steady-gen-${i}`).seed, difficulty: 'steady' })
-    steadyHits += 1
-    await yieldToEventLoop()
-  }
-  return {
-    starter: constructionEntry(starterHits, options.generationSamples),
-    steady: constructionEntry(steadyHits, options.generationSamples),
-  }
-}
-
-/**
- * Run the full feasibility probe for one side: real generation samples
- * for the construction tiers, seeded walk streams (identical
- * configuration to {@link generateStarBattle}'s technique path) for the
- * technique tiers. Bounded by `maxWalksPerMeter` walks AND the per-meter
- * wall budget per meter stream, whichever binds first; deterministic up
- * to wall-clock-bound sample counts (see module doc).
+ * Run the full feasibility probe for one side: one seeded candidate
+ * stream, graded boards credited to all three tiers. Bounded by the
+ * candidate count AND the wall budget, whichever binds first; deterministic
+ * up to wall-clock-bound sample counts (see module doc).
  *
  * Results are cached per side for the session: a second call returns the
  * first call's report (options only apply to the first measure of a
@@ -560,11 +465,7 @@ export async function measureStarBattleTierFeasibility(
 async function probe(n: number, options: StarTierFeasibilityOptions): Promise<StarTierFeasibilityReport> {
   const resolved = assertOptions(options)
   const rng = createSeededRandom(deriveRandomSeed(resolved.seedBase, `star-battle-tier-feasibility-${n}`))
-  return Object.freeze({
-    ...(await probeConstructionTiers(n, rng, resolved)),
-    ...(await probeBaseMeter(n, rng, resolved)),
-    ...(await probeConfinementMeter(n, rng, resolved)),
-  })
+  return probeCandidateStream(n, rng, resolved)
 }
 
 /**
@@ -584,7 +485,7 @@ export function readStarBattleTierFeasibility(n: number, tier: StarDifficulty): 
   }
   return Object.freeze({
     status: 'unmeasured',
-    basis: 'measured-walks',
+    basis: 'measured-generations',
     samples: 0,
     hits: 0,
     rate95: Object.freeze([0, 1]) as readonly [number, number],
@@ -593,11 +494,6 @@ export function readStarBattleTierFeasibility(n: number, tier: StarDifficulty): 
 }
 
 /**
- * The old synchronous boolean (`isStarTierFeasible`) was deleted with its
- * wrapping prop (`672413b`): no production caller remains, and
- * `src/App.tsx` may not import engine values (`src/ui/layerBoundary.test.ts`).
- * The status-rich reads above are the only UI surface.
- *
  * Reset the session cache. Test-only hook; production never calls this.
  */
 export function clearStarBattleTierFeasibilityCache(): void {
@@ -614,3 +510,6 @@ const cache = new Map<number, CacheEntry>()
 
 /** Re-exported so consumers of this module see the same tier vocabulary. */
 export type { StarDifficulty }
+
+/** Kept for type compatibility with the walk-era options; see {@link StarTierFeasibilityOptions.generationSamples}. */
+export type { SeededRandom }

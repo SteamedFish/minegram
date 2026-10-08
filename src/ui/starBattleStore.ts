@@ -69,6 +69,7 @@ import {
 import { deriveRandomSeed, normalizeRandomSeed, type RandomSeed } from '../engine/rng'
 import { readStored, writeStored } from './components/storage'
 import {
+  isStarBattleProgressMessage,
   isStarBattleWorkerResponse,
   isStarDifficulty,
   type StarBattleRequestMessage,
@@ -287,7 +288,7 @@ const STAR_SIDE_STORAGE_KEY = 'minegram.star-battle.side'
 
 const STAR_LIVES_STORAGE_KEY = 'minegram.star-battle.lives'
 
-const DEFAULT_STAR_DIFFICULTY: StarDifficulty = 'starter'
+const DEFAULT_STAR_DIFFICULTY: StarDifficulty = 'challenging'
 
 /** A host with no document (a bare test, a worker) is treated as foreground. */
 const ALWAYS_VISIBLE: VisibilityProbe = Object.freeze({
@@ -344,6 +345,14 @@ export function createDefaultStarWorker(): StarWorkerEndpoint {
   }
 }
 
+/**
+ * The persisted tier preference is validated against the live tier
+ * vocabulary (`isStarDifficulty` narrows on the engine's STAR_DIFFICULTIES),
+ * never trusted on its own: a returning player who stored a retired id
+ * (`starter`/`steady`, removed with the spanning-tree construction) fails
+ * the check and lands on the default — explicit reject-and-fallback, so a
+ * dead id can never reach a generation request.
+ */
 function readPersistedDifficulty(storageKey: string): StarDifficulty {
   const stored = readStored(storageKey)
   return stored !== null && isStarDifficulty(stored) ? stored : DEFAULT_STAR_DIFFICULTY
@@ -390,45 +399,15 @@ function wireToAssertion(next: 'blank' | 'star' | null): 'blank' | 'star' | 'cle
 // Progress messages (the pinned wire protocol the worker lane emits)
 // --------------------------------------------------------------------------------------
 
-const STAR_PROGRESS_PHASES: readonly StarBattleProgressPhase[] = ['sampling', 'repairing', 'grading']
-
 /**
- * The mid-generation message the Worker posts while a board is printing.
- * The store owns this shape on the UI side of the seam — the worker module
- * will carry its own copy of the guard — so progress validation lives here
- * and never blocks on the parallel lane landing.
+ * The mid-generation message's shape and guard live in the worker module —
+ * one definition of the wire protocol, not a UI-side copy that can drift.
+ * The guard requires a POSITIVE requestId/generationId: the store's counters
+ * increment before assignment, so a legitimate identity is never 0, and the
+ * worker's request reader holds the same positive requirement. Anything the
+ * guard rejects is IGNORED, never a failure: progress is advisory, and a bad
+ * tick must not take down a generation that is otherwise healthy.
  */
-interface StarBattleProgressMessage extends StarBattleProgress {
-  readonly type: 'star-generation/progress'
-  readonly requestId: number
-  readonly generationId: number
-}
-
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-}
-
-/**
- * Everything about a progress message is validated before it is trusted, as
- * strictly as the succeeded/failed responses are. A malformed progress
- * message is IGNORED, never a failure: progress is advisory, and a bad tick
- * must not take down a generation that is otherwise healthy.
- */
-function isStarBattleProgressMessage(value: unknown): value is StarBattleProgressMessage {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false
-  }
-  const record = value as Record<string, unknown>
-  return (
-    record.type === 'star-generation/progress' &&
-    isNonNegativeSafeInteger(record.requestId) &&
-    isNonNegativeSafeInteger(record.generationId) &&
-    isNonNegativeSafeInteger(record.candidates) &&
-    isNonNegativeSafeInteger(record.accepted) &&
-    typeof record.phase === 'string' &&
-    (STAR_PROGRESS_PHASES as readonly string[]).includes(record.phase)
-  )
-}
 
 // --------------------------------------------------------------------------------------
 // The store
@@ -787,14 +766,15 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
     ) {
       return
     }
-    // Progress is advisory, so it is handled before the response validator
-    // (which knows nothing about it) and before the terminal clear below.
-    // A message that claims to be progress but fails validation is IGNORED,
-    // never a failure: a bad tick must not take down a healthy generation.
-    if (typeof data === 'object' && data !== null && (data as { type?: unknown }).type === 'star-generation/progress') {
-      if (!isStarBattleProgressMessage(data)) {
-        return
-      }
+    // Progress is advisory, so it is routed through its own guard before the
+    // terminal response validator (which knows nothing about it) and before
+    // the terminal clear below. A message that CLAIMS the progress type but
+    // fails the guard is ignored, never a failure — a bad tick must not take
+    // down a healthy generation — and a message that is neither progress nor
+    // a terminal response falls through to the invalid-response branch, so
+    // the routing of VALID messages is exhaustive by construction, driven by
+    // the two guards, rather than by a hand-written dispatch comparison.
+    if (isStarBattleProgressMessage(data)) {
       if (data.requestId !== requestId || data.generationId !== generationId) {
         return
       }
@@ -804,6 +784,19 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
         phase: data.phase,
       })
       publish()
+      return
+    }
+    // The one classification the guards cannot express: the message is not
+    // valid progress, but its type tag says it meant to be. Progress being
+    // advisory, that is dropped here, before the terminal validator would
+    // read it as an invalid response. This check classifies malformed
+    // traffic only; it never dispatches a valid message.
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      !Array.isArray(data) &&
+      (data as Record<string, unknown>).type === 'star-generation/progress'
+    ) {
       return
     }
     if (!isStarBattleWorkerResponse(data)) {

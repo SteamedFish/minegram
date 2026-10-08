@@ -7,6 +7,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import { MAX_STAR_SIDE, MIN_STAR_SIDE } from '../../domain/starBattle'
+import { createSeededRandom } from '../rng'
+import { admissibleStarPermutation } from './sample'
 import {
   DEFAULT_STAR_COUNT_CAP,
   countStarSolutions,
@@ -138,8 +140,10 @@ describe('countStarSolutions', () => {
     // (measured: 0/200 random plants unique at n = 9..13), so the honest
     // claims here are: the planted solution exists (count >= 1) and the
     // counter saturates honestly at the cap (count <= 2). The exhaust-every-
-    // branch path is pinned separately by the 0-solution board below.
-    const solution = [1, 3, 0, 2, 4, 6, 8, 10, 12, 5, 7, 9, 11]
+    // branch path is pinned separately by the 0-solution board below. The
+    // planted permutation is drawn from the sampler's admissible-permutation
+    // generator so the test stays correct at any MAX_STAR_SIDE.
+    const solution = admissibleStarPermutation(n, createSeededRandom(0xd15ea5e))
     const starColour = Array.from({ length: n }, (_, index) => index)
     for (let index = n - 1; index > 0; index -= 1) {
       const pick = Math.floor(rand() * (index + 1))

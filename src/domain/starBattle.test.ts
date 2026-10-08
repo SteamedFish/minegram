@@ -39,13 +39,16 @@ describe('star battle domain constants', () => {
     expect(STAR_LOCKED).toBe(3)
   })
 
-  it('exposes a defensible side range with the default at 10', () => {
+  it('exposes a defensible side range with the default at 8', () => {
     expect(MIN_STAR_SIDE).toBe(4)
-    // 15 is a product ceiling, not a solver one: production acceptance is the
-    // propagation certificate, and the palette/grid cover 20 colours. The test
-    // pins the VALUE so a future widening is a deliberate, visible change.
-    expect(MAX_STAR_SIDE).toBe(15)
-    expect(DEFAULT_STAR_SIDE).toBe(10)
+    // 10 is a product ceiling, not a solver one: the exact counter stays
+    // sub-millisecond through n = 13, but guided repair at n = 10 costs
+    // ~60 s per accepted board (measured 2026-10), so the largest shipped
+    // size is the explicitly-slow option and the default sits at 8 where
+    // repair lands in seconds. The test pins the VALUES so a future
+    // widening is a deliberate, visible change.
+    expect(MAX_STAR_SIDE).toBe(10)
+    expect(DEFAULT_STAR_SIDE).toBe(8)
     expect(DEFAULT_STAR_SIDE).toBeGreaterThan(MIN_STAR_SIDE)
     expect(DEFAULT_STAR_SIDE).toBeLessThan(MAX_STAR_SIDE)
   })
