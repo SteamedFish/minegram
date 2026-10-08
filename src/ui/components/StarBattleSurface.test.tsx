@@ -7,6 +7,7 @@ import {
   type StarBattleSurfaceProps,
   type StarMark,
 } from './StarBattleSurface'
+import { SLOW_STAR_SIDES } from './starBattleSlowSides'
 
 /**
  * The Star Battle surface's behavioural contract. Everything asserted here is
@@ -987,6 +988,66 @@ describe('StarBattleSurface — chrome', () => {
     for (const option of Array.from(options)) {
       expect(option.disabled).toBe(true)
     }
+  })
+
+  describe('measured slow sizes are marked on the control itself', () => {
+    // Every expectation below is derived from SLOW_STAR_SIDES, never a
+    // hand-copied list: a future change to the constant must move these
+    // assertions with it, or the marker dropping off a slow option fails
+    // here instead of shipping silently.
+    function sizeOption(side: number): {
+      input: HTMLInputElement
+      label: HTMLElement
+    } {
+      const input = container.querySelector<HTMLInputElement>(
+        `[data-testid='star-size'] input[value='${side}']`,
+      )
+      expect(input, `size option ${side} renders`).not.toBeNull()
+      const label = input?.closest('.mg-seg__item')?.querySelector('.mg-seg__label') ?? null
+      expect(label, `size option ${side} has its chip`).not.toBeNull()
+      return { input: input as HTMLInputElement, label: label as HTMLElement }
+    }
+
+    it('a slow side carries the tick on the chip and the cost in the accessible name', () => {
+      render({ minSide: 4, maxSide: 15 })
+      for (const side of SLOW_STAR_SIDES) {
+        const { input, label } = sizeOption(side)
+        expect(label.getAttribute('data-slow')).toBe('true')
+        expect(label.querySelector('.mg-star-size__slow'), `size ${side} keeps its marker`).not.toBeNull()
+        expect(input.getAttribute('aria-label')).toBe(`${side} — takes noticeably longer to generate`)
+        // The marker is decorative; the visible chip text stays the numeral.
+        expect(label.textContent?.trim()).toBe(String(side))
+      }
+    })
+
+    it('no option outside SLOW_STAR_SIDES is marked or named', () => {
+      render({ minSide: 4, maxSide: 15 })
+      const inputs = container.querySelectorAll<HTMLInputElement>(
+        "[data-testid='star-size'] input[type='radio']",
+      )
+      const marked = Array.from(inputs).filter(
+        (input) =>
+          input.closest('.mg-seg__item')?.querySelector('.mg-seg__label')?.getAttribute('data-slow') ===
+          'true',
+      )
+      expect(marked.map((input) => Number(input.value)).sort((a, b) => a - b)).toEqual(
+        [...SLOW_STAR_SIDES].sort((a, b) => a - b),
+      )
+      for (const input of Array.from(inputs)) {
+        if (SLOW_STAR_SIDES.includes(Number(input.value))) continue
+        expect(input.getAttribute('aria-label'), `size ${input.value} names no cost`).toBeNull()
+        expect(input.closest('.mg-seg__item')?.querySelector('.mg-seg__label')?.querySelector('.mg-star-size__slow')).toBeNull()
+      }
+    })
+
+    it('states the cost in the accessible name in Chinese, with identical meaning', () => {
+      render({ locale: 'zh', minSide: 4, maxSide: 15 })
+      for (const side of SLOW_STAR_SIDES) {
+        const { input, label } = sizeOption(side)
+        expect(input.getAttribute('aria-label')).toBe(`${side} — 生成所需时间明显更长`)
+        expect(label.getAttribute('data-slow')).toBe('true')
+      }
+    })
   })
 
   it('renders every starting-lives step in the given range, live max checked', () => {

@@ -340,6 +340,28 @@
   padding-inline: var(--sp-1);
 }
 
+/* A measured slow side: a quiet tick centred under the numeral. The tick is
+   absolutely positioned, so the chip keeps exactly the size and the wrap
+   rhythm of the un-marked control — the coarse-pointer floor forms.css sets
+   on .mg-seg__label and the 360px layout are untouched — and the radio's
+   accessible name is what carries the cost for a screen-reader user. The
+   tick is a measured fact, not an alarm: tertiary ink, no warning shape. */
+.mg-star-size .mg-seg__label[data-slow='true'] {
+  position: relative;
+}
+
+.mg-star-size__slow {
+  position: absolute;
+  inset-inline-start: 50%;
+  inset-block-end: 3px;
+  inline-size: 4px;
+  block-size: 4px;
+  margin-inline-start: -2px;
+  border-radius: var(--radius-pill);
+  background: var(--ink-3);
+  pointer-events: none;
+}
+
 /* Difficulty is the hand-rolled sibling of the shared SegmentedControl (it
    adds per-option availability), so it wears the same labelled-column
    structure: visible group label, pills, then the fine print beneath. */

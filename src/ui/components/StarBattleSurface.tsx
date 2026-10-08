@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { SegmentedControl } from './primitives'
+import { SLOW_STAR_SIDES } from './starBattleSlowSides'
 import type { StarMarkToken } from './starMarkTokens'
 
 /**
@@ -228,6 +229,12 @@ interface StarCopy {
     readonly label: string
     /** One line saying what N means here: an N × N grid carrying N stars. */
     readonly hint: string
+    /**
+     * The measured-cost suffix for a side in `SLOW_STAR_SIDES`, said in the
+     * option's accessible name — the cost is per-option, so it lives on the
+     * option, not in the general hint. A measured fact, phrased quietly.
+     */
+    readonly slowOption: string
   }
   readonly maxLives: {
     /** The group's visible label; the options are the numerals themselves. */
@@ -343,6 +350,7 @@ const en: StarCopy = {
   size: {
     label: 'Board size',
     hint: 'An N × N grid carrying N stars — larger is more stars to place, not just more cells.',
+    slowOption: 'takes noticeably longer to generate',
   },
   maxLives: {
     label: 'Starting lives',
@@ -444,6 +452,7 @@ const zhCN: StarCopy = {
   size: {
     label: '棋盘尺寸',
     hint: 'N × N 的棋盘要放 N 颗星——变大不只是格子变多，要放的星也更多。',
+    slowOption: '生成所需时间明显更长',
   },
   maxLives: {
     label: '初始生命',
@@ -1196,25 +1205,63 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
             </p>
           ) : null}
         </div>
-        {/* Board size: the same segmented idiom as difficulty, one chip per
-           supported side, the numerals themselves as the labels so nothing is
-           locale-specific. The checked chip is the store's configured side,
-           which is the live board's own n once one exists. */}
+        {/* Board size: the hand-rolled sibling of the shared SegmentedControl
+            (the same relationship difficulty has), because one option per
+            side must carry the measured generation cost: a side in
+            SLOW_STAR_SIDES wears a quiet tick on the chip and states the
+            cost in the option's accessible name, so a player — sighted or
+            screen-reader — knows it is the slow one before committing.
+            The cost is per-option, so it is on the option; the hint below
+            stays the general "what N means" line. The markup, ids and
+            classes are SegmentedControl's own, so the look, the radiogroup
+            semantics, and the narrow-screen full-width behaviour are
+            unchanged. */}
         <div className="mg-star-size" data-testid="star-size">
-          <SegmentedControl
-            id="mg-star-size"
-            label={copy.size.label}
-            hint={copy.size.hint}
-            value={String(props.side)}
-            options={boardSizes(props.minSide, props.maxSide).map((side) => ({
-              value: String(side),
-              label: String(side),
-            }))}
-            disabled={controlsDisabled}
-            onChange={(value) => {
-              props.onSizeChange(Number(value))
-            }}
-          />
+          <div className="mg-seg-group">
+            <span className="mg-field__label" id="mg-star-size-label">
+              {copy.size.label}
+            </span>
+            <div
+              className="mg-seg"
+              role="radiogroup"
+              aria-labelledby="mg-star-size-label"
+              aria-describedby="mg-star-size-hint"
+              id="mg-star-size"
+            >
+              {boardSizes(props.minSide, props.maxSide).map((side) => {
+                const optionId = `mg-star-size-${side}`
+                const slow = SLOW_STAR_SIDES.includes(side)
+                return (
+                  <span className="mg-seg__item" key={side}>
+                    <input
+                      className="mg-seg__input"
+                      type="radio"
+                      id={optionId}
+                      name="mg-star-size"
+                      value={String(side)}
+                      checked={props.side === side}
+                      disabled={controlsDisabled}
+                      aria-label={slow ? `${side} — ${copy.size.slowOption}` : undefined}
+                      onChange={() => {
+                        props.onSizeChange(side)
+                      }}
+                    />
+                    <label
+                      className="mg-seg__label"
+                      htmlFor={optionId}
+                      data-slow={slow ? 'true' : undefined}
+                    >
+                      {String(side)}
+                      {slow ? <span className="mg-star-size__slow" aria-hidden="true" /> : null}
+                    </label>
+                  </span>
+                )
+              })}
+            </div>
+            <p className="mg-field__hint" id="mg-star-size-hint">
+              {copy.size.hint}
+            </p>
+          </div>
         </div>
         {/* Starting lives: same idiom again, the live configured maximum as the
            checked chip, the domain range as the options. */}
