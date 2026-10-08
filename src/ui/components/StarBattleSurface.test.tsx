@@ -481,6 +481,75 @@ describe('StarBattleSurface — round states', () => {
   })
 })
 
+describe('StarBattleSurface — generation progress', () => {
+  const PROGRESS = { candidates: 1200, accepted: 0, phase: 'sampling' as const }
+
+  const indicator = (): HTMLElement | null => container.querySelector('[data-testid="star-progress"]')
+  const spoken = (): string => container.querySelector('.mg-star-live')?.textContent ?? ''
+
+  it('shows the phase and the candidate count while generating, and nothing otherwise', () => {
+    render({ puzzle: null, status: 'generating', progress: PROGRESS })
+    const bar = indicator()
+    expect(bar).not.toBeNull()
+    expect(bar?.getAttribute('data-phase')).toBe('sampling')
+    expect(bar?.textContent).toContain('Sampling colourings')
+    expect(bar?.textContent).toContain('1200')
+
+    // Idle and playing show no indicator at all.
+    render({ status: 'idle' })
+    expect(indicator()).toBeNull()
+    render({ status: 'playing' })
+    expect(indicator()).toBeNull()
+  })
+
+  it('renders nothing until progress arrives, and nothing on the empty generating card without it', () => {
+    render({ puzzle: null, status: 'generating' })
+    expect(indicator()).toBeNull()
+    render({ puzzle: null, status: 'generating', progress: null })
+    expect(indicator()).toBeNull()
+  })
+
+  it('keeps the line in step with the phase', () => {
+    render({ puzzle: null, status: 'generating', progress: PROGRESS })
+    expect(indicator()?.textContent).toContain('Sampling colourings')
+    render({ puzzle: null, status: 'generating', progress: { candidates: 1201, accepted: 0, phase: 'repairing' } })
+    expect(indicator()?.getAttribute('data-phase')).toBe('repairing')
+    expect(indicator()?.textContent).toContain('Repairing the layout')
+    render({ puzzle: null, status: 'generating', progress: { candidates: 1202, accepted: 1, phase: 'grading' } })
+    expect(indicator()?.textContent).toContain('Grading difficulty')
+  })
+
+  it('localises the phase names and the count template', () => {
+    render({ locale: 'zh', puzzle: null, status: 'generating', progress: PROGRESS })
+    const bar = indicator()
+    expect(bar?.textContent).toContain('采样配色')
+    expect(bar?.textContent).toContain('已尝试 1200 种配色')
+    expect(bar?.textContent).not.toContain('Sampling')
+  })
+
+  it('announces a phase change through the polite region but not every count tick', () => {
+    render({ puzzle: null, status: 'generating', progress: { candidates: 10, accepted: 0, phase: 'sampling' } })
+    expect(spoken()).toContain('Sampling colourings')
+    const announced = spoken()
+
+    // Same phase, higher count: the counter moves, the region stays silent.
+    render({ puzzle: null, status: 'generating', progress: { candidates: 900, accepted: 0, phase: 'sampling' } })
+    expect(spoken()).toBe(announced)
+
+    // A new phase is the milestone worth one announcement.
+    render({ puzzle: null, status: 'generating', progress: { candidates: 901, accepted: 0, phase: 'grading' } })
+    expect(spoken()).toContain('Grading difficulty')
+  })
+
+  it('announces the first phase again on the next generation', () => {
+    render({ puzzle: null, status: 'generating', progress: PROGRESS })
+    expect(spoken()).toContain('Sampling colourings')
+    render({ status: 'playing' })
+    render({ puzzle: null, status: 'generating', progress: { candidates: 3, accepted: 0, phase: 'sampling' } })
+    expect(spoken()).toContain('Sampling colourings — 3 layouts tried')
+  })
+})
+
 describe('StarBattleSurface — a generation failure is a state, not a dead end', () => {
   const failure = {
     reason: 'resource-limit',

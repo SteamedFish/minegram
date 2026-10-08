@@ -245,6 +245,28 @@ function fail(worker: FakeWorker, reason = 'worker-exception', message = 'boom')
   })
 }
 
+/**
+ * Posts a progress message, by default with the identity of the Worker's
+ * last request. The progress message is not part of the worker module's
+ * response union (the other lane owns that), so it arrives as an untrusted
+ * blob — exactly how the store meets it in production.
+ */
+function progress(
+  worker: FakeWorker,
+  fields: { candidates?: number; accepted?: number; phase?: string } = {},
+  identity: { requestId?: number; generationId?: number } = {},
+): void {
+  const request = lastRequest(worker)
+  worker.respond({
+    type: 'star-generation/progress',
+    requestId: identity.requestId ?? request.requestId,
+    generationId: identity.generationId ?? request.generationId,
+    candidates: fields.candidates ?? 1,
+    accepted: fields.accepted ?? 0,
+    phase: fields.phase ?? 'sampling',
+  } as unknown as StarBattleWorkerResponse)
+}
+
 afterEach(() => {
   window.localStorage.clear()
 })
@@ -417,6 +439,155 @@ describe('star battle store: generation', () => {
     // A late answer to the cancelled request is dropped.
     succeed(harness.workers[0]!, PUZZLE_A)
     expect(harness.snapshot().status).toBe('idle')
+  })
+})
+
+// ======================================================================================
+// Generation progress
+// ======================================================================================
+
+describe('star battle store: generation progress', () => {
+  it('starts null, reports each matching progress message with a version bump, and clears on success', () => {
+    const harness = createHarness()
+    const listener = vi.fn()
+    harness.store.subscribe(listener)
+    expect(harness.snapshot().progress).toBeNull()
+
+    harness.store.actions.startNewRound('star-fixture-a')
+    // A fresh request opens with an empty bar, not a stale one.
+    expect(harness.snapshot().progress).toBeNull()
+    const worker = harness.workers[0]!
+
+    progress(worker, { candidates: 40, phase: 'sampling' })
+    expect(harness.snapshot().progress).toEqual({ candidates: 40, accepted: 0, phase: 'sampling' })
+    const versionAfterFirst = harness.snapshot().version
+
+    progress(worker, { candidates: 312, accepted: 1, phase: 'grading' })
+    expect(harness.snapshot().progress).toEqual({ candidates: 312, accepted: 1, phase: 'grading' })
+    expect(harness.snapshot().version).toBeGreaterThan(versionAfterFirst)
+
+    succeed(worker, PUZZLE_A)
+    expect(harness.snapshot().progress).toBeNull()
+    expect(harness.snapshot().status).toBe('playing')
+    // start + two progress messages + the applying answer.
+    expect(listener).toHaveBeenCalledTimes(4)
+  })
+
+  it('clears the bar on failure', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('star-fixture-a')
+    const worker = harness.workers[0]!
+    progress(worker, { candidates: 87, phase: 'repairing' })
+    expect(harness.snapshot().progress).not.toBeNull()
+
+    fail(worker)
+    expect(harness.snapshot().progress).toBeNull()
+    expect(harness.snapshot().failure).toMatchObject({ reason: 'worker-exception' })
+  })
+
+  it('drops progress whose requestId or generationId does not match the in-flight request', () => {
+    const harness = createHarness()
+    const listener = vi.fn()
+    harness.store.subscribe(listener)
+    harness.store.actions.startNewRound('star-fixture-a')
+    const worker = harness.workers[0]!
+    const request = lastRequest(worker)
+
+    progress(worker, { candidates: 10 }, { requestId: request.requestId + 1 })
+    expect(harness.snapshot().progress).toBeNull()
+    progress(worker, { candidates: 10 }, { generationId: request.generationId + 999 })
+    expect(harness.snapshot().progress).toBeNull()
+    // start only; both mismatched ticks published nothing.
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    // The same protection covers a FOREIGN identity that is well-formed.
+    worker.respond({
+      type: 'star-generation/progress',
+      requestId: request.requestId,
+      generationId: request.generationId + 999,
+      candidates: 12,
+      accepted: 0,
+      phase: 'sampling',
+    } as unknown as StarBattleWorkerResponse)
+    expect(harness.snapshot().progress).toBeNull()
+  })
+
+  it('ignores a progress message that arrives with no active request', () => {
+    const harness = createHarness()
+    const listener = vi.fn()
+    harness.store.subscribe(listener)
+    harness.store.actions.startNewRound('star-fixture-a')
+    const worker = harness.workers[0]!
+    succeed(worker, PUZZLE_A)
+    expect(harness.snapshot().status).toBe('playing')
+
+    const version = harness.snapshot().version
+    // A late tick from the finished request: ignored, not thrown on.
+    progress(worker, { candidates: 500, phase: 'grading' })
+    expect(harness.snapshot().progress).toBeNull()
+    expect(harness.snapshot().version).toBe(version)
+  })
+
+  it('a stale progress message cannot resurrect the bar after a cancellation', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('star-fixture-a')
+    const first = harness.workers[0]!
+    const firstRequest = lastRequest(first)
+    progress(first, { candidates: 64, phase: 'sampling' })
+    expect(harness.snapshot().progress).not.toBeNull()
+
+    harness.store.actions.backToPicker()
+    expect(harness.snapshot().progress).toBeNull()
+
+    // The cancelled request's late tick is dropped, exactly like its late answer.
+    first.respond({
+      type: 'star-generation/progress',
+      requestId: firstRequest.requestId,
+      generationId: firstRequest.generationId,
+      candidates: 65,
+      accepted: 0,
+      phase: 'repairing',
+    } as unknown as StarBattleWorkerResponse)
+    expect(harness.snapshot().progress).toBeNull()
+    expect(harness.snapshot().status).toBe('idle')
+
+    // A new request starts clean and honours only its own ticks.
+    harness.store.actions.startNewRound('star-fixture-b')
+    const second = harness.workers[1]!
+    expect(harness.snapshot().progress).toBeNull()
+    first.respond({
+      type: 'star-generation/progress',
+      requestId: firstRequest.requestId,
+      generationId: firstRequest.generationId,
+      candidates: 66,
+      accepted: 0,
+      phase: 'grading',
+    } as unknown as StarBattleWorkerResponse)
+    expect(harness.snapshot().progress).toBeNull()
+    progress(second, { candidates: 5, phase: 'sampling' })
+    expect(harness.snapshot().progress).toEqual({ candidates: 5, accepted: 0, phase: 'sampling' })
+  })
+
+  it('a malformed progress message is ignored, never a failure', () => {
+    const harness = createHarness()
+    harness.store.actions.startNewRound('star-fixture-a')
+    const worker = harness.workers[0]!
+
+    worker.respond({
+      type: 'star-generation/progress',
+      requestId: lastRequest(worker).requestId,
+      generationId: lastRequest(worker).generationId,
+      candidates: -1,
+      accepted: 0,
+      phase: 'nonsense',
+    } as unknown as StarBattleWorkerResponse)
+    expect(harness.snapshot().progress).toBeNull()
+    expect(harness.snapshot().failure).toBeNull()
+    expect(harness.snapshot().status).toBe('generating')
+
+    // The generation the bad tick arrived on is still healthy.
+    succeed(worker, PUZZLE_A)
+    expect(harness.snapshot().status).toBe('playing')
   })
 })
 

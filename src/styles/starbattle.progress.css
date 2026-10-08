@@ -1,0 +1,62 @@
+/* =============================================================================
+   Star Battle — the generation progress line
+   -----------------------------------------------------------------------------
+   The honest half of "Printing the board": a working caret, the phase the
+   generator is in, and the count of candidate colourings actually tried. No
+   percentage — the generator cannot know how many candidates a board needs,
+   so the count of what has happened is the whole truth.
+
+   * The caret is the main game's status caret: same glyph, same blink, same
+     cadence (mg-blink from clues.css via --caret-duration/--caret-steps), so
+     "the machine is working" reads identically in both games.
+   * The phase tints the caret with the app's tone semantics: sampling wears
+     the working/inference tone, repairing the attention tone, grading the
+     confirm tone. A phase change is a hue change, visible across the room.
+   * The line sits inside the empty card (starbattle.css owns the card), so
+     it is never a band of its own and never pushes the board down; on a
+     phone it wraps under the caret instead of overflowing.
+   * The count is set in the mono face with tabular figures so it grows
+     without wobbling the line.
+   * Motion: one blink, neutralised by this file's own reduced-motion block.
+   ========================================================================== */
+
+.mg-star-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--sp-1) var(--sp-2);
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.mg-star-progress__caret {
+  flex: none;
+  color: var(--unknown);
+  font-family: var(--font-mono);
+  animation: mg-blink var(--caret-duration) var(--caret-steps) infinite;
+}
+
+.mg-star-progress[data-phase='repairing'] .mg-star-progress__caret {
+  color: var(--focus);
+}
+
+.mg-star-progress[data-phase='grading'] .mg-star-progress__caret {
+  color: var(--confirm);
+}
+
+.mg-star-progress__line {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- reduced motion: the blink is stilled by the file that spends it ---- */
+
+@media (prefers-reduced-motion: reduce) {
+  .mg-star-progress__caret {
+    animation: none;
+  }
+}

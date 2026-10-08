@@ -46,6 +46,7 @@ function starSnapshot(overrides: Partial<StarBattleSnapshot> = {}): StarBattleSn
     difficulty: 'starter',
     side: DEFAULT_STAR_SIDE,
     failure: null,
+    progress: null,
     // No measurement in these tests: every tier reads unmeasured, which is
     // the surface's no-signal behaviour.
     tierAvailability: Object.freeze(
