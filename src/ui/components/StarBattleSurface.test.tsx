@@ -55,7 +55,7 @@ function defaults(): StarBattleSurfaceProps {
     maxLives: 5,
     mistakes: 0,
     streak: 0,
-    difficulty: 'starter',
+    difficulty: 'challenging',
     side: N,
     minSide: 4,
     maxSide: 15,
@@ -601,14 +601,14 @@ describe('StarBattleSurface — a generation failure is a state, not a dead end'
       ;(twelve as HTMLInputElement).click()
     })
     expect(onSizeChange).toHaveBeenCalledWith(12)
-    const steady = container.querySelector<HTMLInputElement>(
-      "[data-testid='star-difficulty'] input[value='steady']",
+    const expert = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='expert']",
     )
-    expect(steady?.disabled).toBe(false)
+    expect(expert?.disabled).toBe(false)
     act(() => {
-      ;(steady as HTMLInputElement).click()
+      ;(expert as HTMLInputElement).click()
     })
-    expect(onDifficultyChange).toHaveBeenCalledWith('steady')
+    expect(onDifficultyChange).toHaveBeenCalledWith('expert')
   })
 
   it('renders the failure card in Chinese under a Chinese locale', () => {
@@ -673,10 +673,10 @@ describe('StarBattleSurface — measured tier availability', () => {
     })
     expect(onDifficultyChange).not.toHaveBeenCalled()
     // An available neighbour stays selectable.
-    const steady = container.querySelector<HTMLInputElement>(
-      "[data-testid='star-difficulty'] input[value='steady']",
+    const challenging = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='challenging']",
     )
-    expect(steady?.disabled).toBe(false)
+    expect(challenging?.disabled).toBe(false)
   })
 
   it('the honest note stays honest in Chinese: the count, and never 不可能', () => {
@@ -693,7 +693,7 @@ describe('StarBattleSurface — measured tier availability', () => {
   it('an unreliable cell stays selectable but is marked with its thin evidence', () => {
     const onDifficultyChange = vi.fn()
     render({
-      difficulty: 'starter',
+      difficulty: 'expert',
       tierAvailability: ALL_MEASURED({ contradiction: availability('unreliable', 24, 2) }),
       onDifficultyChange,
     })
@@ -760,23 +760,21 @@ describe('StarBattleSurface — measured tier availability', () => {
     // A lone `unavailable` cell in an otherwise all-available report is
     // still a disabled pill: the measured signal is the only source.
     render({
-      difficulty: 'starter',
-      tierAvailability: ALL_MEASURED({ starter: availability('unavailable', 48, 0) }),
+      difficulty: 'challenging',
+      tierAvailability: ALL_MEASURED({ challenging: availability('unavailable', 48, 0) }),
     })
-    const starter = container.querySelector<HTMLInputElement>(
-      "[data-testid='star-difficulty'] input[value='starter']",
+    const challenging = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='challenging']",
     )
-    expect(starter?.disabled).toBe(true)
+    expect(challenging?.disabled).toBe(true)
   })
 })
 
 describe('StarBattleSurface — tier descriptions', () => {
   // Pinned verbatim, both locales: a return of the stale pre-re-tier wording
-  // ("exactly one confinement technique", steady as a technique tier) fails
-  // these strings, not a reviewer noticing.
+  // ("exactly one confinement technique", starter/steady as offerable tiers)
+  // fails these strings, not a reviewer noticing.
   const EN: Record<(typeof STAR_DIFFICULTIES)[number], string> = {
-    starter: 'The placement rules alone solve it; the chains are short.',
-    steady: 'The placement rules alone solve it too, but the chains run long — routine work throughout.',
     challenging:
       'One idea beyond the rules finishes it — and not the free one: no single colour owns a whole row or column to hand you the line.',
     expert: 'Two ideas beyond the rules are needed; either one alone is not enough.',
@@ -784,8 +782,6 @@ describe('StarBattleSurface — tier descriptions', () => {
       'No set of ideas suffices on its own; the board yields only to a proof by contradiction.',
   }
   const ZH: Record<(typeof STAR_DIFFICULTIES)[number], string> = {
-    starter: '只靠摆放规则就能解开，链条很短。',
-    steady: '只靠摆放规则也能解开，只是链条很长——全程都是常规推理。',
     challenging: '需要规则之外的一个想法才能解开——但不是白送的那种：不会有颜色独占整行或整列，把答案直接交到你手上。',
     expert: '需要规则之外的两个想法，只有一个不够。',
     contradiction: '任何技巧组合单独都不够，只能靠反证法解开。',
@@ -809,10 +805,7 @@ describe('StarBattleSurface — tier descriptions', () => {
     }
   })
 
-  it("steady is not described as a technique tier; challenging's one idea is never the whole-line freebie", () => {
-    render({ difficulty: 'steady' })
-    const steadyText = container.querySelector('[data-testid="star-tier-description"]')?.textContent ?? ''
-    expect(steadyText).not.toMatch(/technique|confinement|idea/i)
+  it("challenging's one idea is never the whole-line freebie", () => {
     render({ difficulty: 'challenging' })
     const challengingText =
       container.querySelector('[data-testid="star-tier-description"]')?.textContent ?? ''
@@ -831,7 +824,7 @@ describe('StarBattleSurface — tier descriptions', () => {
   it('with no signal the description still states the tier — the pre-signal behaviour plus the words', () => {
     render()
     expect(container.querySelector('[data-testid="star-tier-description"]')?.textContent).toBe(
-      EN.starter,
+      EN.challenging,
     )
     expect(container.querySelector('[data-testid="star-tier-note"]')).toBeNull()
   })
@@ -880,23 +873,33 @@ describe('StarBattleSurface — chrome', () => {
 
   it('changes difficulty through the segmented control', () => {
     const onDifficultyChange = vi.fn()
-    render({ difficulty: 'starter', onDifficultyChange })
-    expect(STAR_DIFFICULTIES).toEqual([
-      'starter',
-      'steady',
-      'challenging',
-      'expert',
-      'contradiction',
-    ])
-    const option = container.querySelector<HTMLInputElement>("input[value='steady']")
+    render({ difficulty: 'challenging', onDifficultyChange })
+    expect(STAR_DIFFICULTIES).toEqual(['challenging', 'expert', 'contradiction'])
+    const option = container.querySelector<HTMLInputElement>("input[value='expert']")
     expect(option).not.toBeNull()
     act(() => {
       option?.click()
     })
-    expect(onDifficultyChange).toHaveBeenCalledWith('steady')
+    expect(onDifficultyChange).toHaveBeenCalledWith('expert')
   })
 
-  it('renders every tier as a labelled option, including the two technique tiers', () => {
+  it('a retired tier id renders no pill at all', () => {
+    render({ difficulty: 'challenging' })
+    // starter/steady left with the spanning-tree construction; if one ever
+    // comes back it must fail here, not render as an unlabelled pill.
+    for (const retired of ['starter', 'steady'] as const) {
+      expect(
+        container.querySelector(`[data-testid='star-difficulty'] input[value='${retired}']`),
+      ).toBeNull()
+      expect(
+        container.querySelector(
+          `[data-testid='star-difficulty'] .mg-seg__label[data-tier='${retired}']`,
+        ),
+      ).toBeNull()
+    }
+  })
+
+  it('renders every tier as a labelled option — the technique tiers and the contradiction tier', () => {
     render({ difficulty: 'expert' })
     const group = container.querySelector<HTMLElement>('[data-testid="star-difficulty"] .mg-seg')
     expect(group?.getAttribute('role')).toBe('radiogroup')
@@ -911,15 +914,13 @@ describe('StarBattleSurface — chrome', () => {
       "[data-testid='star-difficulty'] input[type='radio']",
     )
     expect(Array.from(options).map((option) => option.value)).toEqual([
-      'starter',
-      'steady',
       'challenging',
       'expert',
       'contradiction',
     ])
     expect(
       Array.from(options).map((option) => option.closest('.mg-seg__item')?.textContent?.trim()),
-    ).toEqual(['Starter', 'Steady', 'Challenging', 'Expert', 'Contradiction'])
+    ).toEqual(['Challenging', 'Expert', 'Contradiction'])
     expect(
       container.querySelector<HTMLInputElement>("[data-testid='star-difficulty'] input:checked")
         ?.value,
@@ -937,7 +938,7 @@ describe('StarBattleSurface — chrome', () => {
     const labels = Array.from(
       container.querySelectorAll<HTMLElement>("[data-testid='star-difficulty'] .mg-seg__label"),
     ).map((label) => label.textContent?.trim())
-    expect(labels).toEqual(['入门', '进阶', '挑战', '专家', '反证'])
+    expect(labels).toEqual(['挑战', '专家', '反证'])
     const contradiction = container.querySelector<HTMLInputElement>(
       "[data-testid='star-difficulty'] input[value='contradiction']",
     )

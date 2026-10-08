@@ -57,7 +57,7 @@ import type { StarMarkToken } from './starMarkTokens'
  */
 
 /**
- * The five difficulty tiers, kept locally on purpose. The layer boundary
+ * The three difficulty tiers, kept locally on purpose. The layer boundary
  * (`src/ui/layerBoundary.test.ts`) forbids a value import from the engine,
  * so the surface owns its own copy of the engine's `StarDifficulty` union
  * and `STAR_DIFFICULTIES` order. The copy below is the exhaustiveness
@@ -66,28 +66,26 @@ import type { StarMarkToken } from './starMarkTokens'
  * not as an `undefined` pill on the player.
  *
  * What each tier is (the engine's `techniqueTierAcceptsBasis` doc is the
- * authority, re-tiered 2026-10-07):
- * - starter / steady: the base rules alone solve the board; they differ
- *   only in depth — starter in short chains, steady long but routine.
- *   Neither is a technique tier.
+ * authority, re-tiered 2026-10-07; starter/steady retired 2026-10-08 with
+ * the spanning-tree construction, which cannot print them):
  * - challenging: the base rules place nothing, and exactly one idea beyond
  *   them finishes the board — but never the freebie: the witness must not
  *   be line confinement (a whole row or column of one colour handing the
  *   line over). The class decays with side, so this is a small-side tier:
  *   solid at n = 4–5, thin at n = 7–8, not offered at n >= 9. The measured
  *   availability signal, not this comment, is what tells the player where
- *   it prints.
+ *   it prints. It is the shallowest of the three surviving tiers — the
+ *   label stays 'Challenging' / 挑战 for continuity, though it now names
+ *   the entry level of what is offered.
  * - expert: the base rules place nothing; no single idea suffices, some
  *   pair does.
  * - contradiction: no confinement-technique subset solves at all; the
  *   board requires a proof by contradiction.
  */
-export type StarDifficulty = 'starter' | 'steady' | 'challenging' | 'expert' | 'contradiction'
+export type StarDifficulty = 'challenging' | 'expert' | 'contradiction'
 
 /** The ordered tier ids — the engine aligns its difficulty analysis to this. */
 export const STAR_DIFFICULTIES: readonly StarDifficulty[] = [
-  'starter',
-  'steady',
   'challenging',
   'expert',
   'contradiction',
@@ -217,7 +215,7 @@ interface StarCopy {
   readonly difficulties: Record<StarDifficulty, string>
   /**
    * What the live tier is, said in words under the control — the labels
-   * alone ('Steady', 'Challenging') promise nothing the engine must keep.
+   * alone ('Challenging', 'Expert') promise nothing the engine must keep.
    * The statements are tier contracts, not board promises: within a tier
    * the SHAPES vary, the solving idea does not (measured: three generator
    * mechanisms all landed on one technique per tier), so no description
@@ -333,15 +331,11 @@ const en: StarCopy = {
   back: 'All games',
   difficultyLabel: 'Difficulty',
   difficulties: {
-    starter: 'Starter',
-    steady: 'Steady',
     challenging: 'Challenging',
     expert: 'Expert',
     contradiction: 'Contradiction',
   },
   difficultyDescriptions: {
-    starter: 'The placement rules alone solve it; the chains are short.',
-    steady: 'The placement rules alone solve it too, but the chains run long — routine work throughout.',
     challenging:
       'One idea beyond the rules finishes it — and not the free one: no single colour owns a whole row or column to hand you the line.',
     expert: 'Two ideas beyond the rules are needed; either one alone is not enough.',
@@ -433,8 +427,6 @@ const zhCN: StarCopy = {
   back: '全部游戏',
   difficultyLabel: '难度',
   difficulties: {
-    starter: '入门',
-    steady: '进阶',
     challenging: '挑战',
     expert: '专家',
     // 反证, not 矛盾: the tier means "solvable only by proof by
@@ -443,8 +435,6 @@ const zhCN: StarCopy = {
     contradiction: '反证',
   },
   difficultyDescriptions: {
-    starter: '只靠摆放规则就能解开，链条很短。',
-    steady: '只靠摆放规则也能解开，只是链条很长——全程都是常规推理。',
     challenging: '需要规则之外的一个想法才能解开——但不是白送的那种：不会有颜色独占整行或整列，把答案直接交到你手上。',
     expert: '需要规则之外的两个想法，只有一个不够。',
     contradiction: '任何技巧组合单独都不够，只能靠反证法解开。',

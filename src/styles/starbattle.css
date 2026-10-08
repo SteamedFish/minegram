@@ -770,18 +770,11 @@
   .mg-star-toolbar .mg-star-difficulty {
     inline-size: 100%;
   }
-
-  /* Five difficulty tiers is one pill too many for a phone-width row at
-     natural pill widths: greedy wrapping orphans the long last label on a
-     row of its own. A third-of-the-row basis wraps the group into two
-     balanced rows (three + two) at every width this media query covers, and
-     flex-grow splits each row evenly. The basis only ever ADDS inline size
-     to a pill, so the coarse-pointer floor forms.css §8 already sets on
-     .mg-seg__label (44px) and the WCAG --target-min (24px) are untouched;
-     at 360px a pill is ~100px wide. */
-  .mg-star-difficulty .mg-seg__label {
-    flex: 1 1 calc((100% - 2 * var(--sp-1)) / 3);
-  }
+  /* Three difficulty pills sit on one row at every width this media query
+     covers (the longest, 反证/Contradiction, is ~110px at 360px), so the
+     five-tier 3+2 wrap-balancing basis this rule used to carry is gone with
+     the retired tiers — pills keep forms.css's natural-width rhythm, the
+     same as the size control beside them. */
 }
 
 @media (pointer: coarse) {
