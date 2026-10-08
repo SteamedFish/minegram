@@ -6,8 +6,8 @@ have exactly one solution before you are ever shown it.
 
 The app now holds two games behind one front door: **Minegram**, the ordered
 mine-run puzzle documented below, and **Star Battle**, an n × n star-placement
-puzzle whose boards are likewise unique — by construction, with the uniqueness
-certificate computed on every board. On load you choose between them on the game
+puzzle whose boards are likewise **proven** to have exactly one solution —
+by exhaustive search, on every board, before it is shown to you. On load you choose between them on the game
 picker. The picker supports a per-game record (rounds played, best streak) and a
 ring on the game you last played, but neither is wired up yet — no game currently
 records those figures, and inventing numbers would be a lie — so every card reads
@@ -66,13 +66,15 @@ one-line description.
   colour**.
 - No two stars may touch — not even diagonally. Every star rules out its whole
   3 × 3 neighbourhood.
-- `n` defaults to **10** and is supported from **4 to 15**. Four is the floor
+- `n` defaults to **8** and is supported from **4 to 10**. Four is the floor
   because no valid star placement exists below it: the stars form a permutation of
   the columns with adjacent rows at distance two or more, and no such permutation
-  exists at n = 2 or n = 3. Fifteen is a product choice — the largest board the
-  shipped palette and grid already cover. A **board size** control in the toolbar
-  chooses `n` and the choice persists; the bounds come from `MIN_STAR_SIDE` /
-  `MAX_STAR_SIDE` rather than from a repeated literal.
+  exists at n = 2 or n = 3. Ten is the ceiling as a product decision, not a
+  solver limit: generation cost grows steeply with size, so n = 10 is offered
+  but marked on the **board size** control itself as *takes noticeably longer
+  to generate*. A **board size** control in the toolbar chooses `n` and the
+  choice persists; the bounds come from `MIN_STAR_SIDE` / `MAX_STAR_SIDE`
+  rather than from a repeated literal.
 
 ### How to play
 
@@ -117,103 +119,116 @@ there is exactly one such control per screen.
 
 ### Difficulty
 
-Each tier names **how many independent techniques a solver must use** to finish a
-board. The count is measured and enforced on every board the generator accepts,
+Three tiers ship: `challenging` (挑战), `expert` (专家) and `contradiction`
+(反证). Each names the deduction technique a board needs beyond the four
+basic rules, measured and enforced on every board the generator accepts,
 not asserted:
 
 | Tier | 中文 | What a board requires |
 | --- | --- | --- |
-| `starter` | 入门 | The basic rules alone finish it, in about 3 propagation waves (k = 0, shallow) |
-| `steady` | 进阶 | The basic rules alone finish it, but the chain is long — 13 to 29 waves by size (k = 0, routine; explicitly not a technique tier) |
-| `challenging` | 挑战 | The basic rules **stall**; exactly one extra technique is needed, and it must not be the whole-line freebie — a colour owning a whole row hands its blanks over for free, so it does not count as a technique |
+| `challenging` | 挑战 | The basic rules **stall**; exactly one extra technique finishes it (k = 1) |
 | `expert` | 专家 | The basic rules stall; no single technique suffices, a pair does (k = 2) |
-| `contradiction` | 反证 | The basic rules stall and **every** technique combination fails; only proof by contradiction works (k = −1) |
+| `contradiction` | 反证 | The basic rules stall and **every** technique combination fails; only proof by contradiction works — assume a cell, watch the board collapse, eliminate it (k = −1) |
 
-A "technique" is line confinement — a colour can only hold a star on certain
-lines — which is what makes several colours confined to the same few lines
-deduce things. The first two tiers are built directly; the last three come from
-a seeded search that recolours single cells until the basic rules stop making
-progress, and every accepted board is re-verified by enumerating all sixteen
-technique subsets.
+A "technique" is a deduction pattern beyond the base rules — most often
+line confinement, where a colour can only hold a star on certain lines,
+which is what makes several colours confined to the same few lines deduce
+things. Every accepted board is re-verified by
+enumerating all sixteen technique subsets, so the count is a measurement,
+not a label. Every `contradiction` board is additionally certified
+solvable at a single assumption level: the tier's acceptance test runs the
+case-split certificate at depth 1, and a board it cannot solve is rejected
+back to the stream.
 
-**This is an honest measurement, not a calibrated difficulty scale.** Longer does
-not reliably mean harder for a person: across four boards a human singled out as
-interesting, the one they rated highest needed only *one* technique but took 12
-waves to pay off, while our easiest one-technique boards take 4. So treat the tier
-names as a statement about the board's *shape*, and expect the player-facing
-ordering to be worth revisiting against real play.
+**There is no genuinely easy mode, and that is stated rather than hidden.**
+The two shallow tiers (`starter` 入门, `steady` 进阶) were removed. The
+reason is structural, not a tuning miss: a shallow board is exactly a
+board with many valid answers, so a shallow board that is also unique
+requires deep repair — and deep repair never yields a shallow board.
+Measured under the shipped construction, the class solvable by the basic
+rules alone is 8% / 10% / 0% of accepted boards at n = 6 / 8 / 10.
+Concretely, at n = 8 only about **10%** of boards can be finished with
+the four basic rules, and roughly **73%** need the deepest technique —
+assuming a cell and eliminating the contradiction. That is the intended
+difficulty; expect every board to demand at least one idea beyond the
+rules.
 
-**`challenging` is a small-side tier, and the picker says so.** Because the tier
-rejects the whole-line freebie as a witness, its per-walk acceptance decays with
-board size, measured 2026-10-07 (Wilson 95): n = 4 structurally all (40/48),
-n = 5 18.8%, n = 8 4.2%, n = 10 0.8%, n = 15 0/72. The tier is solid at
-n = 4–5, marginal at n = 7–8, `unavailable` at n = 6 and n ≥ 9 — including n = 10,
-the default board size — where the difficulty picker reports it as unavailable
-instead of promising a board the generator can barely produce.
+**This is an honest measurement, not a calibrated difficulty scale.** The
+technique count says what a solver must do, not how hard a person will
+find it; treat the tier names as a statement about the board's *shape*,
+not as a promise of felt effort.
 
-The `contradiction` tier is measured at a single assumption level across every
-board observed so far — none has needed an assumption stacked on an assumption.
-That is also the limit of what this solver can currently produce.
+**Generation cost, measured** — median wall clock over 30 generations per
+cell, with how many of the 30 exhausted their time budget and fell back
+(see below):
 
-Generation cost: about 1.1 ms at n = 10 for the basic tiers, rising to about
-2.8 ms at n = 15, measured over 200 boards per point. The technique tiers are
-far slower, because they search — roughly 36 ms and 150 ms at n = 10, reaching
-seconds at n = 15. The tier choice persists, and changing it prints a fresh board
-with the same seed.
+| | `challenging` | `expert` | `contradiction` |
+| --- | --- | --- | --- |
+| n = 6 | 8 ms | 12 ms | 39 ms |
+| n = 8 | 162 ms | 446 ms | 449 ms |
+| n = 10 | 9.1 s (1/30 fell back) | 6.0 s (0/30) | 20.3 s (2/30) |
 
-### Uniqueness is by construction — and certified
+n ≤ 8 sits far inside its budget for every tier. n = 10 has a real tail:
+four of thirty `contradiction` boards passed 60 s, and two of those passed
+90 s. When the budget expires generation never fails — it falls back to
+the retired strips-and-sea painting, which is still a fully certified
+unique board, it simply looks different (one dominant sea region). The
+tier choice persists, and changing it prints a fresh board with the same
+seed.
 
-Unlike Minegram's search-and-proof generator, a Star Battle board is unique **by
-construction**, and the acceptance test certifies it on every board:
+While a board prints, the progress line names the phase — *sampling
+colourings*, *repairing the layout*, *grading difficulty* — and how many
+layouts have been tried. There is deliberately no percentage: the
+generator cannot know how many candidates a board needs, so the count of
+what has actually happened is the whole truth it can show.
 
-- A board is solvable exactly when some permutation `T` of the columns with
-  `|T(r) − T(r+1)| >= 2` — one star per row and column, never orthogonally or
-  diagonally adjacent — selects n cells of pairwise-distinct colours.
-- The generator paints colours by **strips and a sea**. The star placement is
-  chosen so its first two stars take the two edge columns, and each difficulty
-  decides how many horizontal strips to lay down; everything not claimed by a
-  strip or a star becomes one large absorbing **sea** region. A strip cell always
-  shares a row with an already-forced star, so it is provably blank, which means
-  each region holds exactly one viable cell and the colour rule forces it.
-  Induction forces all n stars, and a fully forced star set is the unique one.
-- **Every colour is a single contiguous region.** The generator counts connected
-  components per colour and rejects any board where a region splits, so the
-  property is structural rather than incidental. The previous construction could
-  not deliver this — it produced **zero** fully-connected boards at any tier,
-  because a colour's cells formed a horizontal strip with a hole where the
-  neighbouring region's star sat. The difficult tier is not the one that suffered
-  most: `starter` was the worst offender, with the worst region splitting into 13
-  pieces at n = 10 and 25 at n = 15.
-- **The sea dominates the board, and the player does not like it.** Because it
-  absorbs everything unclaimed, one colour covers most of the grid: on `starter`,
-  where no strips are laid, it reaches 81% of the board at n = 4 and 94% at
-  n = 15, leaving n single cells of distinct colours scattered on a field. The
-  player reported 「长条+大海的构造实在是过于简单了，丧失了非常多的趣味性」, and the
-  measurement behind that complaint is structural: **the sea is adjacent to every
-  other region at every board size and tier**, so it is a *hub* in the region
-  adjacency graph. Four boards the player picked out of the game they actually
-  enjoy were measured and **none of them has a hub** — their largest region is
-  25% to 40% of the board against our 39% to 59%. No renumbering and no hue
-  assignment can move a hub's colour away from anything, so that half of
-  "keep similar colours apart" has to come from the palette; but the other half
-  is a layout problem, and the answer to it is not to have a hub at all.
-- **Difficulty is not graded by wave count.** Measured across the four reference
-  boards and our own output, waves do not separate the levels: one-technique
-  boards span 4 to 10 waves at both n = 10 and n = 15 (medians 5 to 8),
-  two-technique boards 4 to 14, contradiction stall-runs 1 to 4 — heavily
-  overlapping. Wave count measures how long a *solver* grinds,
-  which is not how hard a person finds it.
-- Acceptance is a **wave propagation solver** (`propagateStarBoard`): freeze the
-  state, compute every forced move, apply them all simultaneously, and count one
-  wave. A board ships only if propagation solves it to completion — strictly
-  stronger than a solution count of 1. Every generated board therefore carries its
-  own uniqueness certificate, and no counting is needed in production.
-- `countStarSolutions` remains as an **independent exact counter** for test
-  cross-checks (exhaustive agreement at n ≤ 10), alongside a budget-limited
-  variant whose exhaustion result can never be misread as a count.
-- Rejection sampling was measured and rejected: among well-spread colourings,
-  uniqueness is measure-zero past about n = 8, so no amount of resampling could
-  ever serve as the acceptance gate.
+### Uniqueness is proven, never assumed
+
+A Star Battle board ships only when an exhaustive count has proven it has
+exactly one solution. The generator that reaches that proof works in
+four stages:
+
+- **Sample a colouring.** Plant a uniformly random valid star arrangement
+  (the intended answer), grow a randomised spanning tree over the grid's
+  four-neighbour graph, and cut n − 1 random tree edges to split the board
+  into exactly n connected regions. The layout is rejected unless every
+  region holds exactly one planted star. Random colourings are essentially
+  never unique past n ≈ 6 — measured, 0% of balanced layouts at n ≥ 6 have
+  exactly one solution — so rejecting on shape alone would give up almost
+  every board.
+- **Repair it.** Guided counterexample repair recolours one cell at a time
+  — a cell that is a star in some alternative arrangement but blank in the
+  intended answer — scoring each move with the exact counter, until the
+  board has exactly one solution. Repair, not sampling, is what makes a
+  pretty board solvable by exactly one arrangement; without it no played
+  size produces a unique board at all.
+- **Prove it.** The acceptance gate is the exact solution count: a board
+  ships only when `countStarSolutions(colours, n, 2) === 1`. A colour
+  layout can hide more than one valid answer, and a puzzle with two
+  answers is not a puzzle — so uniqueness is checked by exhaustive search
+  rather than assumed. If the search runs out of budget the board is
+  discarded; a budget-exhausted count is a rejection, never an acceptance.
+- **Grade it.** The propagation certificate — solvable with no guessing —
+  is measured and reported as a difficulty signal, but it is not required:
+  measured, requiring it accepts **zero** boards at n = 8 and above.
+
+The shape this produces is different from the retired strips-and-sea
+construction. **Every colour region is contiguous by construction** — a
+region is a component of the cut tree — and regions are irregular and
+branching, of widely varying sizes: the measured largest colour region is
+22–51% of the board at n = 6–10, against 91–94% for the retired
+construction's dominant sea. There is no forced hub and no horizontal
+bands.
+
+**Difficulty is not graded by wave count.** Waves measure how long a
+*solver* grinds, which is not how hard a person finds a board; the tier
+names above are the instrument that carries difficulty.
+
+`countStarSolutions` — the independent exact counter — is the production
+acceptance gate, not just a test cross-check, and its budget-limited
+variant can never have exhaustion misread as a count. The wave propagation
+solver (`propagateStarBoard`) remains as the no-guessing certificate used
+in grading.
 
 ### Telling the colours apart
 
@@ -312,18 +327,28 @@ engine without changing domain types:
 - `src/domain/starBattle.ts` — puzzle types, the mark constants, and the size
   bounds. `MIN_STAR_SIDE` / `MAX_STAR_SIDE` / `DEFAULT_STAR_SIDE` are the single
   source of truth for the supported range.
-- `src/engine/starBattle/construct.ts` — the strips-and-sea constructive generator,
-  which enforces one contiguous region per colour by counting connected
-  components; every accepted board is certified by the propagation solver before
-  it leaves the engine.
+- `src/engine/starBattle/construct.ts` — the spanning-tree generator: sample a
+  mine-balanced layout, repair it to exact uniqueness, grade it against the
+  requested tier, all inside a wall-clock budget; on budget expiry it falls back
+  to the retired strips-and-sea painting, itself certified.
+- `src/engine/starBattle/sample.ts` — the layout sampler: a planted star
+  permutation plus a randomised spanning tree cut into n one-star regions.
+- `src/engine/starBattle/repair.ts` — counterexample-guided recolouring: the
+  stage that turns an almost-never-unique colouring into a proven-unique one.
+- `src/engine/starBattle/count.ts` — the independent exact solution counter and
+  its budget-limited variant; the production acceptance gate, on the rule that
+  a budget-exhausted count is a rejection, never an acceptance.
 - `src/engine/starBattle/propagate.ts` — the wave propagation solver: the
-  production uniqueness certificate and the depth metric in one pass.
-- `src/engine/starBattle/count.ts` — the independent exact solution counter and its
-  budget-limited variant; a test cross-check, never a production gate.
-- `src/engine/starBattle/analyze.ts` — deduction-depth analysis over the same rule
-  set.
+  no-guessing certificate, measured as a difficulty signal, not as the gate.
+- `src/engine/starBattle/catalogue.ts` and `src/engine/starBattle/minimumBasis.ts`
+  — the technique-subset solver and the minimum-basis measurement that grades
+  every accepted board (all sixteen subsets enumerated).
+- `src/engine/starBattle/feasibility.ts` — the measured per-(side, tier)
+  availability probe behind the picker's honest availability notes.
+- `src/engine/starBattle/structure.ts` — solver-independent region connectivity,
+  used by repair and by the fallback's certification.
 - `src/application/starBattleReducer.ts` — the play-state transitions: locking,
-  scoring, retraction, and the single win predicate.
+  lives, retraction, and the single win predicate.
 - `src/workers/starBattleWorker.ts` — the typed Worker adapter with cancellation
   and stale-result protection.
 - `src/ui/starBattleStore.ts` — the closure-private store: generation lifecycle,
