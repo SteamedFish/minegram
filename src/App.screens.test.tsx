@@ -333,10 +333,10 @@ describe('App screens — picker to star battle and back', () => {
     const options = container.querySelectorAll<HTMLInputElement>(
       "[data-testid='star-size'] input[type='radio']",
     )
-    // The range comes from the domain constants the app passes down — 4..15
+    // The range comes from the domain constants the app passes down — 4..10
     // today — never from literals restated here.
     expect(Array.from(options).map((option) => option.value)).toEqual([
-      '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15',
+      '4', '5', '6', '7', '8', '9', '10',
     ])
   })
 
@@ -349,15 +349,15 @@ describe('App screens — picker to star battle and back', () => {
     fake.advance(
       starSnapshot({ status: 'playing', puzzle: STAR_PUZZLE, marks: new Uint8Array(4) }),
     )
-    const twelve = container.querySelector<HTMLInputElement>(
-      "[data-testid='star-size'] input[value='12']",
+    const ten = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-size'] input[value='10']",
     )
-    expect(twelve).not.toBeNull()
+    expect(ten).not.toBeNull()
     act(() => {
-      ;(twelve as HTMLInputElement).click()
+      ;(ten as HTMLInputElement).click()
     })
     expect(fake.actions.setSide).toHaveBeenCalledTimes(1)
-    expect(fake.actions.setSide).toHaveBeenCalledWith(12)
+    expect(fake.actions.setSide).toHaveBeenCalledWith(10)
   })
 
   it('choosing starting lives reaches the store as setMaxLives with the chosen n', () => {
@@ -456,15 +456,15 @@ describe('App screens — picker to star battle and back', () => {
     // card no longer replaces the controls, which was the player's dead end.
     const card = one('[data-testid="star-failure"]')
     expect(card.textContent).toContain(getStarCopy('en').failure.changeNote)
-    const twelve = container.querySelector<HTMLInputElement>(
-      "[data-testid='star-size'] input[value='12']",
+    const ten = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-size'] input[value='10']",
     )
-    expect(twelve).not.toBeNull()
-    expect(twelve?.disabled).toBe(false)
+    expect(ten).not.toBeNull()
+    expect(ten?.disabled).toBe(false)
     act(() => {
-      ;(twelve as HTMLInputElement).click()
+      ;(ten as HTMLInputElement).click()
     })
-    expect(fake.actions.setSide).toHaveBeenCalledWith(12)
+    expect(fake.actions.setSide).toHaveBeenCalledWith(10)
     const steady = container.querySelector<HTMLInputElement>(
       "[data-testid='star-difficulty'] input[value='steady']",
     )

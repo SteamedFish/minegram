@@ -20,6 +20,7 @@
 // Timeout/number casts in unrelated suites). The import is runtime-only
 // (vitest externalises node builtins); suppress the resolution error.
 import { describe, expect, it } from 'vitest'
+import { MAX_STAR_SIDE } from '../../domain/starBattle'
 import {
   HAND_K1_COLOURS,
   HAND_KMINUS1_COLOURS,
@@ -84,10 +85,18 @@ function loadRecords<T>(name: string): T[] {
     .map((line: string) => JSON.parse(line) as T)
 }
 
-const fixtures = loadRecords<FixtureRecord>('fixtures.jsonl')
-const csPopulation = loadRecords<CsPopulationRecord>('cs_population.jsonl')
-const descentBoards = loadRecords<DescentRecord>('descent_boards.jsonl')
-const showboards = loadRecords<ShowboardRecord>('showboards.jsonl')
+// Recordings above the shipped ceiling (the product cap MAX_STAR_SIDE is
+// 10 since the spanning-tree work: n = 12/15 are retired sizes) stay in
+// the files as history, but the instruments validate through the domain's
+// single source of truth and now refuse them — the load filters to the
+// supported range so the oracle coverage that still ships keeps running.
+const withinSupportedSides = <T extends { readonly n: number }>(records: T[]): T[] =>
+  records.filter((record) => record.n <= MAX_STAR_SIDE)
+
+const fixtures = withinSupportedSides(loadRecords<FixtureRecord>('fixtures.jsonl'))
+const csPopulation = withinSupportedSides(loadRecords<CsPopulationRecord>('cs_population.jsonl'))
+const descentBoards = withinSupportedSides(loadRecords<DescentRecord>('descent_boards.jsonl'))
+const showboards = withinSupportedSides(loadRecords<ShowboardRecord>('showboards.jsonl'))
 
 function toColours(record: { readonly n: number; readonly colours: readonly number[] }): Uint8Array {
   return Uint8Array.from(record.colours)

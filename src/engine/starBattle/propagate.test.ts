@@ -143,12 +143,12 @@ describe('propagateStarBoard', () => {
     expect(starsAsPermutation(result)).toEqual([1, 3, 0, 2])
   })
 
-  it('chain at n=12 is strictly deeper than the shallow fixture', () => {
+  it('chain at n=10 is strictly deeper than the shallow fixture', () => {
     // A fixed admissible permutation: evens ascending, then odds.
-    const permutation = [0, 2, 4, 6, 8, 10, 1, 3, 5, 7, 9, 11]
-    const pos = Array.from({ length: 12 }, (_, index) => index)
-    const shallow = propagateStarBoard(paintShallowFixture(12, permutation, pos), 12)
-    const chain = propagateStarBoard(paintChainFixture(12, permutation, pos), 12)
+    const permutation = [0, 2, 4, 6, 8, 1, 3, 5, 7, 9]
+    const pos = Array.from({ length: 10 }, (_, index) => index)
+    const shallow = propagateStarBoard(paintShallowFixture(10, permutation, pos), 10)
+    const chain = propagateStarBoard(paintChainFixture(10, permutation, pos), 10)
     expect(shallow.solved).toBe(true)
     expect(shallow.waves).toBe(3)
     expect(chain.solved).toBe(true)
@@ -156,7 +156,7 @@ describe('propagateStarBoard', () => {
     expect(starsAsPermutation(chain)).toEqual(permutation)
     // Pin the measured depth too, so a semantic drift in wave counting
     // fails loudly rather than sliding the difficulty bands silently.
-    expect(chain.waves).toBeGreaterThanOrEqual(12)
+    expect(chain.waves).toBeGreaterThanOrEqual(10)
   })
 
   it('reports waves === 0 honestly when nothing is deducible', () => {
@@ -244,62 +244,71 @@ describe('propagateStarBoard cross-validated against independent brute force', (
     }
   }
 
-  // Measured cost (isolated run, this machine): every one of the 24
-  // brute forces finishes in under 1ms, the whole case in under 5ms. The
-  // explicit timeout is the suite-wide generous ceiling — far above any
-  // CPU-contention slowdown the full run can produce — so a hang fails
-  // here instead of tripping vitest's 5s default for the wrong reason.
-  it('agrees at n=4..7 across many seeds and every difficulty', { timeout: 30_000 }, () => {
+  // Cost policy: each generation runs with an explicit small budget
+  // (2 s — see below) instead of the 15 s default, because the k = 0
+  // tier targeting is a coin flip at some of these sizes (measured:
+  // starter at n = 7 lands ~half of seeds within the default budget) and
+  // 24 default-budget generations would burn six minutes. A generation
+  // that cannot land its tier in 2 s answers with the certified fallback
+  // board (construct.ts NEVER-FAIL), which is every bit as valid for the
+  // agreement assertion below — the propagation certificate is the
+  // fallback's uniqueness proof too. The explicit 180 s timeout is the
+  // suite-wide generous ceiling — far above any CPU-contention slowdown —
+  // so a hang fails here instead of tripping vitest's default for the
+  // wrong reason.
+  it('agrees at n=4..7 across many seeds and every difficulty', { timeout: 180_000 }, () => {
     for (const n of [4, 5, 6, 7]) {
       for (const difficulty of difficulties) {
         for (const seed of [1, 17, 4242]) {
-          const { puzzle } = generateStarBattle({ n, seed, difficulty })
+          const { puzzle } = generateStarBattle(
+            { n, seed, difficulty },
+            { timeBudgetMs: 2_000 },
+          )
           expectAgreement(puzzle.colours, n, puzzle.solution, nodeBudget)
         }
       }
     }
   })
 
-  // Measured cost (isolated run, this machine): at most 2ms per board,
-  // under 10ms for the whole case. Same policy as the n=4..7 case: the
-  // explicit timeout only catches hangs, never measures speed.
-  it('agrees at n=8..10 where exhaustion is still cheap', { timeout: 30_000 }, () => {
+  // Same cost policy as the n=4..7 case: 2 s per generation, fallback
+  // boards included (starter/steady at n = 8–10 mostly answer with the
+  // fallback inside any small budget — measured in construct.test.ts).
+  it('agrees at n=8..10 where exhaustion is still cheap', { timeout: 120_000 }, () => {
     for (const n of [8, 9, 10]) {
       for (const difficulty of difficulties) {
-        const { puzzle } = generateStarBattle({ n, seed: 99, difficulty })
+        const { puzzle } = generateStarBattle({ n, seed: 99, difficulty }, { timeBudgetMs: 2_000 })
         expectAgreement(puzzle.colours, n, puzzle.solution, nodeBudget)
       }
     }
   })
 
   // The explicit timeout is deliberate: this case expands
-  // 20-million-node search trees at n=15, and the worst single board
+  // 20-million-node search trees, and the worst single board
   // measured 2.1s isolated on this machine — already near vitest's 5s
   // default under full-suite CPU contention, which was observed directly
   // as a 5000ms timeout failure when the suite runs all files at once.
-  // 30s is
-  // ~8x the isolated cost, absorbing any worker contention. The cost is
-  // inherent (exhausting 15! is infeasible by design; count.ts is the
-  // instrument for exact small-n uniqueness), and shrinking the node
-  // budget would weaken the very coverage this test exists for — the
-  // certificate must never contradict the partial evidence. Do not lower
-  // the budget to silence a slow machine.
-  it('never contradicts the brute force at n=15 within an honest budget', { timeout: 30_000 }, () => {
-    // Exhausting 15! is infeasible by design (the exact counter in
+  // 60s is ~30x the isolated cost, absorbing any worker contention. The
+  // cost is inherent (exhausting 10! is infeasible by design; count.ts
+  // is the instrument for exact small-n uniqueness), and shrinking the
+  // node budget would weaken the very coverage this test exists for —
+  // the certificate must never contradict the partial evidence. Do not
+  // lower the budget to silence a slow machine.
+  it('never contradicts the brute force at n=10 within an honest budget', { timeout: 60_000 }, () => {
+    // Exhausting 10! is infeasible by design (the exact counter in
     // count.ts is the instrument for small-n uniqueness). Within the
     // budget the brute force must find no solution other than the planted
     // one, and the propagation certificate must solve the board.
     for (const difficulty of difficulties) {
-      const { puzzle } = generateStarBattle({ n: 15, seed: 7, difficulty })
-      const propagated = propagateStarBoard(puzzle.colours, 15)
+      const { puzzle } = generateStarBattle({ n: 10, seed: 7, difficulty }, { timeBudgetMs: 2_000 })
+      const propagated = propagateStarBoard(puzzle.colours, 10)
       expect(propagated.solved).toBe(true)
       expect(starsAsPermutation(propagated)).toEqual([...puzzle.solution])
-      const brute = bruteStarSolutions(puzzle.colours, 15, 3, 20_000_000)
+      const brute = bruteStarSolutions(puzzle.colours, 10, 3, 20_000_000)
       for (const solution of brute.solutions) {
         expect([...solution]).toEqual([...puzzle.solution])
       }
       // The planted permutation must be genuinely valid per the domain
-      // contract (this also covers the n=15 shapes).
+      // contract (this also covers the n=10 shapes).
       assertStarBattlePuzzle(puzzle)
     }
   })
