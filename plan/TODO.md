@@ -770,7 +770,7 @@ about n = 8).
   Deliverable: a pure, solver-independent function returning a difficulty quantity whose unit is
   **blank marks handed over for free**, plus its distribution across existing boards and across the
   four reference boards so the tier thresholds can be set from data rather than taste.
-- [ ] **Re-tier once the instrument exists — all four current tiers are one fixed pattern.** Measured
+- [x] ~~*Re-tier once the instrument exists — all four current tiers are one fixed pattern.** Measured
   on committed `master` (`84e27b0`, n = 10, 8 seeds per tier) with a battery of 12 structural
   predicates, where a predicate true on **100%** of a tier's boards is by definition that tier's
   pattern the player keeps re-seeing: `starter` satisfies **12/12**, `steady` 7, `expert` 7,
@@ -779,8 +779,9 @@ about n = 8).
   of that row. The four reference boards satisfy **3/7, 3/7, 0/7 and 1/7** of those invariants —
   board C, the one rated 「非常有趣」, satisfies none. So the target shape is measured, not imagined.
   Re-tiering the current construction would only slice one pattern into five, which is why this waits
-  on the instrument.
-- [ ] **Generate with full support over legal boards, seeded diversely.** Pruning cannot escape the
+  on the instrument.~~
+  **RESOLVED by the spanning-tree generator (commit `25cc1f6`).**
+- [x] ~~*Generate with full support over legal boards, seeded diversely.** Pruning cannot escape the
   basin of the canonical skeleton it prunes: strips-and-sea always yields a full-width dominant
   region no matter how much is trimmed. Note the measured obstacle to the naive alternative — uniform
   sampling of colourings and filtering for uniqueness is not viable, because uniqueness is
@@ -789,7 +790,8 @@ about n = 8).
   the uniqueness certificate; what is missing is a **diverse seed pool** instead of one skeleton.
   Report what is measurable — the connected component the move set reaches, and its coverage from a
   diverse pool — and state plainly what cannot be proven. 「每个合法盘都在里面」 is not provable and
-  must not be reported as done.
+  must not be reported as done.~~
+  **RESOLVED by the spanning-tree generator (commit `25cc1f6`, shape only).**
 - [ ] **The difficulty axis is honest but not calibrated, and three instruments are retired.**
   Technique count is measured and enforced per board, but it does not fit the player's own
   favourites: A is k=2 (5 witness waves), B is k=-1 (contradiction), C is **k=1 with 12 witness
@@ -804,7 +806,7 @@ about n = 8).
   when it required any one of them. A candidate replacement is how many independent assumptions a
   player must hold at once (`csPasses`), but every board observed so far is exactly 1, so it has
   no spread yet. Needs real play before any of it is shown as a difficulty claim.
-- [ ] **`starter` is now almost one colour, and the sea cannot be moved away.** The
+- [x] ~~*`starter` is now almost one colour, and the sea cannot be moved away.** The
   strip+sea construction makes the sea absorb everything unclaimed, so on `starter`
   (no strips) it covers 81% of the board at n = 4 and 94% at n = 15, leaving n distinct
   single cells on a field; `steady`/`challenging` sit at 48–68%. Read as background plus
@@ -813,7 +815,8 @@ about n = 8).
   dominance on `starter` is the construction working, and it survives or dies with whatever
   replaces it. Separately, no renumbering and no hue assignment can move the sea's colour away
   from its neighbours, so that half of the colour separation genuinely does have to come from
-  the palette. Both need a real player's eye, not a static check.
+  the palette. Both need a real player's eye, not a static check.~~
+  **RESOLVED by the spanning-tree generator (commit `25cc1f6`, both premises gone).**
 - [x] ~~**Separate `steady` from `challenging` at n = 6–8.**~~ **Moot as of the
   witness-identity re-tier (2026-10-07):** the `challenging` *construction* tier no
   longer exists — `StarConstructionDifficulty` is `'starter' | 'steady'` (`construct.ts`),
@@ -1144,3 +1147,31 @@ about n = 8).
   n=15 是 5–10 波。** 同时更正我此前对玩家的一个说法：「多样性是推理层的、不是视觉层
   的」**半错** —— 形状单调和思路单调是**两个独立的 100% 单调**，参考盘在两个轴上都
   和我们不同，**单独修任何一个，另一个仍然退化**。
+
+## Phase 14 — Spanning-tree generator and the three-tier game (2026-10-06)
+
+- [ ] **The game no longer has a genuinely easy mode, and that is unverified by a player.** The
+  spanning-tree construction cannot produce a shallow unique board: the k = 0 class measures 8% /
+  10% / **0%** at n = 6 / 8 / 10, because a shallow board has many valid answers and a unique one
+  therefore needs deep repair, which never yields a shallow board. `starter` and `steady` were
+  removed for that reason. The fastest default (n = 8 `challenging`, 162 ms) still starts at roughly
+  one assumption deep — only ~10% of boards at that size are solvable by the four base rules, ~73%
+  need the full technique set. **The player has played this and not yet reported back.** If it is
+  too hard, the correct fix is restoring the old construction for the easy tiers, NOT forcing this
+  construction's shallow end, which would mean re-imposing a shape gate the player explicitly
+  refused.
+- [ ] **n = 10's generation tail is a live path, not a theoretical one.** Measured over 30
+  generations per tier: `challenging` p50 9.1 s with 1/30 falling back, `expert` p50 6.0 s with 0/30,
+  `contradiction` p50 20.3 s with **2/30 falling back** and 4/30 passing 60 s. The budget stays at
+  90 s because that is player-approved and the fallback is certified and honestly labelled — but the
+  honest lever if the tail is felt is a product decision to raise the n >= 9 budget to ~120 s, not a
+  wider acceptance. Nobody has played n = 10 yet.
+- [ ] **The difficulty instrument is still uncalibrated to a human.** Three tiers ship keyed on
+  technique count (k = 1 / 2 / -1), which is measured and enforced per board but does not fit the
+  player's own favourites: C is k = 1 and rated highest, A and D are k = 2, B is k = -1. The
+  freebie-counted-in-blank-marks instrument remains undelivered and is still the right shape for it.
+- [ ] **Run the desktop/mobile browser check.** Still the one unclosed AGENTS.md pre-release gate,
+  now three attempts deep. The Playwright backend cannot navigate at all in this environment — every
+  URL including example.com stays `about:blank` while the built bundle serves correctly under
+  `/minegram/`. Headless Chromium against a static file does work, so the gap is loopback-specific.
+  It has to be run against the live Pages URL after a rebuild.
