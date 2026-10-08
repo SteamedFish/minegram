@@ -141,6 +141,18 @@ export const UNMEASURED_TIER_AVAILABILITY: StarTierAvailability = Object.freeze(
 
 export type StarMark = 'blank' | 'star' | null
 
+/**
+ * Live generation progress, projected by the host from the store's snapshot.
+ * Honest by construction: a candidate count and the current phase, never a
+ * percentage — the generator cannot know how many candidates a board needs,
+ * so the count of what has actually happened is the whole truth.
+ */
+export interface StarGenerationProgress {
+  readonly candidates: number
+  readonly accepted: number
+  readonly phase: 'sampling' | 'repairing' | 'grading'
+}
+
 export interface StarBattleSurfaceProps {
   readonly locale: 'en' | 'zh'
   /** `null` while no certified board exists — the empty card states the case. */
@@ -150,6 +162,12 @@ export interface StarBattleSurfaceProps {
   readonly status: 'idle' | 'generating' | 'playing' | 'won' | 'lost'
   /** A generation failure to state in place of the board; `null` when there is none. */
   readonly failure?: StarFailureInfo | null
+  /**
+   * Live generation progress while `status === 'generating'`; absent or
+   * `null` shows no indicator. Only ever shown while a board is actually
+   * printing — the empty card owns it, so it is never a band of its own.
+   */
+  readonly progress?: StarGenerationProgress | null
   /**
    * The measured per-tier availability at a given side; absent = every tier
    * is available, the behaviour before the signal existed. `unavailable` is
@@ -234,6 +252,18 @@ interface StarCopy {
     readonly idleBody: string
     readonly generatingTitle: string
     readonly generatingBody: string
+  }
+  /**
+   * The generation progress line inside the empty card: the working caret,
+   * the phase names, and the one-line template ('{phase} — {candidates}
+   * layouts tried'). The phase is the milestone, the count is the honest
+   * "it is working" signal; a percentage would be invented.
+   */
+  readonly progress: {
+    /** The blinking working caret, matched to the main game's status caret. */
+    readonly caret: string
+    readonly phases: Record<'sampling' | 'repairing' | 'grading', string>
+    readonly line: string
   }
   /**
    * The generation-failure card. Headline, explanation and remedies are
@@ -341,6 +371,15 @@ const en: StarCopy = {
     generatingTitle: 'Printing the board',
     generatingBody: 'This takes a moment.',
   },
+  progress: {
+    caret: '▍',
+    phases: {
+      sampling: 'Sampling colourings',
+      repairing: 'Repairing the layout',
+      grading: 'Grading difficulty',
+    },
+    line: '{phase} — {candidates} layouts tried',
+  },
   failure: {
     retry: 'Retry',
     changeNote: 'Change the board size or difficulty above, or go back to pick another game.',
@@ -431,6 +470,15 @@ const zhCN: StarCopy = {
     idleBody: '选择难度后开始一局。',
     generatingTitle: '正在生成棋盘',
     generatingBody: '需要一点时间。',
+  },
+  progress: {
+    caret: '▍',
+    phases: {
+      sampling: '采样配色',
+      repairing: '修补布局',
+      grading: '评估难度',
+    },
+    line: '{phase}，已尝试 {candidates} 种配色',
   },
   failure: {
     retry: '重试',
@@ -587,6 +635,7 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
   const copy = getStarCopy(props.locale)
   const playing = status === 'playing'
   const controlsDisabled = status === 'generating'
+  const progress = props.progress ?? null
 
   const gridRef = useRef<HTMLDivElement | null>(null)
   const cellsRef = useRef<(HTMLDivElement | null)[]>([])
@@ -664,6 +713,31 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
     }
     previousMarksRef.current = marks
   }, [marks, status, puzzle, copy, n])
+
+  // Generation progress shares the one polite region, throttled to phase
+  // changes. The candidate count ticks far too often to announce and means
+  // little read aloud, while a phase change (sampling → repairing →
+  // grading) is the real milestone: the first message of a generation
+  // announces its phase, and later messages with the same phase only move
+  // the visible counter. The ref resets when the surface leaves
+  // `generating`, so the next generation announces its first phase too.
+  const announcedPhaseRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (status !== 'generating') {
+      announcedPhaseRef.current = null
+      return
+    }
+    if (progress === null || announcedPhaseRef.current === progress.phase) {
+      return
+    }
+    announcedPhaseRef.current = progress.phase
+    setNotice(
+      fill(copy.progress.line, {
+        phase: copy.progress.phases[progress.phase],
+        candidates: progress.candidates,
+      }),
+    )
+  }, [status, progress, copy])
 
   // Banner focus: a keyboard player who is inside the board when the round ends
   // lands on the banner's primary control; anyone else's focus is left alone.
@@ -1244,6 +1318,24 @@ export function StarBattleSurface(props: StarBattleSurfaceProps) {
           <p className="mg-star-empty__body">
             {status === 'idle' ? copy.empty.idleBody : copy.empty.generatingBody}
           </p>
+          {/* The progress line lives INSIDE the empty card: it says the card's
+              own sentence with live numbers, and a phone never sees it as a
+              new band — the card's centered grid already owns that space. The
+              caret idiom is the main game's status caret, so "the machine is
+              working" looks and blinks the same in both games. */}
+          {status === 'generating' && progress !== null ? (
+            <p className="mg-star-progress" data-phase={progress.phase} data-testid="star-progress">
+              <span className="mg-star-progress__caret" aria-hidden="true">
+                {copy.progress.caret}
+              </span>
+              <span className="mg-star-progress__line">
+                {fill(copy.progress.line, {
+                  phase: copy.progress.phases[progress.phase],
+                  candidates: progress.candidates,
+                })}
+              </span>
+            </p>
+          ) : null}
         </div>
       ) : (
         <div className="mg-star-gridwrap" data-testid="star-gridwrap">

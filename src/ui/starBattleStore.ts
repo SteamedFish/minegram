@@ -5,8 +5,12 @@
  * (`src/workers/starBattleWorker.ts`), and it owns everything the reducer
  * deliberately does not: the `generating` lifecycle flag, the difficulty and
  * board-size preferences (persisted through the shared storage helper, never
- * through generation settings), the failure state, the win interlude with its
- * page visibility guard, and stale-result protection.
+ * through generation settings), the failure state, the live generation
+ * progress projection (owned end-to-end on the UI side: the store validates
+ * each `star-generation/progress` message against the pinned wire protocol,
+ * applies the same requestId + generationId stale-result protection as the
+ * success/failure path, and clears the bar on every start and end), the win
+ * interlude with its page visibility guard, and stale-result protection.
  *
  * The store is the string→structure seam for marks: `onMark` receives the
  * UI's `'blank' | 'star' | null` vocabulary plus row/column coordinates and
@@ -100,6 +104,29 @@ export interface StarTierAvailability {
 }
 
 /**
+ * The phases a generation walks through, in the order the player meets
+ * them: `sampling` tries candidate colourings, `repairing` fixes a
+ * candidate that failed a structural check, `grading` measures a
+ * candidate's difficulty against the requested tier. The names are the
+ * pinned wire protocol — the worker lane emits exactly these.
+ */
+export type StarBattleProgressPhase = 'sampling' | 'repairing' | 'grading'
+
+/**
+ * An honest snapshot of in-flight generation work: how many candidate
+ * colourings have been tried so far, whether a board has been certified
+ * (always 0 or 1), and which phase the generator is in. There is
+ * deliberately no percentage — the generator cannot know how many
+ * candidates a board needs, so the count of what has actually happened is
+ * the whole truth the UI can show.
+ */
+export interface StarBattleProgress {
+  readonly candidates: number
+  readonly accepted: number
+  readonly phase: StarBattleProgressPhase
+}
+
+/**
  * Everything the surface needs, projected. `puzzle` is `null` until a
  * certified board has arrived — the store never renders a board it has not
  * received as certified. `failure` carries the raw diagnostics whose
@@ -125,6 +152,13 @@ export interface StarBattleSnapshot {
    * never blocks a launch and never delays the first board.
    */
   readonly tierAvailability: Readonly<Record<StarDifficulty, StarTierAvailability>>
+  /**
+   * Live generation progress, `null` unless a board is actually printing.
+   * The store owns the lifecycle: the bar clears when a generation starts
+   * and when it ends, in every terminal path, so a stale bar can never
+   * linger into the next state.
+   */
+  readonly progress: StarBattleProgress | null
   readonly version: number
 }
 
@@ -353,6 +387,50 @@ function wireToAssertion(next: 'blank' | 'star' | null): 'blank' | 'star' | 'cle
 }
 
 // --------------------------------------------------------------------------------------
+// Progress messages (the pinned wire protocol the worker lane emits)
+// --------------------------------------------------------------------------------------
+
+const STAR_PROGRESS_PHASES: readonly StarBattleProgressPhase[] = ['sampling', 'repairing', 'grading']
+
+/**
+ * The mid-generation message the Worker posts while a board is printing.
+ * The store owns this shape on the UI side of the seam — the worker module
+ * will carry its own copy of the guard — so progress validation lives here
+ * and never blocks on the parallel lane landing.
+ */
+interface StarBattleProgressMessage extends StarBattleProgress {
+  readonly type: 'star-generation/progress'
+  readonly requestId: number
+  readonly generationId: number
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+/**
+ * Everything about a progress message is validated before it is trusted, as
+ * strictly as the succeeded/failed responses are. A malformed progress
+ * message is IGNORED, never a failure: progress is advisory, and a bad tick
+ * must not take down a generation that is otherwise healthy.
+ */
+function isStarBattleProgressMessage(value: unknown): value is StarBattleProgressMessage {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false
+  }
+  const record = value as Record<string, unknown>
+  return (
+    record.type === 'star-generation/progress' &&
+    isNonNegativeSafeInteger(record.requestId) &&
+    isNonNegativeSafeInteger(record.generationId) &&
+    isNonNegativeSafeInteger(record.candidates) &&
+    isNonNegativeSafeInteger(record.accepted) &&
+    typeof record.phase === 'string' &&
+    (STAR_PROGRESS_PHASES as readonly string[]).includes(record.phase)
+  )
+}
+
+// --------------------------------------------------------------------------------------
 // The store
 // --------------------------------------------------------------------------------------
 
@@ -404,6 +482,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
   let difficulty: StarDifficulty =
     options.difficulty ?? readPersistedDifficulty(storageKey)
   let failure: GameFailureDiagnostics | null = null
+  let progress: StarBattleProgress | null = null
   let version = 0
   let interlude: TimerHandle | null = null
   let active: ActiveStarRequest | null = null
@@ -442,6 +521,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
       side,
       failure,
       tierAvailability: availabilityRecord(side),
+      progress,
       version,
     })
   }
@@ -585,6 +665,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
   function teardownActive(): void {
     const current = active
     active = null
+    progress = null
     if (current === null) {
       return
     }
@@ -664,6 +745,7 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
     active = { requestId, generationId, worker, seed, maxLives, tier: difficulty, n: side }
     authoredSeed = seed
     failure = null
+    progress = null
     const request: StarBattleRequestMessage = {
       type: 'star-generation/request',
       requestId,
@@ -705,6 +787,25 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
     ) {
       return
     }
+    // Progress is advisory, so it is handled before the response validator
+    // (which knows nothing about it) and before the terminal clear below.
+    // A message that claims to be progress but fails validation is IGNORED,
+    // never a failure: a bad tick must not take down a healthy generation.
+    if (typeof data === 'object' && data !== null && (data as { type?: unknown }).type === 'star-generation/progress') {
+      if (!isStarBattleProgressMessage(data)) {
+        return
+      }
+      if (data.requestId !== requestId || data.generationId !== generationId) {
+        return
+      }
+      progress = Object.freeze({
+        candidates: data.candidates,
+        accepted: data.accepted,
+        phase: data.phase,
+      })
+      publish()
+      return
+    }
     if (!isStarBattleWorkerResponse(data)) {
       reportRequestFailure(
         worker,
@@ -717,6 +818,10 @@ export function createStarBattleStore(options: StarBattleStoreOptions = {}): Sta
     if (data.requestId !== requestId || data.generationId !== generationId) {
       return
     }
+    // Anything that is not progress is the generation's answer, so the bar
+    // ends here — whatever the answer turns out to be, and on every path
+    // below (success, failure, invalid board, reducer refusal).
+    progress = null
 
     if (data.type === 'star-generation/failed') {
       active = null
