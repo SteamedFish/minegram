@@ -9,8 +9,9 @@
  */
 
 /**
- * k = 0: the n = 4 starter construction (singleton regions 0..2, region 3
- * the sea). Base rules place every star by hidden singles alone.
+ * k = 0: the n = 4 strips-and-sea construction (singleton regions 0..2,
+ * region 3 the sea — the shape the retired starter tier painted). Base
+ * rules place every star by hidden singles alone.
  */
 export const HAND_K0_COLOURS = new Uint8Array([3, 0, 3, 3, 3, 3, 3, 1, 2, 3, 3, 3, 3, 3, 3, 3])
 
@@ -27,8 +28,9 @@ export const HAND_K1_COLOURS = new Uint8Array([1, 1, 0, 0, 1, 3, 3, 3, 3, 3, 2, 
 export const HAND_K2_COLOURS = new Uint8Array([2, 0, 0, 1, 2, 2, 3, 1, 2, 3, 3, 1, 2, 2, 3, 3])
 
 /**
- * k = -1: n = 10 board from the seeded walk stream (walk seed 24757, steady
- * seed board) — the "requires contradiction" class; no confinement subset
+ * k = -1: n = 10 board from the seeded walk stream (walk seed 24757; the
+ * walk stream itself is retired and deleted, the board survives as a
+ * fixture) — the "requires contradiction" class; no confinement subset
  * solves at depth 0.
  */
 export const HAND_KMINUS1_COLOURS = new Uint8Array([

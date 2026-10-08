@@ -61,7 +61,8 @@ function ownComponentsPerColour(colours: Uint8Array, n: number): number[] {
 
 describe('measureStarBoardStructure on hand-built grids', () => {
   it('detects the sea hub: one region adjacent to every other', () => {
-    // Three singleton regions inside a sea (the retired starter signature).
+    // Three singleton regions inside a sea (the retired strips-and-sea k = 0
+    // construction's signature shape).
     const colours = grid([
       [3, 3, 3, 1],
       [3, 0, 3, 3],
@@ -113,7 +114,7 @@ describe('union-find vs this file’s own flood fill on generated boards', () =>
     // seconds at n = 8 (measured ~8 s per accepted board; the small sides
     // are milliseconds), so the whole loop lands in the tens of seconds.
     for (const n of [4, 5, 6]) {
-      for (const difficulty of ['starter', 'expert'] as const) {
+      for (const difficulty of ['challenging', 'expert'] as const) {
         for (const seed of [1, 2, 3]) {
           const { puzzle } = generateStarBattle({ n, seed, difficulty })
           const structure = measureStarBoardStructure(puzzle.colours, n)

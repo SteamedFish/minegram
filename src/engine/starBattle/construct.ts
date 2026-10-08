@@ -61,35 +61,35 @@
  * escape hatch, never the primary path.
  *
  * DIFFICULTY TIERS are keyed on the catalogue depth (`measureMinimumBasis`
- * k: how many confinement IDEAS a depth-0 solve needs, −1 = none suffice)
- * and, inside the k = 0 class, on base-propagation waves:
+ * k: how many confinement IDEAS a depth-0 solve needs, −1 = none suffice):
  *
- *  - starter    — k = 0 and shallow (base waves ≤ {@link STAR_STARTER_MAX_WAVES})
- *  - steady     — k = 0 and deep    (base waves  > {@link STAR_STARTER_MAX_WAVES})
  *  - challenging— k = 1 (exactly one confinement idea finishes it)
  *  - expert     — k = 2
  *  - contradiction — k = −1 AND the depth-1 case-split certificate solves
  *    it (only contradiction works; measured csDepth-1 solvability is 100%
  *    at every played size, csTrials ≤ 55)
  *
- * Measured natural distribution of the grade classes and the wave bands
- * derived from it (this machine, 2026-10): the k = 0 pool is 8%/10%/0% of
- * accepted boards at n = 6/8/10 (n = 10's zero is why starter and steady
- * are unreachable there — a MEASURED FACT, recorded in the tests and
- * surfaced through feasibility.ts, never widened away). Within k = 0 the
- * base waves are always ODD (each simultaneous sweep is a full
- * row/column/colour pass) and measure: n = 6 over 30 boards — {3:1, 5:6,
- * 7:12, 9:11}; n = 8 over 30 boards — {5:3, 7:2, 9:12, 11:10, 13:3}. The
- * starter cut ({@link STAR_STARTER_MAX_WAVES} = 6) keeps starter at the
- * old shipped shallow band (waves ≤ 5) and lets steady absorb 7+ —
- * starter/steady split ≈ 23/77 (n = 6) and 10/90 (n = 8) of the k = 0
- * pool. See {@link STAR_STARTER_MAX_WAVES} and the feasibility module for
- * the per-(side, tier) acceptance matrix. Where a class is unreachable at
- * a size that is a MEASURED FACT recorded there and in the tests — the
- * band is never widened to pretend otherwise, and the picker learns it
- * through `feasibility.ts` rather than a generation that silently always
- * falls back. Boards with k = 3, or k = −1 boards the case-split cannot
- * solve, belong to no tier and are rejected back to the stream.
+ * THE GAME SHIPS EXACTLY THESE THREE TIERS. The k = 0 (base-solvable)
+ * tiers `starter` and `steady` were measured to death and retired (player
+ * decision, 2026-10): the k = 0 pool is 8%/10%/0% of accepted boards at
+ * n = 6/8/10 — zero at n = 9–10, so both tiers were impossible at the
+ * largest sizes — and within the n = 8 pool only ~10% (3/30 measured)
+ * sat inside starter's shallow wave band, making starter fallback-dominated
+ * there (5/5 default-budget generations fell back). The mechanism is
+ * structural, not a tuning miss: a shallow board has many alternative
+ * solutions, the spanning-tree construction produces high-entropy
+ * colourings with large competitor sets, and repairing to uniqueness
+ * cannot produce a shallow board — uniqueness and shallowness are in
+ * tension inside this construction. Where a class is unreachable at a
+ * size that is a MEASURED FACT recorded in the feasibility module and the
+ * tests — the band is never widened to pretend otherwise, and the picker
+ * learns it through `feasibility.ts` rather than a generation that
+ * silently always falls back. The per-(side, tier) fallback rates and
+ * wall-clock percentiles re-derived after the retirement (30 generations
+ * per cell) live in the feasibility module doc; the challenging band at
+ * n = 6/8/10 is pinned in construct.test.ts. Boards with k = 0, k = 3, or
+ * k = −1 boards the case-split cannot solve belong to no tier and are
+ * rejected back to the stream.
  *
  * DELETED WITH THE OLD CONSTRUCTION (precedent: drift.ts, commit f735a0f —
  * a measured-but-unused module's record belongs in a surviving module doc
@@ -110,6 +110,15 @@
  *    analyser, a strict duplicate of `propagate.ts`'s successor. Imported
  *    by nothing except its own test since ddd9cc7; deleted per the repo's
  *    rule against unreachable code.
+ *  - The `starter` and `steady` tiers + `STAR_STARTER_MAX_WAVES` +
+ *    `construct.test.ts`'s wave-split pins: the whole k = 0 band. Existed
+ *    only to serve base-solvable boards; measured impossible at n = 9–10
+ *    and fallback-dominated at n = 8 (see the tier section above for the
+ *    numbers and the mechanism), and the player ruled the game ships three
+ *    tiers. The tier predicate's `baseSolved`/`baseWaves` grade fields
+ *    died with them — `measureMinimumBasis` already reports k = 0 for
+ *    base-solvable boards, so no tier predicate ever needed a separate
+ *    base run.
  *  - The hub-free shaping descent (`shapeSteadyColours`,
  *    `resolveShapedSteadyColours`, `STAR_TIER_SHAPE_GATE`,
  *    `StarShapeBudgetExhaustedError`, `StarTechniqueTierBudgetExhaustedError`)
@@ -152,21 +161,10 @@ import { repairStarBattleLayout } from './repair'
 export { admissibleStarPermutation }
 
 /** The difficulty tiers, in progression order. */
-export type StarDifficulty =
-  | 'starter'
-  | 'steady'
-  | 'challenging'
-  | 'expert'
-  | 'contradiction'
+export type StarDifficulty = 'challenging' | 'expert' | 'contradiction'
 
 /** All tiers in progression order. */
-export const STAR_DIFFICULTIES: readonly StarDifficulty[] = [
-  'starter',
-  'steady',
-  'challenging',
-  'expert',
-  'contradiction',
-]
+export const STAR_DIFFICULTIES: readonly StarDifficulty[] = ['challenging', 'expert', 'contradiction']
 
 export interface StarGenerationRequest {
   readonly n: number
@@ -178,9 +176,9 @@ export interface StarGeneratedBoard {
   readonly puzzle: StarBattlePuzzle
   /**
    * The measured wave count of the accepted board — the depth metric. It
-   * is the base propagation's waves for k = 0 boards (starter/steady), the
-   * minimum-basis witness run's waves for k ≥ 1 (challenging/expert), and
-   * the depth-1 case-split run's waves for k = −1 (contradiction).
+   * is the minimum-basis witness run's waves for k ≥ 1 (challenging/
+   * expert) and the depth-1 case-split run's waves for k = −1
+   * (contradiction).
    */
   readonly waves: number
   readonly difficulty: StarDifficulty
@@ -252,31 +250,17 @@ export function defaultStarGenerationBudgetMs(n: number): number {
   return n >= 9 ? 90_000 : 15_000
 }
 
-/**
- * The starter/steady wave cut inside the k = 0 class: starter takes base
- * waves ≤ 6 (i.e. the measured odd-wave values 3 and 5), steady takes 7+.
- * Derived from 30 k = 0 boards per side (probe, this machine, 2026-10 —
- * the construct.ts module doc has the histogram): the cut keeps starter
- * at the old shipped shallow band instead of stretching to claim half the
- * pool, because a starter board the player reads as "trivial" is exactly
- * a ≤ 5-wave collapse; the deeper k = 0 boards are routine-but-long, which
- * is the steady contract.
- */
-export const STAR_STARTER_MAX_WAVES = 6
-
 function nowMs(): number {
   return Date.now()
 }
 
 /**
- * The measured grade of one unique repaired board. Built lazily by
+ * The measured grade of one unique repaired board. Built by
  * {@link gradeForTier}: the expensive instruments (the 16-subset minimum
  * basis, the depth-1 case-split) run only when the requested tier can
- * still match, so a starter request never pays for a basis measurement.
+ * still match.
  */
 interface StarGrade {
-  readonly baseSolved: boolean
-  readonly baseWaves: number
   readonly k: number
   readonly basisWaves: number
   readonly contradiction?: {
@@ -288,14 +272,13 @@ interface StarGrade {
 }
 
 /**
- * The grade facts the tier predicate reads. Deliberately minimal —
- * generation's fuller {@link StarGrade} and the feasibility probe's
- * partial grade both satisfy it, and the predicate never sees (or needs)
- * waves/csTrials beyond the solved flag.
+ * The grade facts the tier predicate reads. Deliberately minimal — no tier
+ * accepts a k = 0 (base-solvable) board since the starter/steady
+ * retirement, so `measureMinimumBasis`'s k is the whole input, plus the
+ * contradiction certificate's solved flag. Both generation and the
+ * feasibility probe's partial grade satisfy it.
  */
 export interface StarTierGrade {
-  readonly baseSolved: boolean
-  readonly baseWaves: number
   readonly k: number
   readonly contradiction?: { readonly solved: boolean }
 }
@@ -308,10 +291,6 @@ export interface StarTierGrade {
  */
 export function starTierAcceptsGrade(difficulty: StarDifficulty, grade: StarTierGrade): boolean {
   switch (difficulty) {
-    case 'starter':
-      return grade.baseSolved && grade.baseWaves <= STAR_STARTER_MAX_WAVES
-    case 'steady':
-      return grade.baseSolved && grade.baseWaves > STAR_STARTER_MAX_WAVES
     case 'challenging':
       return grade.k === 1
     case 'expert':
@@ -323,13 +302,10 @@ export function starTierAcceptsGrade(difficulty: StarDifficulty, grade: StarTier
 
 /**
  * The wave count a grade reports on its board: the witness run's waves —
- * base waves for k = 0, basis witness waves for k ≥ 1, case-split waves
- * for k = −1. Always a positive integer on an accepted grade.
+ * basis witness waves for k ≥ 1, case-split waves for k = −1. Always a
+ * positive integer on an accepted grade.
  */
 function gradeWaves(grade: StarGrade): number {
-  if (grade.k === 0) {
-    return grade.baseWaves
-  }
   if (grade.k === -1) {
     return grade.contradiction?.waves ?? grade.basisWaves
   }
@@ -347,20 +323,9 @@ function gradeForTier(
   n: number,
   difficulty: StarDifficulty,
 ): { readonly waves: number; readonly csPasses?: number; readonly csTrials?: number } | null {
-  const base = propagateStarBoard(colours, n)
-
-  // starter/steady need nothing beyond the base run.
-  if (difficulty === 'starter' || difficulty === 'steady') {
-    const grade = { baseSolved: base.solved, baseWaves: base.waves, k: base.solved ? 0 : 1, basisWaves: base.waves }
-    if (!starTierAcceptsGrade(difficulty, grade)) {
-      return null
-    }
-    return { waves: base.waves }
-  }
-
-  // Technique tiers: the minimum basis is the contract. (For a base-solved
-  // board this returns k = 0 without the subset enumeration, so the common
-  // reject path stays cheap.)
+  // The minimum basis is the contract. (For a base-solved board this
+  // returns k = 0 without the subset enumeration, and every shipped tier
+  // rejects k = 0, so the common reject path stays cheap.)
   const basis = measureMinimumBasis(colours, n)
   let contradiction: StarGrade['contradiction']
   if (difficulty === 'contradiction' && basis.k === -1) {
@@ -373,8 +338,6 @@ function gradeForTier(
     }
   }
   const grade: StarGrade = {
-    baseSolved: base.solved,
-    baseWaves: base.waves,
     k: basis.k,
     basisWaves: basis.waves,
     contradiction,

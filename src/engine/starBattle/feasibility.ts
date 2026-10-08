@@ -29,7 +29,7 @@
  * seeded stream identical in distribution to generation's, graded once per
  * unique repaired board and credited to every tier simultaneously (repair
  * is the expensive stage; sharing it across tiers is what makes probing
- * five tiers from one stream affordable). The tier is classified:
+ * three tiers from one stream affordable). The tier is classified:
  *
  * - `available`   — the Wilson-95% LOWER bound on p clears the bar
  *                   p ≥ 1 - (1 - 0.9)^(1/A(n)), i.e. the measured rate
@@ -48,34 +48,47 @@
  * neighbourhood of "1 failure in 12 attempts", carried over from the
  * pre-spanning-tree feasibility module.
  *
- * Measured per-candidate acceptance and per-generation success (probe,
- * this machine, 2026-10 — the stream numbers live in construct.ts's module
- * doc; this is the tier-readout layer). Per-candidate p multiplies the
- * mine-balance rate, the repair conversion and the grade-class share;
- * generation success is `1 - (1 - p)^A` with A the measured candidates
- * per default budget (~220k at n = 6, ~90k at n = 8, ~500k at n = 10):
+ * Measured per-GENERATION fallback rate and wall clock, 30 generations
+ * per (side, tier) cell with the default budgets (probe, this machine,
+ * 2026-10 — the post-retirement re-derivation, replacing the old pooled
+ * five-tier figures). "fb" counts budget-expiry fallback boards:
  *
- *     tier           n = 6        n = 8              n = 10
- *     starter        ~100%        fallback-dominated impossible (k = 0 = 0%)
- *     steady         ~100%        ~100% (0.4–3 s)   impossible (k = 0 = 0%)
- *     challenging    ~100%        ~100%             ~100%
- *     expert         ~100%        ~100%             ~40% (k = 2 ≈ 6% of pool)
- *     contradiction  ~100%        ~100%             ~94%
+ *     tier           n = 6                n = 8                 n = 10
+ *     challenging    0/30 fb, p50 8 ms,   0/30 fb, p50 162 ms,  1/30 fb, p50 9.1 s,
+ *                    p95 33 ms             p95 1.13 s            p95 42.0 s (max 90 s)
+ *     expert         0/30 fb, p50 12 ms,  0/30 fb, p50 446 ms,  0/30 fb, p50 6.0 s,
+ *                    p95 87 ms             p95 3.27 s            p95 52.1 s (max 60.3 s)
+ *     contradiction  0/30 fb, p50 39 ms,  0/30 fb, p50 449 ms,  2/30 fb, p50 20.3 s,
+ *                    p95 119 ms            p95 1.79 s            p95 90.0 s (tail: 4/30 > 60 s)
+ *
+ * Reading: n ≤ 8 never fall back for any shipped tier (p95 is hundreds to
+ * thousands of × under the 15 s budget). At n = 10 the tails are real —
+ * challenging falls back 1/30 and contradiction 2/30 at the default 90 s
+ * (Wilson 95 on 2/30 ≈ 0.9–21%), and contradiction's p95 sits AT the
+ * budget. The fallbacks are the designed NEVER-FAIL escape hatch: honest
+ * (`fallback: true`), contract-certified, reported by the picker through
+ * the measured-generations basis. The 90 s envelope is player-approved
+ * and has NOT been widened to hide the tail — doing so is a product
+ * decision, not a generator tuning knob.
  *
  * THE MEASURED FACTS a UI must not contradict:
- * - starter at n = 8: only ~10% of the k = 0 pool sits inside the
- *   waves ≤ 5 starter band (3/30 measured), so a starter-eligible board
- *   arrives every ~20+ s against the 15 s budget — measured 5/5 fallbacks
- *   on consecutive seeds (pinned in construct.test.ts). The band is
- *   deliberately not widened; the tier reads unavailable/unreliable here.
- * - starter and steady at n = 9–10: the k = 0 (base-solvable) class is
- *   0% of accepted boards (measured, every probe) — no band can fix a
- *   class that does not exist; both tiers are impossible at the largest
- *   sizes, and a request there returns the fallback board (honestly
- *   flagged) rather than failing.
- * - expert at n = 10: the k = 2 class is ~6% of the accepted pool, so
- *   ~40% of generations land within the 90 s budget and the rest return
- *   the fallback. The picker should warn, not promise.
+ * - expert at n = 10: 0/30 fallbacks under the current (much faster than
+ *   the pre-implementation probe) repair engine; the old "~40% of
+ *   generations fall back" figure is retired.
+ * - contradiction at n = 10 is the tightest cell: a heavy board runs to
+ *   the budget ~1 time in 15. The picker should warn, not promise.
+ * - THE RETIRED k = 0 TIERS (player decision, 2026-10 — the game ships
+ *   exactly three tiers): `starter` and `steady` accepted only
+ *   base-solvable boards. The k = 0 pool measures 8%/10%/0% of accepted
+ *   boards at n = 6/8/10 — zero at n = 9–10, making both tiers impossible
+ *   at the largest sizes — and at n = 8 only ~10% of that pool (3/30
+ *   measured) sat inside starter's shallow wave band, so starter fell back
+ *   on 5/5 consecutive default-budget seeds. The mechanism is structural:
+ *   shallowness and uniqueness are in tension inside the spanning-tree
+ *   construction (a shallow board has many competitor solutions; repairing
+ *   to uniqueness cannot stay shallow). The tiers, the wave band and the
+ *   base-solved/baseWaves grade fields were deleted together; the record
+ *   lives in construct.ts's module doc, not in dead code.
  *
  * Cost and warming. A candidate costs from microseconds (balance reject)
  * to seconds (a long repair round at n = 10) plus, for unique boards, the
@@ -103,7 +116,6 @@ import {
   starTierAcceptsGrade,
   type StarDifficulty,
 } from './construct'
-import { propagateStarBoard } from './propagate'
 import { solveStarCatalogue } from './catalogue'
 import { measureMinimumBasis } from './minimumBasis'
 import { sampleStarBattleLayout } from './sample'
@@ -298,13 +310,13 @@ function yieldToEventLoop(): Promise<void> {
 }
 
 /**
- * The single probe stream serving all five tiers: one seeded candidate
+ * The single probe stream serving all three tiers: one seeded candidate
  * sequence (same sample + repair + exact-count gate as generation), each
- * unique repaired board graded ONCE (base propagation, the 16-subset
- * minimum basis, and — for k = -1 boards only — the depth-1 certificate)
- * and credited to every tier through {@link starTierAcceptsGrade}. A
- * balance-reject or repair-abandon is a miss for every tier, exactly as it
- * is for generation.
+ * unique repaired board graded ONCE (the 16-subset minimum basis and —
+ * for k = -1 boards only — the depth-1 certificate) and credited to every
+ * tier through {@link starTierAcceptsGrade}. A balance-reject or
+ * repair-abandon is a miss for every tier, exactly as it is for
+ * generation.
  *
  * Early-break: once every cell that can certify `available` has certified
  * it, more samples cannot change any classification in the direction that
@@ -316,8 +328,6 @@ async function probeCandidateStream(
   options: Required<StarTierFeasibilityOptions>,
 ): Promise<StarTierFeasibilityReport> {
   const hits: Record<StarDifficulty, number> = {
-    starter: 0,
-    steady: 0,
     challenging: 0,
     expert: 0,
     contradiction: 0,
@@ -351,13 +361,10 @@ async function probeCandidateStream(
         // repair's terminal round already proved count = 1 — the probe and
         // the generator share the repair module, so disagreement is an
         // engine bug, never a data point).
-        const base = propagateStarBoard(repaired.colours, n)
         const basis = measureMinimumBasis(repaired.colours, n)
         const contradiction =
           basis.k === -1 ? solveStarCatalogue(repaired.colours, n, { csDepth: 1 }) : undefined
         const grade = {
-          baseSolved: base.solved,
-          baseWaves: base.waves,
           k: basis.k,
           contradiction:
             contradiction === undefined
@@ -375,9 +382,9 @@ async function probeCandidateStream(
     await yieldToEventLoop()
 
     // A(n): candidates per generation budget, from the measured mean
-    // candidate wall time in THIS stream (including grades — generation
-    // grades are cheaper for starter/steady, so this is conservative for
-    // those tiers: it UNDERSTATES their per-generation attempts).
+    // candidate wall time in THIS stream (including grades — the mean is
+    // generation-faithful because generation grades the same repaired
+    // boards against the same tier set).
     const attemptsPerGeneration = Math.max(
       1,
       Math.floor(defaultStarGenerationBudgetMs(n) / Math.max(1e-3, candidateWallTotalMs / samples)),
@@ -418,7 +425,7 @@ async function probeCandidateStream(
 
 /**
  * Run the full feasibility probe for one side: one seeded candidate
- * stream, graded boards credited to all five tiers. Bounded by the
+ * stream, graded boards credited to all three tiers. Bounded by the
  * candidate count AND the wall budget, whichever binds first; deterministic
  * up to wall-clock-bound sample counts (see module doc).
  *

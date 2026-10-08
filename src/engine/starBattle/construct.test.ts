@@ -36,7 +36,6 @@ import { measureMinimumBasis } from './minimumBasis'
 import { measureStarBoardStructure } from './structure'
 import {
   STAR_DIFFICULTIES,
-  STAR_STARTER_MAX_WAVES,
   defaultStarGenerationBudgetMs,
   generateStarBattle,
   starTierAcceptsGrade,
@@ -61,13 +60,13 @@ function expectContractBoard(board: ReturnType<typeof generateStarBattle>): void
 
 describe('generateStarBattle input validation', () => {
   it('rejects bad sides, seeds and difficulties loudly', () => {
-    expect(() => generateStarBattle({ n: 3, seed: 1, difficulty: 'starter' })).toThrow(RangeError)
-    expect(() => generateStarBattle({ n: 6.5, seed: 1, difficulty: 'starter' })).toThrow(TypeError)
-    expect(() => generateStarBattle({ n: 11, seed: 1, difficulty: 'starter' })).toThrow(RangeError)
-    expect(() => generateStarBattle({ n: 6, seed: 1.5, difficulty: 'starter' })).toThrow(TypeError)
+    expect(() => generateStarBattle({ n: 3, seed: 1, difficulty: 'challenging' })).toThrow(RangeError)
+    expect(() => generateStarBattle({ n: 6.5, seed: 1, difficulty: 'challenging' })).toThrow(TypeError)
+    expect(() => generateStarBattle({ n: 11, seed: 1, difficulty: 'challenging' })).toThrow(RangeError)
+    expect(() => generateStarBattle({ n: 6, seed: 1.5, difficulty: 'challenging' })).toThrow(TypeError)
     expect(() => generateStarBattle({ n: 6, seed: 1, difficulty: 'absurd' as never })).toThrow(TypeError)
     expect(() =>
-      generateStarBattle({ n: 6, seed: 1, difficulty: 'starter' }, { timeBudgetMs: -1 }),
+      generateStarBattle({ n: 6, seed: 1, difficulty: 'challenging' }, { timeBudgetMs: -1 }),
     ).toThrow(RangeError)
   })
 })
@@ -87,7 +86,7 @@ describe('the budget-expiry fallback (NEVER FAIL)', () => {
   it('falls back at the small sides too (domino painting path)', () => {
     // Cost: milliseconds (see above).
     for (const n of [4, 5]) {
-      const board = generateStarBattle({ n, seed: 13, difficulty: 'starter' }, { timeBudgetMs: 0 })
+      const board = generateStarBattle({ n, seed: 13, difficulty: 'challenging' }, { timeBudgetMs: 0 })
       expect(board.fallback).toBe(true)
       expectContractBoard(board)
     }
@@ -103,46 +102,38 @@ describe('the budget-expiry fallback (NEVER FAIL)', () => {
 })
 
 describe('starTierAcceptsGrade — the tier contract, pinned directly', () => {
-  const baseSolvedShallow = { baseSolved: true, baseWaves: 4, k: 0 }
-  const baseSolvedDeep = { baseSolved: true, baseWaves: 12, k: 0 }
-  const k1 = { baseSolved: false, baseWaves: 0, k: 1 }
-  const k2 = { baseSolved: false, baseWaves: 0, k: 2 }
-  const k3 = { baseSolved: false, baseWaves: 0, k: 3 }
+  const k0 = { k: 0 }
+  const k1 = { k: 1 }
+  const k2 = { k: 2 }
+  const k3 = { k: 3 }
   const kMinus1Solved = {
-    baseSolved: false,
-    baseWaves: 0,
     k: -1,
     contradiction: { solved: true },
   }
   const kMinus1Stalled = {
-    baseSolved: false,
-    baseWaves: 0,
     k: -1,
     contradiction: { solved: false },
   }
 
-  it('starter takes k = 0 at or under the wave cut; steady takes the deep half', () => {
-    expect(starTierAcceptsGrade('starter', baseSolvedShallow)).toBe(true)
-    expect(starTierAcceptsGrade('starter', baseSolvedDeep)).toBe(false)
-    expect(starTierAcceptsGrade('steady', baseSolvedShallow)).toBe(false)
-    expect(starTierAcceptsGrade('steady', baseSolvedDeep)).toBe(true)
-  })
-
-  it('the wave cut is the shared STAR_STARTER_MAX_WAVES constant, not a duplicated literal', () => {
-    const atCut = { baseSolved: true, baseWaves: STAR_STARTER_MAX_WAVES, k: 0 }
-    const pastCut = { baseSolved: true, baseWaves: STAR_STARTER_MAX_WAVES + 1, k: 0 }
-    expect(starTierAcceptsGrade('starter', atCut)).toBe(true)
-    expect(starTierAcceptsGrade('starter', pastCut)).toBe(false)
-    expect(starTierAcceptsGrade('steady', pastCut)).toBe(true)
-  })
-
   it('challenging is exactly k = 1, expert exactly k = 2, nothing else', () => {
     expect(starTierAcceptsGrade('challenging', k1)).toBe(true)
     expect(starTierAcceptsGrade('challenging', k2)).toBe(false)
-    expect(starTierAcceptsGrade('challenging', baseSolvedShallow)).toBe(false)
+    expect(starTierAcceptsGrade('challenging', k0)).toBe(false)
     expect(starTierAcceptsGrade('expert', k2)).toBe(true)
     expect(starTierAcceptsGrade('expert', k1)).toBe(false)
     expect(starTierAcceptsGrade('expert', k3)).toBe(false)
+  })
+
+  it('the k = 0 class belongs to no tier since the starter/steady retirement', () => {
+    // Base-solvable boards are legal puzzles but no shipped tier accepts
+    // them (the shallow boards the retired tiers served are structurally
+    // unreachable from the spanning-tree stream at the played sizes —
+    // construct.ts's module doc has the measurement). This pin exists so a
+    // future "easy tier" proposal re-derives the band instead of silently
+    // widening this predicate.
+    for (const tier of STAR_DIFFICULTIES) {
+      expect(starTierAcceptsGrade(tier, k0)).toBe(false)
+    }
   })
 
   it('contradiction is k = -1 AND a solving depth-1 certificate — a stall rejects', () => {
@@ -162,64 +153,25 @@ describe('stream generation: contract, tiers and determinism', () => {
   it('every generated board at the small sides satisfies the full contract, whatever path produced it', () => {
     // Cost: n = 4/5 stream generation is milliseconds per board for the
     // reachable classes; tiers whose grade class does not exist at the
-    // size (measured: k = 2 and k = -1 boards essentially do not occur at
-    // n = 4 — the old walk-era matrix already showed expert and
-    // contradiction unavailable there) burn the 15 s default budget and
-    // answer with the honest fallback, which is the NEVER-FAIL contract,
-    // not a failure. So this test pins the CONTRACT on every board and
-    // pins the stream path only for starter, whose class provably exists.
+    // size (measured probe, 2026-10: at n = 4 the repaired pool is
+    // {k=0: 8, k=1: 7} over 200 candidates — k = 2 and k = -1 boards did
+    // not occur, matching the old walk-era matrix that expert and
+    // contradiction are unavailable there) burn the 15 s default budget
+    // and answer with the honest fallback, which is the NEVER-FAIL
+    // contract, not a failure. So this test pins the CONTRACT on every
+    // board and pins the stream path only for challenging, whose k = 1
+    // class measured ~47% of the n = 4 repaired pool and provably exists.
     for (const n of [4, 5]) {
       for (const difficulty of STAR_DIFFICULTIES) {
         const board = generateStarBattle({ n, seed: 100 + n, difficulty })
         expectContractBoard(board)
       }
-      const starter = generateStarBattle({ n, seed: 100 + n, difficulty: 'starter' })
-      expect(starter.fallback).not.toBe(true)
-      expectContractBoard(starter)
+      const challenging = generateStarBattle({ n, seed: 100 + n, difficulty: 'challenging' })
+      expect(challenging.fallback).not.toBe(true)
+      expectContractBoard(challenging)
+      expect(measureMinimumBasis(challenging.puzzle.colours, n).k).toBe(1)
     }
   }, 120_000)
-
-  it('starter at n = 8 with the default budget is measured to fall back — a recorded fact, not a bug', () => {
-    // MEASURED FACT (probe, this machine, 2026-10): within the 15 s default
-    // budget starter at n = 8 fell back 5/5 seeds, because only ~10% of
-    // the n = 8 k = 0 pool (3/30 measured boards) sits inside the starter
-    // band (waves ≤ 5) — a starter-eligible board arrives roughly every
-    // 20+ s against the 15 s budget. Steady at the same size succeeded
-    // 5/5 in 0.4–3.2 s (the k = 0 pool is ~90% deep-wave). The band is
-    // deliberately NOT widened to make the tier pass (spec: a widened band
-    // would ship 7–9-wave boards as "starter"); the picker learns the
-    // unavailability through feasibility.ts and this test pins that the
-    // fallback path answers honestly (fallback: true, full contract) when
-    // the stream cannot supply the tier.
-    //
-    // Cost: one default-budget generation at n = 8 = the 15 s budget when
-    // the stream cannot supply the tier (this test always takes the full
-    // budget).
-    const board = generateStarBattle({ n: 8, seed: 700, difficulty: 'starter' })
-    expect(board.fallback).toBe(true)
-    expectContractBoard(board)
-  }, 30_000)
-
-  it('starter and steady boards at n = 6 carry the k = 0 grade with the wave split', () => {
-    // Cost: n = 6 accepted boards measure ~1.3 s p50; the k = 0 pool is
-    // ~15% of accepted boards, so a targeted generation lands within a
-    // few seconds. Budget 60 s is ~40× the p50 — fallback would mean the
-    // stream broke, and the assertion on `fallback` says so.
-    const starter = generateStarBattle({ n: 6, seed: 201, difficulty: 'starter' }, { timeBudgetMs: 60_000 })
-    expect(starter.fallback).not.toBe(true)
-    expectContractBoard(starter)
-    const starterBase = propagateStarBoard(starter.puzzle.colours, 6)
-    expect(starterBase.solved).toBe(true)
-    expect(starterBase.waves).toBeLessThanOrEqual(STAR_STARTER_MAX_WAVES)
-    expect(starter.waves).toBe(starterBase.waves)
-
-    const steady = generateStarBattle({ n: 6, seed: 202, difficulty: 'steady' }, { timeBudgetMs: 60_000 })
-    expect(steady.fallback).not.toBe(true)
-    expectContractBoard(steady)
-    const steadyBase = propagateStarBoard(steady.puzzle.colours, 6)
-    expect(steadyBase.solved).toBe(true)
-    expect(steadyBase.waves).toBeGreaterThan(STAR_STARTER_MAX_WAVES)
-  }, 150_000)
 
   it('challenging, expert and contradiction boards at n = 6 carry their measured grade', () => {
     // Cost: the technique tiers rejection-sample the repaired stream; the
@@ -249,6 +201,90 @@ describe('stream generation: contract, tiers and determinism', () => {
     expect(contradiction.csTrials).toBe(certificate.csTrials)
   }, 420_000)
 
+  it('challenging acceptance measured over 30 generations per side: 0 fallbacks at n = 6 and n = 8, every accepted board graded k = 1', () => {
+    // MEASURED BAND (probe, this machine, 2026-10 — the starter/steady
+    // retirement made challenging the shallowest shipped tier, so its
+    // acceptance re-derives against the real per-tier supply): 30
+    // generations per side, default budgets, seeds 910_000 + i·131 + n:
+    // 0 fallbacks at n = 6 (p50 8 ms, p95 33 ms) and 0 at n = 8 (p50
+    // 162 ms, p95 1 127 ms). The headroom is enormous — the n = 8 p95 is
+    // ~75× under the 15 s budget — so 0/30 is a stable pin, not luck.
+    // Every accepted board is re-measured to k = 1: the fallback board is
+    // base-solvable (k = 0) and belongs to no tier, so a fallback sneaking
+    // in would fail this grade assertion even if wall clock lied.
+    //
+    // Cost: 60 generations ≈ seconds at these sizes (the measured p95s
+    // above) plus 60 basis re-measurements (milliseconds each).
+    const SEED_BASE = 910_000
+    for (const n of [6, 8] as const) {
+      for (let i = 0; i < 30; i += 1) {
+        const board = generateStarBattle({ n, seed: SEED_BASE + i * 131 + n, difficulty: 'challenging' })
+        expect(board.fallback).not.toBe(true)
+        expectContractBoard(board)
+        expect(measureMinimumBasis(board.puzzle.colours, n).k).toBe(1)
+      }
+    }
+  }, 300_000)
+
+  it('challenging at n = 10: the band is reachable — three generations land k = 1 under a generous explicit budget', () => {
+    // MEASURED CONTEXT (probe, this machine, 2026-10 — the full 30-sample
+    // cell is recorded in the feasibility module doc): at the DEFAULT 90 s
+    // budget challenging at n = 10 fell back 1/30 (p50 9.1 s, p95 42 s,
+    // one tail board at the budget) — a real but rare tail. The fallback
+    // count is wall-clock-dependent (which candidate index the stream
+    // reached), so it is a documented measured fact, not an assertion.
+    // What IS deterministic and pinned here: the k = 1 class supplies the
+    // tier at n = 10 — three fixed seeds all land stream boards graded
+    // k = 1 under a 300 s budget, ~10× the measured p95 (the budget
+    // override removes the expiry boundary, so the outcomes are stable).
+    //
+    // Cost: 3 × the measured p50 ≈ 9 s wall each (the probe's per-step
+    // walls for these seeds: 14.3 / 26.5 / 12.9 s), plus 3 basis
+    // re-measurements (seconds each at n = 10).
+    const SEED_BASE = 920_000
+    for (let i = 0; i < 3; i += 1) {
+      const board = generateStarBattle(
+        { n: 10, seed: SEED_BASE + i * 131, difficulty: 'challenging' },
+        { timeBudgetMs: 300_000 },
+      )
+      expect(board.fallback).not.toBe(true)
+      expectContractBoard(board)
+      expect(measureMinimumBasis(board.puzzle.colours, 10).k).toBe(1)
+    }
+  }, 600_000)
+
+  it('contradiction at n = 10: the tightest cell still supplies the tier under a generous explicit budget', () => {
+    // MEASURED CONTEXT (probe, 2026-10 — full cell in the feasibility
+    // module doc): at the DEFAULT budget contradiction at n = 10 fell
+    // back 2/30 with p95 AT the budget (4/30 boards exceeded 60 s) — the
+    // tightest shipped cell, ~1 fallback in 15 generations (Wilson 95 ≈
+    // 0.9–21%). Like challenging's tail above, the count itself is
+    // wall-clock-dependent and lives in the doc, not here. Pinned: two
+    // fixed seeds land stream boards graded k = −1 with a solving
+    // depth-1 certificate under a 600 s budget (~30× the measured p50 of
+    // 20.3 s, well past the 60 s tail knee).
+    //
+    // Cost: the probe's first two contradiction walls were 65.3 s and
+    // 12.1 s; at 600 s the budget cannot bind, so the test costs ~1–2
+    // min wall under suite contention. This is the deliberate price of
+    // pinning the hardest cell; do not shrink the budget to speed the
+    // suite up — that would reintroduce the timing dependence this pin
+    // exists to exclude.
+    const SEED_BASE = 920_000
+    for (let i = 0; i < 2; i += 1) {
+      const board = generateStarBattle(
+        { n: 10, seed: SEED_BASE + i * 131, difficulty: 'contradiction' },
+        { timeBudgetMs: 600_000 },
+      )
+      expect(board.fallback).not.toBe(true)
+      expectContractBoard(board)
+      const basis = measureMinimumBasis(board.puzzle.colours, 10)
+      expect(basis.k).toBe(-1)
+      expect(solveStarCatalogue(board.puzzle.colours, 10, { csDepth: 1 }).solved).toBe(true)
+      expect(board.csPasses).toBeGreaterThanOrEqual(1)
+    }
+  }, 900_000)
+
   it('same (n, seed, difficulty) yields a byte-identical stream board', () => {
     // Cost: two n = 6 generations ≈ a few seconds each (see above).
     const first = generateStarBattle({ n: 6, seed: 301, difficulty: 'challenging' }, { timeBudgetMs: 60_000 })
@@ -262,7 +298,7 @@ describe('stream generation: contract, tiers and determinism', () => {
   it('different seeds overwhelmingly yield different boards', () => {
     // Cost: two n = 6 generations (see above).
     const boards = [401, 402, 403].map((seed) =>
-      generateStarBattle({ n: 6, seed, difficulty: 'starter' }, { timeBudgetMs: 60_000 }),
+      generateStarBattle({ n: 6, seed, difficulty: 'challenging' }, { timeBudgetMs: 60_000 }),
     )
     const distinct = new Set(boards.map((board) => [...board.puzzle.colours].join(',')))
     expect(distinct.size).toBeGreaterThan(1)
@@ -299,7 +335,7 @@ describe('progress reporting', () => {
 
   it('a throwing onProgress is swallowed and never corrupts generation', () => {
     // Cost: one n = 6 generation (see above).
-    const board = generateStarBattle({ n: 6, seed: 502, difficulty: 'starter' }, {
+    const board = generateStarBattle({ n: 6, seed: 502, difficulty: 'challenging' }, {
       timeBudgetMs: 60_000,
       onProgress: () => {
         throw new Error('broken listener')
@@ -312,7 +348,7 @@ describe('progress reporting', () => {
   it('the fallback path also reports progress', () => {
     // Cost: milliseconds (zero budget — the stream never starts).
     const seen: StarGenerationProgress[] = []
-    const board = generateStarBattle({ n: 6, seed: 503, difficulty: 'starter' }, {
+    const board = generateStarBattle({ n: 6, seed: 503, difficulty: 'challenging' }, {
       timeBudgetMs: 0,
       onProgress: (progress) => seen.push(progress),
     })
@@ -336,9 +372,9 @@ describe('side range', () => {
     // The range pins live in src/domain/starBattle.test.ts; here we only
     // confirm the generator reads the same constants (no repeated
     // literals) by probing the boundaries.
-    expect(() => generateStarBattle({ n: MIN_STAR_SIDE, seed: 1, difficulty: 'starter' }, { timeBudgetMs: 0 })).not.toThrow()
-    expect(() => generateStarBattle({ n: MAX_STAR_SIDE, seed: 1, difficulty: 'starter' }, { timeBudgetMs: 0 })).not.toThrow()
-    expect(() => generateStarBattle({ n: MIN_STAR_SIDE - 1, seed: 1, difficulty: 'starter' })).toThrow(RangeError)
-    expect(() => generateStarBattle({ n: MAX_STAR_SIDE + 1, seed: 1, difficulty: 'starter' })).toThrow(RangeError)
+    expect(() => generateStarBattle({ n: MIN_STAR_SIDE, seed: 1, difficulty: 'challenging' }, { timeBudgetMs: 0 })).not.toThrow()
+    expect(() => generateStarBattle({ n: MAX_STAR_SIDE, seed: 1, difficulty: 'challenging' }, { timeBudgetMs: 0 })).not.toThrow()
+    expect(() => generateStarBattle({ n: MIN_STAR_SIDE - 1, seed: 1, difficulty: 'challenging' })).toThrow(RangeError)
+    expect(() => generateStarBattle({ n: MAX_STAR_SIDE + 1, seed: 1, difficulty: 'challenging' })).toThrow(RangeError)
   }, 30_000)
 })

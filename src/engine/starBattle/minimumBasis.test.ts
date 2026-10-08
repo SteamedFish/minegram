@@ -74,7 +74,8 @@ const K2_COLOURS = HAND_K2_COLOURS
 
 /**
  * k = -1 fixture: n = 10 board from the seeded walk stream (walk seed
- * 24757, steady seed board) — the "requires contradiction" class. Stall
+ * 24757 — the walk stream itself is retired and deleted; the board
+ * survives as a fixture) — the "requires contradiction" class. Stall
  * table of ALL 16 subsets (base + subset, depth 0) under the matching
  * engine, each entry the stall point (stars placed / 10):
  *
@@ -113,7 +114,7 @@ const KMINUS1_STALL_TABLE: ReadonlyMap<number, number> = new Map([
 ])
 
 describe('measureMinimumBasis hand-computed fixtures', () => {
-  it('k = 0: base rules alone solve the starter board; no witness', () => {
+  it('k = 0: base rules alone solve the k = 0 fixture; no witness', () => {
     const basis = measureMinimumBasis(K0_COLOURS, 4)
     expect(basis.k).toBe(0)
     expect(basis.rules).toEqual([])

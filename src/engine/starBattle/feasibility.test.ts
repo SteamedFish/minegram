@@ -8,7 +8,7 @@
  * exactly-once semantics, the unmeasured-before shape of synchronous
  * reads, and one real probe at the minimum side whose assertions stick to
  * what is structurally guaranteed (report shape, samples/hits discipline)
- * plus the measured k = 0 dominance at n = 4.
+ * plus the measured challenging (k = 1) presence at n = 4.
  *
  * Per-test timeout policy (repo rule): the real-probe test carries an
  * explicit timeout and a cost comment — n = 4 candidates are microseconds
@@ -79,13 +79,13 @@ describe('measureStarBattleTierFeasibility at the minimum side', () => {
         expect(entry.generationSuccess as number).toBeLessThanOrEqual(1)
       }
     }
-    // Measured dominance at n = 4: uniqueness-among-balanced is ~85%, so
-    // the k = 0 pool (starter + steady) is the overwhelming majority of
-    // accepted boards and at least one shallow k = 0 board appears in any
-    // 60-candidate stream. This is the one tier-availability assertion the
-    // test makes — everything else is distribution-dependent and belongs
-    // to the measured matrix in the module doc, not a unit pin.
-    expect(report.starter.hits).toBeGreaterThan(0)
+    // Measured distribution at n = 4 (probe, 2026-10): the repaired pool
+    // is {k=0: 8, k=1: 7} over 200 candidates — the k = 1 class (challenging)
+    // is ~half the pool and appears in any 60-candidate stream. This is
+    // the one tier-availability assertion the test makes — everything
+    // else is distribution-dependent and belongs to the measured matrix in
+    // the module doc, not a unit pin.
+    expect(report.challenging.hits).toBeGreaterThan(0)
   }, 120_000)
 
   it('caches per side: a second call returns the identical report', async () => {
@@ -104,7 +104,7 @@ describe('measureStarBattleTierFeasibility at the minimum side', () => {
     clearStarBattleTierFeasibilityCache()
     const second = await measureStarBattleTierFeasibility(MIN_STAR_SIDE, FAST)
     expect(second).not.toBe(first)
-    expect(second.starter.samples).toBe(first.starter.samples)
+    expect(second.expert.samples).toBe(first.expert.samples)
   }, 120_000)
 
   it('readStarBattleTierFeasibility returns the cached entry after the probe', async () => {

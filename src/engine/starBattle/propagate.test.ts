@@ -207,14 +207,18 @@ describe('propagateStarBoard', () => {
 })
 
 describe('propagateStarBoard cross-validated against independent brute force', () => {
-  // Construction tiers only: for these, the production solver is the
-  // acceptance certificate and MUST solve every generated board. The
-  // technique tiers ('challenging', 'expert', 'contradiction') exist
-  // precisely because base rules must stall on them — asserting
-  // propagation solves them contradicts their contract. Their correctness
-  // cross-checks (full-catalogue certificate + exact counter) are pinned
-  // in construct.test.ts, which owns the tier gates.
-  const difficulties = ['starter', 'steady'] as const
+  // WHY FALLBACK BOARDS: this lane needs boards the production solver is
+  // the acceptance certificate for — boards base propagation SOLVES. Since
+  // the starter/steady retirement no shipped tier accepts the k = 0 class,
+  // so no stream board is base-solvable: the tier contract requires base
+  // rules to stall on challenging/expert/contradiction, and asserting
+  // propagation solves them would contradict their contract. Their
+  // correctness cross-checks (full-catalogue certificate + exact counter)
+  // are pinned in construct.test.ts, which owns the tier gates. The only
+  // generated base-solvable family left is the budget-expiry fallback
+  // (strips-and-sea, certified by this very propagation), so every
+  // generation below runs with a zero budget to draw from it honestly.
+  const difficulties = ['challenging', 'expert', 'contradiction'] as const
   const nodeBudget = 5_000_000
 
   const expectAgreement = (
@@ -244,25 +248,19 @@ describe('propagateStarBoard cross-validated against independent brute force', (
     }
   }
 
-  // Cost policy: each generation runs with an explicit small budget
-  // (2 s — see below) instead of the 15 s default, because the k = 0
-  // tier targeting is a coin flip at some of these sizes (measured:
-  // starter at n = 7 lands ~half of seeds within the default budget) and
-  // 24 default-budget generations would burn six minutes. A generation
-  // that cannot land its tier in 2 s answers with the certified fallback
-  // board (construct.ts NEVER-FAIL), which is every bit as valid for the
-  // agreement assertion below — the propagation certificate is the
-  // fallback's uniqueness proof too. The explicit 180 s timeout is the
-  // suite-wide generous ceiling — far above any CPU-contention slowdown —
-  // so a hang fails here instead of tripping vitest's default for the
-  // wrong reason.
+  // Cost policy: a zero budget paints the fallback board in milliseconds
+  // (the stream never starts), so the generation side of this lane is
+  // essentially free; the cost that remains is the brute-force
+  // enumeration below. The explicit 180 s timeout is the suite-wide
+  // generous ceiling — far above any CPU-contention slowdown — so a hang
+  // fails here instead of tripping vitest's default for the wrong reason.
   it('agrees at n=4..7 across many seeds and every difficulty', { timeout: 180_000 }, () => {
     for (const n of [4, 5, 6, 7]) {
       for (const difficulty of difficulties) {
         for (const seed of [1, 17, 4242]) {
           const { puzzle } = generateStarBattle(
             { n, seed, difficulty },
-            { timeBudgetMs: 2_000 },
+            { timeBudgetMs: 0 },
           )
           expectAgreement(puzzle.colours, n, puzzle.solution, nodeBudget)
         }
@@ -270,13 +268,12 @@ describe('propagateStarBoard cross-validated against independent brute force', (
     }
   })
 
-  // Same cost policy as the n=4..7 case: 2 s per generation, fallback
-  // boards included (starter/steady at n = 8–10 mostly answer with the
-  // fallback inside any small budget — measured in construct.test.ts).
+  // Same cost policy as the n=4..7 case: zero-budget fallback paintings,
+  // brute force is the remaining cost.
   it('agrees at n=8..10 where exhaustion is still cheap', { timeout: 120_000 }, () => {
     for (const n of [8, 9, 10]) {
       for (const difficulty of difficulties) {
-        const { puzzle } = generateStarBattle({ n, seed: 99, difficulty }, { timeBudgetMs: 2_000 })
+        const { puzzle } = generateStarBattle({ n, seed: 99, difficulty }, { timeBudgetMs: 0 })
         expectAgreement(puzzle.colours, n, puzzle.solution, nodeBudget)
       }
     }
@@ -299,7 +296,7 @@ describe('propagateStarBoard cross-validated against independent brute force', (
     // budget the brute force must find no solution other than the planted
     // one, and the propagation certificate must solve the board.
     for (const difficulty of difficulties) {
-      const { puzzle } = generateStarBattle({ n: 10, seed: 7, difficulty }, { timeBudgetMs: 2_000 })
+      const { puzzle } = generateStarBattle({ n: 10, seed: 7, difficulty }, { timeBudgetMs: 0 })
       const propagated = propagateStarBoard(puzzle.colours, 10)
       expect(propagated.solved).toBe(true)
       expect(starsAsPermutation(propagated)).toEqual([...puzzle.solution])
