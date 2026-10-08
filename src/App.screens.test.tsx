@@ -43,7 +43,7 @@ function starSnapshot(overrides: Partial<StarBattleSnapshot> = {}): StarBattleSn
     maxLives: 5,
     mistakes: 0,
     streak: 0,
-    difficulty: 'starter',
+    difficulty: 'challenging',
     side: DEFAULT_STAR_SIDE,
     failure: null,
     progress: null,
@@ -465,14 +465,14 @@ describe('App screens — picker to star battle and back', () => {
       ;(ten as HTMLInputElement).click()
     })
     expect(fake.actions.setSide).toHaveBeenCalledWith(10)
-    const steady = container.querySelector<HTMLInputElement>(
-      "[data-testid='star-difficulty'] input[value='steady']",
+    const expert = container.querySelector<HTMLInputElement>(
+      "[data-testid='star-difficulty'] input[value='expert']",
     )
-    expect(steady).not.toBeNull()
-    expect(steady?.disabled).toBe(false)
+    expect(expert).not.toBeNull()
+    expect(expert?.disabled).toBe(false)
     act(() => {
-      ;(steady as HTMLInputElement).click()
+      ;(expert as HTMLInputElement).click()
     })
-    expect(fake.actions.setDifficulty).toHaveBeenCalledWith('steady')
+    expect(fake.actions.setDifficulty).toHaveBeenCalledWith('expert')
   })
 })

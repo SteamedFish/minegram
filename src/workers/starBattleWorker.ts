@@ -30,6 +30,9 @@ import {
   STAR_DIFFICULTIES,
   type StarDifficulty,
   type StarGeneratedBoard,
+  type StarGenerationOptions,
+  type StarGenerationPhase,
+  type StarGenerationProgress,
   type StarGenerationRequest,
 } from '../engine/starBattle/construct'
 
@@ -101,27 +104,19 @@ export type StarBattleWorkerResponse = StarBattleSucceededMessage | StarBattleFa
 export type StarBattleWorkerMessage = StarBattleWorkerResponse | StarBattleProgressMessage
 
 /**
- * The phases a generation walks through, in the order the player meets them.
- * These names are the pinned wire protocol — the store guards on exactly
- * these three literals.
+ * `StarGenerationPhase`, `StarGenerationProgress` and `StarGenerationOptions`
+ * are the ENGINE's exports, re-exported here unchanged rather than copied.
+ *
+ * This seam originally carried structural duplicates, written before the engine
+ * exported them, and they compiled only because a fewer-parameter function is
+ * assignable to a two-parameter type. That agreement holds until one side moves
+ * and the mismatch surfaces somewhere unrelated, so the types now have exactly
+ * one definition and this module is the UI's import site for them.
  */
-export type StarGenerationPhase = 'sampling' | 'repairing' | 'grading'
-
-/**
- * The payload the engine reports through `onProgress`. The worker owns this
- * structural copy of the engine's imminent options bag so this seam compiles
- * before the engine lane lands; the types are structurally identical to the
- * engine's, so the real `generateStarBattle` stays assignable either way.
- */
-export interface StarGenerationProgress {
-  readonly candidates: number
-  readonly accepted: number
-  readonly phase: StarGenerationPhase
-}
-
-export interface StarGenerationOptions {
-  readonly onProgress?: (progress: StarGenerationProgress) => void
-  readonly timeBudgetMs?: number
+export type {
+  StarGenerationPhase,
+  StarGenerationProgress,
+  StarGenerationOptions,
 }
 
 export type StarBattlePuzzleGenerator = (

@@ -41,7 +41,7 @@ const PUZZLE: StarBattlePuzzle = Object.freeze({
 const BOARD: StarGeneratedBoard = Object.freeze({
   puzzle: PUZZLE,
   waves: 3,
-  difficulty: 'starter',
+  difficulty: 'challenging',
 })
 
 const REQUEST: StarBattleRequestMessage = Object.freeze({
@@ -50,7 +50,7 @@ const REQUEST: StarBattleRequestMessage = Object.freeze({
   generationId: 4,
   n: 4,
   seed: 42,
-  difficulty: 'starter',
+  difficulty: 'challenging',
 })
 
 function runHandler(
@@ -79,7 +79,7 @@ describe('star battle Worker protocol', () => {
 
     const responses = runHandler(generate)
 
-    expect(received).toEqual({ n: 4, seed: 42, difficulty: 'starter' })
+    expect(received).toEqual({ n: 4, seed: 42, difficulty: 'challenging' })
     expect(responses).toHaveLength(1)
     expect(responses[0]).toEqual({
       type: 'star-generation/succeeded',
@@ -87,7 +87,7 @@ describe('star battle Worker protocol', () => {
       generationId: 4,
       puzzle: PUZZLE,
       waves: 3,
-      difficulty: 'starter',
+      difficulty: 'challenging',
     })
   })
 
@@ -428,7 +428,7 @@ describe('isStarBattleWorkerResponse', () => {
         generationId: 1,
         puzzle: PUZZLE,
         waves: 2,
-        difficulty: 'steady',
+        difficulty: 'expert',
       }),
     ).toBe(true)
   })
@@ -441,7 +441,7 @@ describe('isStarBattleWorkerResponse', () => {
         generationId: 1,
         puzzle: { ...PUZZLE, solution: [0, 0, 0, 0] },
         waves: 2,
-        difficulty: 'steady',
+        difficulty: 'expert',
       }),
     ).toBe(false)
   })
@@ -454,7 +454,7 @@ describe('isStarBattleWorkerResponse', () => {
         generationId: 1,
         puzzle: PUZZLE,
         waves: 0,
-        difficulty: 'steady',
+        difficulty: 'expert',
       }),
     ).toBe(false)
   })
@@ -515,8 +515,6 @@ describe('difficulty tiers', () => {
     // matches and the test above passes. This pins what the ids actually are, which is the
     // part a reader needs to trust.
     expect([...STAR_DIFFICULTIES]).toEqual([
-      'starter',
-      'steady',
       'challenging',
       'expert',
       'contradiction',
@@ -524,8 +522,12 @@ describe('difficulty tiers', () => {
   })
 
   it('guards the tier boundary, failing closed on anything else', () => {
-    expect(isStarDifficulty('starter')).toBe(true)
     expect(isStarDifficulty('challenging')).toBe(true)
+    // `starter` and `steady` were retired when the engine dropped to three tiers. A guard that
+    // still accepted them would let the worker advertise a tier the generator cannot produce,
+    // which is exactly the failure the store's persisted-preference path has to survive too.
+    expect(isStarDifficulty('starter')).toBe(false)
+    expect(isStarDifficulty('steady')).toBe(false)
     expect(isStarDifficulty('impossible')).toBe(false)
     expect(isStarDifficulty(null)).toBe(false)
     expect(isStarDifficulty(3)).toBe(false)
