@@ -306,6 +306,7 @@ export function App() {
             mistakes={starSnapshot.mistakes}
             streak={starSnapshot.streak}
             difficulty={starSnapshot.difficulty}
+            progress={starSnapshot.progress}
             tierAvailability={(side, tier) =>
               // The snapshot carries the measured answer for the LIVE side;
               // another side is optimistic 'unmeasured' until its probe lands.

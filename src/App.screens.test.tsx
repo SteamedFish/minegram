@@ -253,6 +253,20 @@ describe('App screens — picker to star battle and back', () => {
     expect(container.querySelector('.mg-banner')).toBeNull()
   })
 
+  it('wires the store’s generation progress through to the surface, not just the type', () => {
+    // The surface's progress prop is OPTIONAL, so a missing pass-through in App
+    // compiles cleanly and simply never renders. That is exactly the shape of
+    // bug a type cannot catch, so it is pinned here on the rendered result.
+    fake = installStarStore(
+      starSnapshot({ status: 'generating', progress: { candidates: 128, accepted: 3, phase: 'repairing' } }),
+    )
+    render(<App />)
+    click(pickerCard('starbattle'))
+    const bar = one('[data-testid="star-progress"]')
+    expect(bar.getAttribute('data-phase')).toBe('repairing')
+    expect(bar.textContent).toContain('128')
+  })
+
   it('renders the surface once a certified puzzle arrives, and passes marks through', () => {
     fake = installStarStore(starSnapshot())
     render(<App />)
